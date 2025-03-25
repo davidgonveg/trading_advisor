@@ -9,11 +9,11 @@ DATA_DIR = os.path.join(BASE_DIR, 'data')
 LOGS_DIR = os.path.join(BASE_DIR, 'logs')
 
 # Configuración de Finnhub API
-FINNHUB_API_KEY = "cveivgpr01ql1jnbobc0cveivgpr01ql1jnbobcg"  # Reemplazar con tu clave API real
+FINNHUB_API_KEY = ""  # Reemplazar con tu clave API real
 
 # Configuración de Telegram
-TELEGRAM_BOT_TOKEN = "7869353980:AAGGPrOKCTD4afFc8k3PifPOzLLE6KY3E2E"
-TELEGRAM_CHAT_ID = "477718262"
+TELEGRAM_BOT_TOKEN = ""
+TELEGRAM_CHAT_ID = ""
 
 # Configuración de la base de datos
 DB_PATH = os.path.join(DATA_DIR, "stock_alerts.db")
