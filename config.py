@@ -8,9 +8,6 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, 'data')
 LOGS_DIR = os.path.join(BASE_DIR, 'logs')
 
-# Configuración de Finnhub API
-FINNHUB_API_KEY = "cveivgpr01ql1jnbobc0cveivgpr01ql1jnbobcg"  # Reemplazar con tu clave API real
-
 # Configuración de Telegram
 TELEGRAM_BOT_TOKEN = "7869353980:AAGGPrOKCTD4afFc8k3PifPOzLLE6KY3E2E"
 TELEGRAM_CHAT_ID = "477718262"
@@ -38,9 +35,9 @@ LOG_MAX_FILES = 10
 
 # Opciones de rendimiento del sistema
 MAX_THREADS = 5
-REQUESTS_TIMEOUT = 10  # segundos
+REQUESTS_TIMEOUT = 30  # segundos (aumentado para yfinance)
 API_RETRY_ATTEMPTS = 3
-RATE_LIMIT_THROTTLE = 0.5  # segundos entre solicitudes a la API
+RATE_LIMIT_THROTTLE = 1.0  # segundos entre solicitudes a yfinance (más conservador)
 
 # Lista de acciones para monitorizar
 def get_stock_list():
@@ -48,43 +45,14 @@ def get_stock_list():
     Devuelve la lista actualizada de acciones para monitorizar.
     """
     return [
-        # Tecnológicas originales
+        # Tecnológicas
         'NVDA',  # NVIDIA
-        # 'TSLA',  # Tesla
-        # 'META',  # Meta (Facebook)
-        # 'AAPL',  # Apple
-        # 'MSFT',  # Microsoft
-        # 'GOOGL', # Google
-        # 'AMZN',  # Amazon
-        # 'ASTS',  # AST SpaceMobile
-        # 'PLTR',  # Palantir
-        # 'AMD',   # AMD
-        # 'SMCI',  # Super Micro Computer
+        'TSLA',  # Tesla
+        'META',  # Meta (Facebook)
+        'AAPL',  # Apple
+        'MSFT',  # Microsoft
         
-        # # Financieras
-        # 'JPM',   # JPMorgan Chase
-        # 'GS',    # Goldman Sachs
-        # 'V',     # Visa
-        
-        # # Consumo
-        # 'WMT',   # Walmart
-        # 'NKE',   # Nike
-        # 'SBUX',  # Starbucks
-        
-        # # Salud
-        # 'PFE',   # Pfizer
-        # 'UNH',   # UnitedHealth
-        # 'LLY',   # Eli Lilly
-        
-        # # Energía
-        # 'CVX',   # Chevron
-        # 'ENPH',  # Enphase Energy
-        # 'XOM',   # Exxon Mobil
-        
-        # # Industrial
-        # 'CAT',   # Caterpillar
-        # 'DE',    # Deere & Company
-        # 'LMT',   # Lockheed Martin
+        # Añade o elimina acciones según tus preferencias
     ]
 
 # Configuración de notificaciones
