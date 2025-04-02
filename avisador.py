@@ -1675,10 +1675,6 @@ def generate_flexible_alert_message(symbol, data, sequence_details):
     return message
 
 if __name__ == "__main__":
-    # Configuration
-    TOKEN_BOT = "7869353980:AAGGPrOKCTD4afFc8k3PifPOzLLE6KY3E2E"  # Entre comillas y sin coma
-    CHAT_ID = "477718262"  # Entre comillas
-    FINNHUB_API_KEY = "cveivgpr01ql1jnbobc0cveivgpr01ql1jnbobcg"  # Replace with your actual Finnhub API key
     
     # Start with a test message
     print("Sending test message to verify configuration...")
