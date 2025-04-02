@@ -42,17 +42,30 @@ RATE_LIMIT_THROTTLE = 1.0  # segundos entre solicitudes a yfinance (más conserv
 # Lista de acciones para monitorizar
 def get_stock_list():
     """
-    Devuelve la lista actualizada de acciones para monitorizar.
+    Returns the updated list of stocks to monitor.
     """
     return [
-        # Tecnológicas
+        # Magnificent 7
         'NVDA',  # NVIDIA
         'TSLA',  # Tesla
         'META',  # Meta (Facebook)
         'AAPL',  # Apple
         'MSFT',  # Microsoft
+        'GOOGL', # Google
+        'AMZN',  # Amazon
         
-        # Añade o elimina acciones según tus preferencias
+        # Growth stocks
+        'ASTS',  # AST SpaceMobile
+        'PLTR',  # Palantir
+        'AMD',   # AMD - Good for technical analysis with volatility
+        'SMCI',  # Super Micro Computer - Highly volatile, good for TA signals
+        
+        # AI and tech with strong momentum
+        'ARM',   # ARM Holdings
+        'CRWD',  # CrowdStrike - Cybersecurity with clear technical patterns
+        'SHOP',  # Shopify
+        'UBER',  # Uber - Shows clear technical patterns
+        'SNAP',  # Snap Inc. - Highly responsive to technical indicators
     ]
 
 # Configuración de notificaciones

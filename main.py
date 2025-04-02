@@ -28,155 +28,226 @@ import config
 running = True
 sent_alerts = {}  # Registro de alertas enviadas para evitar duplicados
 
-def check_stocks(db_connection=None):
+def check_stocks_spaced(db_connection=None):
     """
-    Verifica todas las acciones en la lista actualizada y envía alertas si se cumplen las condiciones.
+    Verifies all stocks in the list with calls spaced over time to avoid API rate limits.
     
     Args:
-        db_connection: Conexión a la base de datos (opcional)
+        db_connection: Database connection (optional)
     """
-    # Verificar si el mercado está abierto
+    # Verify if the market is open
     if not is_market_open():
         logger.info("Mercado cerrado. No se realizarán verificaciones.")
         return
     
-    logger.info("Verificando acciones...")
+    logger.info("Iniciando verificación espaciada de acciones...")
     
-    # Obtener lista actualizada de acciones
+    # Get updated list of stocks
     stocks = config.get_stock_list()
-    
-    # Usar threads para acelerar las comprobaciones
-    threads = []
     results = {}
     
-    def analyze_stock_thread(symbol):
+    # Calculate delay between stocks to spread checks across the interval
+    # Use 75% of the interval to ensure we finish before the next check
+    total_available_time = config.CHECK_INTERVAL_MINUTES * 60 * 0.75  # in seconds
+    delay_between_stocks = total_available_time / len(stocks)
+    
+    logger.info(f"Espaciando verificaciones de acciones con {delay_between_stocks:.1f} segundos entre cada acción")
+    
+    for i, symbol in enumerate(stocks):
         try:
-            meets_conditions, message = analyze_stock_flexible(symbol, db_connection)
-            results[symbol] = (meets_conditions, message)
+            logger.info(f"Analizando {symbol} ({i+1}/{len(stocks)})...")
+            meets_conditions, message = analyze_stock_flexible_thread_safe(symbol, config.DB_PATH)
+            
+            if meets_conditions:
+                # Check if we already sent an alert for this symbol in the last hour
+                current_time = time.time()
+                if symbol in sent_alerts:
+                    last_alert = sent_alerts[symbol]
+                    # Avoid sending more than one alert for the same symbol in 60 minutes
+                    if current_time - last_alert < 3600:
+                        logger.info(f"Alert for {symbol} already sent in the last hour. Skipping.")
+                        results[symbol] = (False, "Alert already sent recently")
+                        continue
+                
+                # Send alert via Telegram
+                logger.info(f"Conditions met for {symbol}, sending alert")
+                send_telegram_alert(message, config.TELEGRAM_BOT_TOKEN, config.TELEGRAM_CHAT_ID)
+                
+                # Record the sending time of this alert
+                sent_alerts[symbol] = current_time
+                
+                # As backup, save to file
+                save_alert_to_file(message)
+                
+                results[symbol] = (True, message)
+            else:
+                logger.info(f"Conditions not met for {symbol}")
+                results[symbol] = (False, "Conditions not met")
+                
+            # Wait before checking the next stock, unless it's the last one
+            if i < len(stocks) - 1:
+                logger.info(f"Waiting {delay_between_stocks:.1f} seconds before checking next stock")
+                time.sleep(delay_between_stocks)
+                
         except Exception as e:
-            logger.error(f"Error procesando {symbol} en thread: {e}")
+            logger.error(f"Error processing {symbol}: {e}")
             results[symbol] = (False, f"Error: {str(e)}")
     
-    # Crear y iniciar threads para cada acción (limitando el número máximo de threads)
-    max_threads = min(config.MAX_THREADS, len(stocks))
+    return results
+
+
+def analyze_stock_flexible_thread_safe(symbol, main_db_path=None):
+    """
+    A thread-safe version of analyze_stock_flexible that creates its own database connection.
     
-    for i in range(0, len(stocks), max_threads):
-        batch = stocks[i:i+max_threads]
-        threads = []
+    Args:
+        symbol: Stock symbol to analyze
+        main_db_path: Path to the database file
         
-        for symbol in batch:
-            thread = threading.Thread(target=analyze_stock_thread, args=(symbol,))
-            threads.append(thread)
-            thread.start()
-        
-        # Esperar a que todos los threads terminen
-        for thread in threads:
-            thread.join()
+    Returns:
+        (bool, str): Tuple with (alert_generated, alert_message)
+    """
+    # Create a new connection specific to this thread
+    db_connection = None
+    if main_db_path:
+        try:
+            db_connection = create_connection(main_db_path)
+        except Exception as e:
+            logger.error(f"Error al crear la conexión a la base de datos. {symbol}: {e}")
     
-    # Procesar resultados y enviar alertas
-    for symbol, (meets_conditions, message) in results.items():
-        if meets_conditions:
-            # Verificar si ya enviamos una alerta para este símbolo en la última hora
-            current_time = time.time()
-            if symbol in sent_alerts:
-                last_alert = sent_alerts[symbol]
-                # Evitar enviar más de una alerta para el mismo símbolo en 60 minutos
-                if current_time - last_alert < 3600:
-                    logger.info(f"Alerta para {symbol} ya enviada en la última hora. Omitiendo.")
-                    continue
+    try:
+        # Get data combining historical and new if possible
+        data = get_stock_data(symbol, period='1d', interval='5m', 
+                             db_connection=db_connection, 
+                             only_new=(db_connection is not None))
+        
+        if data is None or data.empty or len(data) < 30:
+            logger.warning(f"Datos insuficientes para analizar {symbol}")
+            return False, f"Datos insuficientes de {symbol}"
+        
+        # Check if we already have all calculated indicators
+        complete_indicators = all(col in data.columns for col in 
+                                 ['BB_INFERIOR', 'BB_MEDIA', 'BB_SUPERIOR', 
+                                  'MACD', 'MACD_SIGNAL', 'MACD_HIST', 
+                                  'RSI', 'RSI_K', 'RSI_D'])
+        
+        # If indicators are missing, calculate all
+        if not complete_indicators:
+            data = calculate_bollinger(data, window=18, deviations=2.25)
+            data = calculate_macd(data, fast=8, slow=21, signal=9)
+            data = calculate_stochastic_rsi(data, rsi_period=14, k_period=14, d_period=3, smooth=3)
+        
+        # Save historical data if there's a DB connection
+        if db_connection:
+            save_historical_data(db_connection, symbol, data)
+        
+        # Detect flexible sequence of signals (maximum 5 candles or 25 minutes between first and last)
+        sequence_detected, details = detect_signal_sequence(data, max_window=5)
+        
+        if sequence_detected:
+            logger.info(f"Detección de señal para {symbol}: {details}")
             
-            # Enviar alerta vía Telegram
-            logger.info(f"Condiciones cumplidas para {symbol}, enviando alerta")
-            send_telegram_alert(message, config.TELEGRAM_BOT_TOKEN, config.TELEGRAM_CHAT_ID)
+            # Use the MACD index (the last signal) to generate the alert
+            message = generate_flexible_alert_message(symbol, data, details)
             
-            # Registrar el tiempo de envío de esta alerta
-            sent_alerts[symbol] = current_time
+            # Save alert to the database if there's a connection
+            if db_connection:
+                macd_index = details.get("indice_macd", -1)
+                save_alert_to_db(db_connection, symbol, data, macd_index, message, "sequence")
             
-            # Como respaldo, guardar en archivo
-            from utils.logger import save_alert_to_file
-            save_alert_to_file(message)
-            
-            # Esperar 2 segundos entre cada envío para evitar sobrecargar la API de Telegram
-            time.sleep(2)
+            return True, message
         else:
-            logger.info(f"Condiciones no cumplidas para {symbol}")
+            logger.info(f"Secuencia no detectada para {symbol}: {details.get('mensaje', '')}")
+        
+        return False, ""
+        
+    except Exception as e:
+        logger.error(f"Error analyzing {symbol}: {e}")
+        return False, f"Error analyzing {symbol}: {str(e)}"
+    finally:
+        # Always close the connection when done
+        if db_connection:
+            try:
+                db_connection.close()
+                logger.debug(f"Closed database connection for {symbol}")
+            except Exception as e:
+                logger.error(f"Error closing database connection for {symbol}: {e}")
+
+
 
 def run_continuous_checks(interval_minutes=20):
     """
-    Ejecuta verificaciones continuamente en un hilo separado.
+    Runs checks continuously in a separate thread.
     
     Args:
-        interval_minutes: Intervalo entre verificaciones en minutos
+        interval_minutes: Interval between checks in minutes
     """
-    # Crear conexión a la base de datos
-    connection = create_connection(config.DB_PATH)
-    if connection:
-        # Crear tablas si no existen
-        create_tables(connection)
-        logger.info(f"Base de datos inicializada: {config.DB_PATH}")
-    else:
-        logger.warning("No se pudo crear conexión a la base de datos. Continuando sin BD.")
+    # Create database connection
+    connection = None  # We'll create a new connection for each check
     
-    # Control de verificación de integridad (una vez al día)
+    # Integrity check control (once a day)
     last_integrity_check = 0
     last_log_rotation = 0
-    
-    # Realizar verificación inicial del estado del mercado
-    try:
-        # Usar el S&P 500 como referencia para el estado general del mercado
-        market_data = get_stock_data('SPY', period='5d', interval='1d')
-        if market_data is not None and not market_data.empty:
-            market_type = detect_market_type(market_data)
-            send_market_status_notification(market_type, config.TELEGRAM_BOT_TOKEN, config.TELEGRAM_CHAT_ID)
-    except Exception as e:
-        logger.error(f"Error al verificar estado inicial del mercado: {e}")
     
     while running:
         try:
             start_time = time.time()
             
-            # Renovar conexión a BD si es necesario
+            # Create a fresh connection for each check cycle
+            connection = create_connection(config.DB_PATH)
             if connection:
-                try:
-                    # Probar si la conexión sigue activa
-                    connection.execute("SELECT 1")
-                except:
-                    logger.warning("Conexión a BD perdida. Reconectando...")
-                    connection = create_connection(config.DB_PATH)
-                    if connection:
-                        logger.info("Reconexión a BD exitosa")
+                logger.info(f"Database connection created for this check cycle")
+                # Create tables if they don't exist
+                create_tables(connection)
             
-            # Verificar rotación de logs (una vez al día)
-            if start_time - last_log_rotation > 86400:  # 24 horas en segundos
+            # Check log rotation (once a day)
+            if start_time - last_log_rotation > 86400:  # 24 hours in seconds
                 rotate_logs(config.LOG_MAX_FILES, config.LOG_ROTATION_DAYS)
                 last_log_rotation = start_time
             
-            # Verificar integridad de datos (una vez al día)
+            # Verify data integrity (once a day)
             if start_time - last_integrity_check > config.INTEGRITY_CHECK_INTERVAL_SECONDS:
-                logger.info("Ejecutando verificación periódica de integridad de datos")
-                check_data_integrity(connection, config.get_stock_list())
+                logger.info("Running periodic data integrity check")
+                # Use a separate connection for integrity check
+                integrity_connection = create_connection(config.DB_PATH)
+                if integrity_connection:
+                    check_data_integrity(integrity_connection, config.get_stock_list())
+                    integrity_connection.close()
                 last_integrity_check = start_time
             
-            # Verificación normal de acciones
-            check_stocks(connection)
+            # Normal stock check with spacing
+            check_stocks_spaced(connection)
             
-            # Calcular cuánto esperar hasta la próxima verificación
+            # Close connection after checks
+            if connection:
+                connection.close()
+                connection = None
+                logger.info("Database connection closed after check cycle")
+            
+            # Calculate how long to wait until the next check
             elapsed_time = time.time() - start_time
             wait_time = max(0, interval_minutes * 60 - elapsed_time)
             
-            # Verificar si el mercado está abierto antes de esperar
+            # Check if the market is open before waiting
             if not is_market_open():
-                logger.info(f"Mercado cerrado. {format_time_to_market_open()}")
-                # Si está cerrado, esperar hasta 5 minutos antes de la próxima apertura o el intervalo normal
+                logger.info(f"Market closed. {format_time_to_market_open()}")
+                # If closed, wait until 5 minutes before next opening or the normal interval
                 wait_time = min(wait_time, calculate_time_to_next_check())
             
             if wait_time > 0:
-                logger.info(f"Esperando {wait_time:.1f} segundos hasta la próxima verificación")
+                logger.info(f"Waiting {wait_time:.1f} seconds until next check cycle")
                 time.sleep(wait_time)
                 
         except Exception as e:
-            logger.error(f"Error en el bucle de verificación: {e}")
-            # Esperar un minuto antes de reintentar en caso de error
+            logger.error(f"Error in the check loop: {e}")
+            # Close connection if there was an error
+            if connection:
+                try:
+                    connection.close()
+                except:
+                    pass
+                connection = None
+            # Wait one minute before retrying in case of error
             time.sleep(60)
 
 def calculate_time_to_next_check():
@@ -300,7 +371,7 @@ def handle_command_line():
 
 def main():
     """
-    Función principal del sistema.
+    Main function of the system.
     """
     global running
     
@@ -312,23 +383,23 @@ def main():
     print(f"• Acciones monitoreadas: {len(config.get_stock_list())}")
     print("-" * 60)
     
-    # Procesar argumentos de línea de comandos
+    # Process command line arguments
     interval = handle_command_line()
     
-    # Si se ejecutó un comando específico, terminar
+    # If a specific command was executed, terminate
     if interval is None or not isinstance(interval, int):
         return
     
     try:
-        # Crear directorios necesarios si no existen
+        # Create necessary directories if they don't exist
         for directory in [config.DATA_DIR, config.LOGS_DIR, config.DB_BACKUP_PATH]:
             os.makedirs(directory, exist_ok=True)
         
-        # Crear backup inicial de la base de datos si existe
+        # Create initial database backup if it exists
         if os.path.exists(config.DB_PATH):
             create_database_backup()
         
-        # Iniciar verificaciones continuas en un hilo independiente
+        # Start continuous checks in an independent thread
         check_thread = threading.Thread(
             target=run_continuous_checks,
             args=(interval,),
@@ -337,22 +408,22 @@ def main():
         
         check_thread.start()
         
-        # Mantener el programa en ejecución
-        print("\nSistema en ejecución. Presione Ctrl+C para detener.")
+        # Keep the program running
+        print("\nSystem is running. Press Ctrl+C to stop.")
         while check_thread.is_alive():
             time.sleep(1)
             
     except KeyboardInterrupt:
-        print("\nDetención solicitada por el usuario.")
+        print("\nUser requested stop.")
         running = False
-        logger.info("Sistema detenido por el usuario")
+        logger.info("System stopped by user")
     except Exception as e:
         print(f"\nError: {e}")
-        logger.error(f"Error en el sistema: {e}")
+        logger.error(f"System error: {e}")
     finally:
-        # Asegurar la correcta finalización
+        # Ensure proper termination
         running = False
-        print("\nSistema finalizado.")
+        print("\nSystem terminated.")
 
 if __name__ == "__main__":
     main()
