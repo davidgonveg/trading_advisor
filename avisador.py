@@ -16,9 +16,6 @@ from sqlite3 import Error
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Finnhub API configuration
-FINNHUB_API_KEY = "YOUR_FINNHUB_API_KEY"  # Replace with your actual Finnhub API key
-
 
 def get_last_data_from_db(connection, symbol, limit=200):
     """
