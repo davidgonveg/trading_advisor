@@ -1,47 +1,114 @@
+#!/usr/bin/env python3
 """
-Ejemplo de configuración global para el sistema de alertas de acciones.
-Copie este archivo a config.py y actualice con sus propias claves API.
+Script de prueba para verificar la integración con yfinance después de la corrección.
 """
-import logging
+import os
+import sys
+import pandas as pd
+import numpy as np
 
-# Configuración de Finnhub API
-FINNHUB_API_KEY = "TU_CLAVE_API_FINNHUB"  # Reemplazar con tu clave API real
+# Asegurar que podemos importar desde el directorio raíz
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-# Configuración de Telegram
-TELEGRAM_BOT_TOKEN = "TU_TOKEN_BOT_TELEGRAM"
-TELEGRAM_CHAT_ID = "TU_CHAT_ID_TELEGRAM"
+from market.data import get_yfinance_candles
+from indicators.bollinger import calculate_bollinger
+from indicators.macd import calculate_macd
+from indicators.rsi import calculate_stochastic_rsi
 
-# Configuración de la base de datos
-DB_PATH = "data/stock_alerts.db"
-
-# Configuración del análisis técnico
-BOLLINGER_WINDOW = 18
-BOLLINGER_DEVIATIONS = 2.25
-MACD_FAST = 8
-MACD_SLOW = 21
-MACD_SIGNAL = 9
-RSI_PERIOD = 14
-STOCH_RSI_K_PERIOD = 14
-STOCH_RSI_D_PERIOD = 3
-STOCH_RSI_SMOOTH = 3
-
-# Intervalos de tiempo
-CHECK_INTERVAL_MINUTES = 20
-INTEGRITY_CHECK_INTERVAL_SECONDS = 86400  # 24 horas
-
-# Lista de acciones para monitorizar
-def get_stock_list():
+def test_data_format():
     """
-    Devuelve la lista actualizada de acciones para monitorizar.
+    Verifica el formato de datos devuelto por yfinance y prueba los cálculos de indicadores.
     """
-    return [
-        # Tecnológicas
-        'NVDA',  # NVIDIA
-        'TSLA',  # Tesla
-        'META',  # Meta (Facebook)
-        'AAPL',  # Apple
-        'MSFT',  # Microsoft
+    print("\n=== PRUEBA DE FORMATO DE DATOS ===")
+    symbol = "AAPL"
+    
+    # Obtener datos de yfinance
+    print(f"Obteniendo datos para {symbol}...")
+    data = get_yfinance_candles(symbol, period="5d", interval="5m")
+    
+    if data.empty:
+        print("❌ No se pudieron obtener datos.")
+        return False
+    
+    print(f"✅ Se obtuvieron {len(data)} registros.")
+    
+    # Mostrar estructura de las columnas
+    print("\nEstructura de las columnas:")
+    print(f"Tipo de columnas: {type(data.columns)}")
+    print(f"Columnas: {list(data.columns)}")
+    
+    # Mostrar primeras filas para verificar formato
+    print("\nPrimeras 2 filas de datos:")
+    print(data.head(2))
+    
+    # Probar cálculo de Bollinger
+    print("\nCalculando Bandas de Bollinger...")
+    try:
+        data_with_bollinger = calculate_bollinger(data)
+        print("✅ Bandas de Bollinger calculadas correctamente.")
         
-        # Añade o elimina acciones según tus preferencias
-        # La lista completa está en config.py
-    ]
+        # Verificar columnas creadas
+        bb_columns = ['BB_MEDIA', 'BB_SUPERIOR', 'BB_INFERIOR']
+        for col in bb_columns:
+            if col in data_with_bollinger.columns:
+                print(f"  - {col}: OK")
+                # Mostrar algunos valores para verificación
+                print(f"    Valores muestra: {data_with_bollinger[col].iloc[10:13].values}")
+            else:
+                print(f"  - ❌ {col} falta")
+                
+        # Probar MACD
+        print("\nCalculando MACD...")
+        data_with_macd = calculate_macd(data_with_bollinger)
+        print("✅ MACD calculado correctamente.")
+        
+        # Verificar columnas creadas
+        macd_columns = ['MACD', 'MACD_SIGNAL', 'MACD_HIST']
+        for col in macd_columns:
+            if col in data_with_macd.columns:
+                print(f"  - {col}: OK")
+            else:
+                print(f"  - ❌ {col} falta")
+        
+        # Probar RSI
+        print("\nCalculando RSI Estocástico...")
+        full_data = calculate_stochastic_rsi(data_with_macd)
+        print("✅ RSI Estocástico calculado correctamente.")
+        
+        # Verificar columnas creadas
+        rsi_columns = ['RSI', 'RSI_K', 'RSI_D']
+        for col in rsi_columns:
+            if col in full_data.columns:
+                print(f"  - {col}: OK")
+            else:
+                print(f"  - ❌ {col} falta")
+        
+        # Guardar el DataFrame completo para referencia
+        output_file = "data/test_indicators_output.csv"
+        full_data.to_csv(output_file)
+        print(f"\n✅ Datos con indicadores guardados en {output_file}")
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ Error durante los cálculos: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+if __name__ == "__main__":
+    # Crear directorio de datos si no existe
+    os.makedirs("data", exist_ok=True)
+    
+    print("=" * 60)
+    print("PRUEBA DE INTEGRACIÓN YFINANCE - FORMATO DE DATOS")
+    print("=" * 60)
+    
+    success = test_data_format()
+    
+    print("\n" + "=" * 60)
+    if success:
+        print("✅ PRUEBA EXITOSA: El formato de datos y los cálculos de indicadores funcionan correctamente.")
+    else:
+        print("❌ PRUEBA FALLIDA: Revisa los errores anteriores.")
+    print("=" * 60)
