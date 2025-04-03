@@ -6,7 +6,7 @@ import os
 import importlib
 
 # Credenciales API - Deben configurarse en una instancia real
-API_KEY = "37295314ZqQNNcqRhjKQBxuSEcSFIMhtvUdVU"  # Se debe establecer en una instalación real
+API_KEY = ""  # Se debe establecer en una instalación real
 API_URL = "https://demo.trading212.com"  # URL demo por defecto
 
 # Parámetros de la estrategia
