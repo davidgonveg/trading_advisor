@@ -13,12 +13,15 @@ import os
 import pytz
 
 # Importar módulos del proyecto
-from utils.logger import logger, rotate_logs
+from utils.logger import logger, rotate_logs, save_alert_to_file
+from indicators.bollinger import calculate_bollinger
+from indicators.macd import calculate_macd
+from indicators.rsi import calculate_stochastic_rsi
 from database.connection import create_connection, create_tables
-from database.operations import check_data_integrity
+from database.operations import check_data_integrity, save_alert_to_db, save_historical_data
 from market.utils import is_market_open, format_time_to_market_open
 from market.data import get_stock_data
-from analysis.detector import analyze_stock_flexible
+from analysis.detector import analyze_stock_flexible, detect_signal_sequence
 from analysis.market_type import detect_market_type
 from notifications.telegram import send_telegram_alert, send_telegram_test, send_market_status_notification
 from notifications.formatter import format_weekly_summary
@@ -121,7 +124,7 @@ def analyze_stock_flexible_thread_safe(symbol, main_db_path=None):
                              db_connection=db_connection, 
                              only_new=(db_connection is not None))
         
-        if data is None or data.empty or len(data) < 30:
+        if data is None or data.empty or len(data) < 22:
             logger.warning(f"Datos insuficientes para analizar {symbol}")
             return False, f"Datos insuficientes de {symbol}"
         

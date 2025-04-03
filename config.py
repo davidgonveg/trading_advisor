@@ -9,8 +9,8 @@ DATA_DIR = os.path.join(BASE_DIR, 'data')
 LOGS_DIR = os.path.join(BASE_DIR, 'logs')
 
 # Configuración de Telegram
-TELEGRAM_BOT_TOKEN = ""
-TELEGRAM_CHAT_ID = ""
+TELEGRAM_BOT_TOKEN = "7869353980:AAGGPrOKCTD4afFc8k3PifPOzLLE6KY3E2E"
+TELEGRAM_CHAT_ID = "477718262"
 
 # Configuración de la base de datos
 DB_PATH = os.path.join(DATA_DIR, "stock_alerts.db")
@@ -28,7 +28,7 @@ STOCH_RSI_D_PERIOD = 3
 STOCH_RSI_SMOOTH = 3
 
 # Intervalos de tiempo
-CHECK_INTERVAL_MINUTES = 20
+CHECK_INTERVAL_MINUTES = 15.1
 INTEGRITY_CHECK_INTERVAL_SECONDS = 86400  # 24 horas
 LOG_ROTATION_DAYS = 30
 LOG_MAX_FILES = 10
@@ -63,7 +63,7 @@ def get_stock_list():
         # AI and tech with strong momentum
         'ARM',   # ARM Holdings
         'CRWD',  # CrowdStrike - Cybersecurity with clear technical patterns
-        'SHOP',  # Shopify
+        'CRSP',  # Shopify
         'UBER',  # Uber - Shows clear technical patterns
         'SNAP',  # Snap Inc. - Highly responsive to technical indicators
     ]

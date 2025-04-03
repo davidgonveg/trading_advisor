@@ -151,7 +151,7 @@ def analyze_stock_flexible(symbol, db_connection=None):
                              db_connection=db_connection, 
                              only_new=(db_connection is not None))
         
-        if data is None or data.empty or len(data) < 30:
+        if data is None or data.empty or len(data) < 22:
             logger.warning(f"Datos insuficientes para analizar {symbol}")
             return False, f"Datos insuficientes para {symbol}"
         
@@ -209,7 +209,7 @@ def analyze_stock(symbol):
         # Obtener datos con intervalo de 5 minutos para el último día
         data = get_stock_data(symbol, period='1d', interval='5m')
         
-        if data is None or data.empty or len(data) < 30:
+        if data is None or data.empty or len(data) < 22:
             logger.warning(f"Datos insuficientes para analizar {symbol}")
             return False, f"Datos insuficientes para {symbol}"
         

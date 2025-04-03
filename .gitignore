@@ -19,6 +19,7 @@ build/
 
 # Archivos de base de datos
 data/*.db
+data/backups/*.db
 *.db-journal
 
 # Logs

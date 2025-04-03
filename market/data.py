@@ -80,10 +80,10 @@ def get_yfinance_candles(symbol, period='1d', interval='5m', from_time=None):
             
             # Usar start y end en lugar de period
             start_date = from_time.strftime('%Y-%m-%d')
-            df = yf.download(symbol, start=start_date, interval=interval)
+            df = yf.download(symbol, start=start_date, interval=interval, prepost=True)
         else:
             # Usar period como está definido
-            df = yf.download(symbol, period=period, interval=interval)
+            df = yf.download(symbol, period=period, interval=interval, prepost=True)
         
         if df.empty:
             logger.warning(f"No se devolvieron datos de yfinance para {symbol}")

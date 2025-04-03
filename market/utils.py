@@ -21,7 +21,8 @@ def is_market_open():
     if now.weekday() >= 5:  # Sábado o domingo
         return False
     
-    # Horario regular del mercado (9:30 AM - 4:00 PM ET)
+    # Horario regular del mercado + 1 hora antes
+    pre_market_time = datetime.time(8, 30)  # 8:30 AM ET (1 hora antes)
     opening_time = datetime.time(9, 30)
     closing_time = datetime.time(16, 0)
     
