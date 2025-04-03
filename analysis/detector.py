@@ -177,6 +177,9 @@ def analyze_stock_flexible(symbol, db_connection=None):
         if sequence_detected:
             logger.info(f"Secuencia de señal detectada para {symbol}: {details}")
             
+            # Importación dentro de la función para evitar circulares
+            from notifications.formatter import generate_flexible_alert_message
+            
             # Usar el índice MACD (la última señal) para generar la alerta
             message = generate_flexible_alert_message(symbol, data, details)
             
@@ -185,11 +188,7 @@ def analyze_stock_flexible(symbol, db_connection=None):
                 macd_index = details.get("indice_macd", -1)
                 save_alert_to_db(db_connection, symbol, data, macd_index, message, "sequence")
             
-            return True, message
-        else:
-            logger.info(f"Secuencia completa no detectada para {symbol}: {details.get('mensaje', '')}")
-        
-        return False, ""
+        return True, message
         
     except Exception as e:
         logger.error(f"Error al analizar {symbol}: {e}")

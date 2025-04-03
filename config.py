@@ -9,8 +9,8 @@ DATA_DIR = os.path.join(BASE_DIR, 'data')
 LOGS_DIR = os.path.join(BASE_DIR, 'logs')
 
 # Configuración de Telegram
-TELEGRAM_BOT_TOKEN = ""
-TELEGRAM_CHAT_ID = ""
+TELEGRAM_BOT_TOKEN = "7869353980:AAGGPrOKCTD4afFc8k3PifPOzLLE6KY3E2E"
+TELEGRAM_CHAT_ID = "477718262"
 
 # Configuración de la base de datos
 DB_PATH = os.path.join(DATA_DIR, "stock_alerts.db")
