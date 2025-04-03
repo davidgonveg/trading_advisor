@@ -1,3 +1,10 @@
+# Archivos de entorno
+.env
+.env.local
+.env.development
+.env.production
+.env.test
+
 # Archivos de entorno virtual
 venv/
 env/

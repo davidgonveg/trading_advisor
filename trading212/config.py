@@ -1,24 +1,27 @@
 # Configuración específica de Trading212
 """
-Configuración para la integración con Trading212.
+Configuración para la integración con Trading212 usando variables de entorno.
 """
 import os
 import importlib
+from dotenv import load_dotenv
 
-# Credenciales API - Deben configurarse en una instancia real
-API_KEY = ""  # Se debe establecer en una instalación real
-API_URL = "https://demo.trading212.com"  # URL demo por defecto
+# Cargar variables de entorno
+load_dotenv()
+
+# Credenciales API - Usando variables de entorno
+API_KEY = os.getenv('TRADING212_API_KEY', '')
+API_URL = os.getenv('TRADING212_API_URL', '')
 
 # Parámetros de la estrategia
-CAPITAL_ALLOCATION_PERCENT = 90  # Porcentaje del capital disponible para invertir
-STOP_LOSS_PERCENT = 1.0  # Porcentaje de pérdida máxima permitida
-ENTRY_MONITOR_PERIOD_MINUTES = 20  # Tiempo máximo para esperar condiciones de entrada
-ENTRY_MONITOR_INTERVAL_SECONDS = 60  # Intervalo de verificación para entrada
-POSITION_MONITOR_INTERVAL_SECONDS = 15  # Intervalo de verificación para posiciones abiertas
-MAX_POSITION_DURATION_HOURS = 24  # Duración máxima de una posición (como seguridad)
+CAPITAL_ALLOCATION_PERCENT = int(os.getenv('TRADING212_CAPITAL_ALLOCATION', 90))
+STOP_LOSS_PERCENT = float(os.getenv('TRADING212_STOP_LOSS_PERCENT', 1.0))
+ENTRY_MONITOR_PERIOD_MINUTES = int(os.getenv('TRADING212_ENTRY_MONITOR_PERIOD', 20))
+ENTRY_MONITOR_INTERVAL_SECONDS = int(os.getenv('TRADING212_ENTRY_MONITOR_INTERVAL', 60))
+POSITION_MONITOR_INTERVAL_SECONDS = int(os.getenv('TRADING212_POSITION_MONITOR_INTERVAL', 15))
+MAX_POSITION_DURATION_HOURS = int(os.getenv('TRADING212_MAX_POSITION_DURATION', 24))
 
 # Lista de tickers de Trading212 mapeados desde tickers de YFinance
-# Este mapeo es necesario porque los tickers pueden tener formatos diferentes
 TICKER_MAPPING = {
     # YFinance ticker -> Trading212 ticker
     "AAPL": "AAPL_US_EQ",
@@ -34,28 +37,26 @@ TICKER_MAPPING = {
     "SMCI": "SMCI_US_EQ",
     "ARM": "ARM_US_EQ",
     "CRWD": "CRWD_US_EQ",
-    "SHOP": "SHOP_US_EQ",  # Asumiendo que CRSP era un error y se refería a Shopify
+    "SHOP": "SHOP_US_EQ",
     "UBER": "UBER_US_EQ",
     "SNAP": "SNAP_US_EQ",
-    # Añadir más mappings según necesidad
 }
 
 # Inversión inversa del mapeo para búsquedas rápidas
 REVERSE_TICKER_MAPPING = {v: k for k, v in TICKER_MAPPING.items()}
 
 # Limites de operación para evitar problemas
-MAX_ORDERS_PER_DAY = 10
-MIN_ORDER_VALUE_USD = 50  # Valor mínimo de orden en USD
+MAX_ORDERS_PER_DAY = int(os.getenv('TRADING212_MAX_ORDERS_PER_DAY', 10))
+MIN_ORDER_VALUE_USD = float(os.getenv('TRADING212_MIN_ORDER_VALUE', 50))
 
 # Parámetros de MACD para determinar condiciones de entrada/salida
-MACD_PEAK_DETECTION_PERIODS = 3  # Número de períodos para detectar un pico en MACD
+MACD_PEAK_DETECTION_PERIODS = int(os.getenv('TRADING212_MACD_PEAK_PERIODS', 3))
 
 # Flags de control para habilitar/deshabilitar funcionalidades
-ENABLE_TRADING = False  # Por defecto deshabilitado por seguridad
-ENABLE_STOP_LOSS = True
-SIMULATION_MODE = True  # En modo simulación, no se ejecutan órdenes reales
+ENABLE_TRADING = os.getenv('ENABLE_TRADING', 'False').lower() == 'true'
+ENABLE_STOP_LOSS = os.getenv('ENABLE_STOP_LOSS', 'True').lower() == 'true'
+SIMULATION_MODE = os.getenv('SIMULATION_MODE', 'True').lower() == 'true'
 
-# Reutilizar la lista de acciones del sistema principal
 def get_stock_list():
     """
     Devuelve la lista de acciones del sistema principal.

@@ -1,7 +1,12 @@
 """
 Configuración global para el sistema de alertas de acciones.
+Usa variables de entorno para credenciales sensibles.
 """
 import os
+from dotenv import load_dotenv
+
+# Cargar variables de entorno
+load_dotenv()
 
 # Rutas de directorios
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -9,12 +14,28 @@ DATA_DIR = os.path.join(BASE_DIR, 'data')
 LOGS_DIR = os.path.join(BASE_DIR, 'logs')
 
 # Configuración de Telegram
-TELEGRAM_BOT_TOKEN = ""
-TELEGRAM_CHAT_ID = ""
+TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '')
+TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', '')
+
+# Verificar que las credenciales de Telegram estén configuradas
+if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+    print("⚠️ ADVERTENCIA: Credenciales de Telegram no configuradas")
 
 # Configuración de la base de datos
 DB_PATH = os.path.join(DATA_DIR, "stock_alerts.db")
 DB_BACKUP_PATH = os.path.join(DATA_DIR, "backups")
+
+# Configuración de APIs
+FINNHUB_API_KEY = os.getenv('FINNHUB_API_KEY', '')
+
+# Configuración de Trading212
+TRADING212_API_KEY = os.getenv('TRADING212_API_KEY', '')
+TRADING212_API_URL = os.getenv('TRADING212_API_URL', 'https://demo.trading212.com')
+
+# Configuraciones de depuración y modo de operación
+DEBUG = os.getenv('DEBUG', 'False').lower() == 'true'
+ENABLE_TRADING = os.getenv('ENABLE_TRADING', 'False').lower() == 'true'
+SIMULATION_MODE = os.getenv('SIMULATION_MODE', 'True').lower() == 'true'
 
 # Configuración del análisis técnico
 BOLLINGER_WINDOW = 18
@@ -63,7 +84,7 @@ def get_stock_list():
         # AI and tech with strong momentum
         'ARM',   # ARM Holdings
         'CRWD',  # CrowdStrike - Cybersecurity with clear technical patterns
-        'CRSP',  # Shopify
+        'SHOP',  # Shopify
         'UBER',  # Uber - Shows clear technical patterns
         'SNAP',  # Snap Inc. - Highly responsive to technical indicators
     ]
@@ -76,5 +97,14 @@ WEEKLY_SUMMARY_ENABLED = True
 WEEKLY_SUMMARY_DAY = 5  # Viernes (0=Lunes, 6=Domingo)
 
 # Crear directorios si no existen
+import os
 for directory in [DATA_DIR, LOGS_DIR, DB_BACKUP_PATH]:
     os.makedirs(directory, exist_ok=True)
+
+# Imprimir advertencias de configuración
+if DEBUG:
+    print("🔍 Modo de depuración activado")
+if ENABLE_TRADING:
+    print("💹 Trading automático HABILITADO")
+if SIMULATION_MODE:
+    print("🎮 Modo de simulación activado")
