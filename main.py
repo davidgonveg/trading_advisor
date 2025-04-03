@@ -26,10 +26,55 @@ from analysis.market_type import detect_market_type
 from notifications.telegram import send_telegram_alert, send_telegram_test, send_market_status_notification
 from notifications.formatter import format_weekly_summary
 import config
+from trading212 import integrator as trading212_integrator
 
 # Variables globales para controlar el estado del sistema
 running = True
 sent_alerts = {}  # Registro de alertas enviadas para evitar duplicados
+
+
+def handle_command_line():
+    """
+    Procesa los argumentos de línea de comandos y ejecuta las acciones correspondientes.
+    """
+    parser = argparse.ArgumentParser(description='Sistema de Alertas Técnicas para Acciones')
+    
+    # ... tus argumentos existentes ...
+    
+    # Nuevos argumentos para Trading212
+    parser.add_argument('--trading212', action='store_true', help='Inicializar integración con Trading212')
+    parser.add_argument('--trading212-api-key', type=str, help='Clave API para Trading212')
+    parser.add_argument('--trading212-simulation', action='store_true', help='Usar modo simulación para Trading212')
+    parser.add_argument('--trading212-status', action='store_true', help='Mostrar estado de Trading212')
+    
+    # ... tu código existente ...
+    
+    # Procesar argumentos de Trading212
+    if args.trading212:
+        print("Inicializando integración con Trading212...")
+        simulation_mode = args.trading212_simulation or True
+        result = trading212_integrator.initialize(api_key=args.trading212_api_key, simulation_mode=simulation_mode)
+        
+        if result:
+            print("✅ Integración con Trading212 inicializada correctamente")
+            trading212_integrator.enable_integration()
+            print("✅ Integración con Trading212 habilitada")
+        else:
+            print("❌ Error al inicializar integración con Trading212")
+        
+        return True
+    
+    if args.trading212_status:
+        if not trading212_integrator.is_initialized():
+            print("❌ La integración con Trading212 no está inicializada")
+            return False
+            
+        status = trading212_integrator.get_status()
+        print("\nEstado de Trading212:")
+        print(status)
+        return True
+
+
 
 def check_stocks_spaced(db_connection=None):
     """
@@ -81,6 +126,16 @@ def check_stocks_spaced(db_connection=None):
                 
                 # As backup, save to file
                 save_alert_to_file(message)
+                
+                # NUEVO: Enviar alerta a Trading212 si está inicializado
+                if trading212_integrator.is_initialized():
+                    logger.info(f"Enviando alerta para {symbol} a Trading212")
+                    trading212_result = trading212_integrator.process_alert(symbol, message)
+                    
+                    if trading212_result:
+                        logger.info(f"Alerta para {symbol} procesada por Trading212")
+                    else:
+                        logger.warning(f"Error al procesar alerta para {symbol} en Trading212")
                 
                 results[symbol] = (True, message)
             else:
@@ -372,6 +427,8 @@ def handle_command_line():
     logger.info(f"Iniciando sistema con intervalo de verificación de {args.interval} minutos")
     return args.interval
 
+
+# Modificar la función main para inicializar Trading212
 def main():
     """
     Main function of the system.
@@ -401,6 +458,12 @@ def main():
         # Create initial database backup if it exists
         if os.path.exists(config.DB_PATH):
             create_database_backup()
+            
+        # NUEVO: Inicializar Trading212 en modo simulación por defecto
+        trading212_integrator.initialize(simulation_mode=True)
+        logger.info("Integración con Trading212 inicializada en modo simulación")
+        trading212_integrator.enable_integration()
+        logger.info("Integración con Trading212 habilitada")
         
         # Start continuous checks in an independent thread
         check_thread = threading.Thread(
@@ -420,6 +483,12 @@ def main():
         print("\nUser requested stop.")
         running = False
         logger.info("System stopped by user")
+        
+        # NUEVO: Detener procesos de Trading212
+        if trading212_integrator.is_initialized():
+            trading212_integrator.stop_all_processes()
+            logger.info("Procesos de Trading212 detenidos")
+            
     except Exception as e:
         print(f"\nError: {e}")
         logger.error(f"System error: {e}")
@@ -427,6 +496,7 @@ def main():
         # Ensure proper termination
         running = False
         print("\nSystem terminated.")
+
 
 if __name__ == "__main__":
     main()
