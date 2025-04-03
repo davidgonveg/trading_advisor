@@ -4,21 +4,26 @@ Este proyecto es un sistema automatizado para el análisis técnico de acciones 
 
 ## Características
 
-- Monitoreo automático de múltiples acciones
-- Análisis técnico usando múltiples indicadores:
-  - Bandas de Bollinger
+- Monitoreo automático de múltiples acciones configurables
+- Análisis técnico basado en múltiples indicadores:
+  - Bandas de Bollinger (con parámetros optimizados)
   - MACD (Moving Average Convergence Divergence)
   - RSI (Relative Strength Index) y RSI Estocástico
-- Detección de patrones de trading específicos
-- Alertas en tiempo real vía Telegram
+- Detección inteligente de secuencias de señales con ventana flexible
+- Adaptación automática a diferentes tipos de mercado (alcista, bajista, alta/baja volatilidad)
+- Alertas en tiempo real vía Telegram con información detallada
 - Almacenamiento de datos históricos en base de datos SQLite
-- Adaptación a diferentes tipos de mercado (alcista, bajista, alta/baja volatilidad)
+- Resúmenes diarios y semanales de trading
+- Sistema de backup automático de la base de datos
+- Verificación espaciada de acciones para optimizar llamadas a la API
+- Sistema de logs con rotación automática
 
 ## Requisitos
 
 - Python 3.8+
-- API key de Finnhub (datos del mercado)
+- Biblioteca yfinance (datos del mercado)
 - Bot de Telegram (para enviar alertas)
+- Dependencias listadas en `requirements.txt`
 
 ## Instalación
 
@@ -46,7 +51,7 @@ pip install -r requirements.txt
 
 4. Configurar credenciales:
 - Copiar `config_example.py` a `config.py`
-- Editar `config.py` con tus claves API de Finnhub y Telegram
+- Editar `config.py` con tu token de bot de Telegram y chat ID
 
 ## Uso
 
@@ -56,32 +61,82 @@ Para iniciar el sistema de monitoreo:
 python main.py
 ```
 
-Para enviar un mensaje de prueba a Telegram:
+Opciones adicionales:
 
 ```bash
-python -c "from notifications.telegram import send_telegram_test; send_telegram_test('Mensaje de prueba', 'TU_TOKEN_BOT', 'TU_CHAT_ID')"
+# Enviar un mensaje de prueba a Telegram para verificar configuración
+python main.py --test
+
+# Crear manualmente un backup de la base de datos
+python main.py --backup
+
+# Analizar un símbolo específico para comprobar si genera señal
+python main.py --symbol AAPL
+
+# Cambiar el intervalo de verificación (en minutos)
+python main.py --interval 10
 ```
+
+## Estrategia de Detección de Señales
+
+El sistema implementa una detección de secuencias de señales flexible:
+
+1. Busca una ruptura de la Banda de Bollinger inferior (precio por debajo de la banda)
+2. Detecta RSI Estocástico en zona de sobreventa (por debajo de 20)
+3. Identifica señales de MACD favorables (MACD acercándose a su línea de señal)
+
+La ventaja del enfoque de secuencia flexible es que detecta estas condiciones en cualquier orden siempre que ocurran dentro de una ventana de tiempo configurable (por defecto 5 velas de 5 minutos).
 
 ## Estructura del Proyecto
 
-- `config.py`: Configuración global y parámetros
+- `main.py`: Punto de entrada principal
+- `config.py`: Configuración global del sistema
 - `database/`: Módulo para manejo de base de datos
+  - `connection.py`: Funciones para crear conexiones
+  - `operations.py`: Operaciones CRUD en la base de datos
 - `indicators/`: Cálculo de indicadores técnicos
+  - `bollinger.py`: Bandas de Bollinger
+  - `macd.py`: Moving Average Convergence Divergence
+  - `rsi.py`: Relative Strength Index y RSI Estocástico
 - `market/`: Interacción con API de mercado
+  - `data.py`: Obtención de datos mediante yfinance
+  - `utils.py`: Utilidades relacionadas con el mercado
 - `analysis/`: Detección de patrones y análisis
+  - `detector.py`: Detección de secuencias de señales
+  - `market_type.py`: Detección del tipo de mercado
 - `notifications/`: Sistema de envío de alertas
+  - `telegram.py`: Envío de mensajes vía Telegram
+  - `formatter.py`: Formateo de mensajes de alerta
 - `utils/`: Utilidades generales
+  - `logger.py`: Sistema de logging con rotación
 - `data/`: Almacenamiento de datos y bases de datos
 - `logs/`: Archivos de registro
 
 ## Personalización
 
-Puedes personalizar:
+En el archivo `config.py` puedes personalizar:
 
-- La lista de acciones a monitorear en `config.py`
+- La lista de acciones a monitorear
 - Los parámetros de los indicadores técnicos
-- El formato de los mensajes de alerta
-- Los criterios de detección de patrones
+- Intervalos de verificación
+- Configuración de notificaciones
+- Opciones de rendimiento del sistema
+
+## Scripts de Prueba
+
+El proyecto incluye varios scripts para probar componentes específicos:
+
+- `test_database.py`: Prueba el almacenamiento en base de datos
+- `test_signal_detection.py`: Prueba la detección de señales
+- `test_yfinance.py`: Verifica la integración con yfinance
+
+## Ejecución en Segundo Plano
+
+Para ejecutar el sistema en segundo plano en servidores Linux:
+
+```bash
+nohup python main.py > output.log 2>&1 &
+```
 
 ## Contribuir
 
