@@ -1,186 +1,52 @@
 #!/usr/bin/env python3
 """
-Script de prueba para verificar la integración del sistema de alertas con Trading212.
+Script simple para probar compra y venta de acciones en Trading212.
+Realiza una compra de 10 euros en un instrumento y luego lo vende.
 """
 import os
 import sys
 import time
 import argparse
-import datetime
+from dotenv import load_dotenv
 
 # Asegurar que podemos importar desde el directorio raíz
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from utils.logger import setup_logger
-from market.data import get_yfinance_candles
-from indicators.bollinger import calculate_bollinger
-from indicators.macd import calculate_macd
-from indicators.rsi import calculate_stochastic_rsi
-from trading212.utils import generate_test_alert_message
-from analysis.detector import detect_signal_sequence
-from trading212 import integrator as trading212_integrator
-
-# Configurar logger
 logger = setup_logger()
 
-def simulate_alert(symbol):
-    """
-    Simula una alerta para un símbolo específico.
-    
-    Args:
-        symbol: Símbolo para el que se generará la alerta
-        
-    Returns:
-        (bool, str): Tupla con (alerta_generada, mensaje_alerta)
-    """
-    # Obtener datos para el símbolo
-    data = get_yfinance_candles(symbol, period="5d", interval="5m")
-    
-    if data.empty:
-        print(f"❌ No se pudieron obtener datos para {symbol}")
-        return False, ""
-    
-    print(f"✅ Obtenidos {len(data)} registros para {symbol}")
-    
-    # Calcular indicadores
-    data = calculate_bollinger(data)
-    data = calculate_macd(data)
-    data = calculate_stochastic_rsi(data)
-    
-    # Detectar secuencia de señales
-    sequence_detected, details = detect_signal_sequence(data)
-    
-    if sequence_detected:
-        print(f"🔔 SEÑAL DETECTADA para {symbol}")
-        print(f"  - Índice Bollinger: {details['indice_bollinger']}")
-        print(f"  - Índice RSI: {details['indice_rsi']}")
-        print(f"  - Índice MACD: {details['indice_macd']}")
-        
-        # Generar mensaje de alerta
-        message = generate_test_alert_message(symbol, data, details)
-        return True, message
-    else:
-        # Si no se detectó señal real, simular una
-        print(f"ℹ️ No se detectó señal real para {symbol}, simulando alerta...")
-        
-        # Crear detalles sintéticos para una alerta simulada
-        synthetic_details = {
-            "secuencia_ok": True,
-            "indice_bollinger": -5,  # 5 períodos atrás
-            "indice_rsi": -4,         # 4 períodos atrás
-            "indice_macd": -3,        # 3 períodos atrás
-            "distancia_bollinger_rsi": 1,
-            "ventana_total": 2,
-            "velas_para_cruce": 1.5
-        }
-        
-        # Generar mensaje de alerta sintético
-        message = generate_test_alert_message(symbol, data, synthetic_details)
-        return True, message
-        
-def test_trading212_integration(symbol, simulation_mode=True):
-    """
-    Prueba la integración con Trading212.
-    
-    Args:
-        symbol: Símbolo para probar
-        simulation_mode: Usar modo simulación (default: True)
-        
-    Returns:
-        bool: True si la prueba fue exitosa
-    """
-    print("\n" + "=" * 60)
-    print(f"PRUEBA DE INTEGRACIÓN CON TRADING212 PARA {symbol}")
-    print("=" * 60)
-    
-    # Inicializar Trading212
-    print("\nInicializando Trading212...")
-    result = trading212_integrator.initialize(simulation_mode=simulation_mode)
-    
-    if not result:
-        print("❌ Error al inicializar Trading212")
-        return False
-    
-    print("✅ Trading212 inicializado correctamente")
-    
-    # Habilitar integración
-    trading212_integrator.enable_integration()
-    print("✅ Integración habilitada")
-    
-    # Simular alerta
-    print(f"\nSimulando alerta para {symbol}...")
-    alert_generated, alert_message = simulate_alert(symbol)
-    
-    if not alert_generated:
-        print("❌ No se pudo generar alerta simulada")
-        return False
-    
-    print(f"✅ Alerta simulada generada para {symbol}")
-    
-    # Procesar alerta
-    print(f"\nProcesando alerta con Trading212...")
-    processing_result = trading212_integrator.process_alert(symbol, alert_message)
-    
-    if not processing_result:
-        print("❌ Error al procesar alerta con Trading212")
-        return False
-    
-    print("✅ Alerta procesada correctamente por Trading212")
-    
-    # Mostrar estado inicial
-    print("\nEstado inicial:")
-    initial_status = trading212_integrator.get_status()
-    print(initial_status)
-    
-    # Esperar a que se procese la alerta
-    print("\nEsperando a que se procese la alerta (20 segundos)...")
-    time.sleep(20)
-    
-    # Mostrar estado intermedio
-    print("\nEstado intermedio:")
-    mid_status = trading212_integrator.get_status()
-    print(mid_status)
-    
-    # Preguntar si se desea esperar más tiempo
-    wait_more = input("\n¿Desea esperar más tiempo para ver el proceso completo? (s/n): ").lower()
-    
-    if wait_more == 's':
-        wait_minutes = 5
-        print(f"\nEsperando {wait_minutes} minutos adicionales...")
-        for i in range(wait_minutes):
-            time.sleep(60)
-            print(f"Transcurridos {i+1} de {wait_minutes} minutos...")
-    
-    # Mostrar estado final
-    print("\nEstado final:")
-    final_status = trading212_integrator.get_status()
-    print(final_status)
-    
-    # Detener todos los procesos
-    print("\nDeteniendo todos los procesos...")
-    trading212_integrator.stop_all_processes()
-    print("✅ Todos los procesos detenidos")
-    
-    return True
+# Tiempo de espera entre operaciones para respetar límites de tasa
+WAIT_TIME_SECONDS = 10
 
-def test_trading212_alert_monitoring(symbol, simulation_mode=True):
+def wait_for_api(message="Esperando antes de la siguiente operación..."):
+    """Espera un tiempo fijo entre llamadas a la API para respetar límites de tasa."""
+    print(f"{message} ({WAIT_TIME_SECONDS} segundos)")
+    time.sleep(WAIT_TIME_SECONDS)
+
+def test_buy_and_sell(ticker, amount=10, quantity=0.1, wait_before_sell=60, simulation=True):
     """
-    Prueba específicamente el monitoreo posterior a una alerta sin ejecutar operaciones.
+    Realiza una prueba simple de compra y venta de un instrumento.
     
     Args:
-        symbol: Símbolo para probar
-        simulation_mode: Usar modo simulación (default: True)
-        
+        ticker: Ticker del instrumento en formato Trading212 (ej: AAPL_US_EQ)
+        amount: Cantidad en euros a invertir (default: 10)
+        quantity: Cantidad de acciones a comprar como alternativa (default: 0.1)
+        wait_before_sell: Segundos a esperar entre compra y venta (default: 60)
+        simulation: Si es True, opera en modo simulación (default: True)
+    
     Returns:
         bool: True si la prueba fue exitosa
     """
+    from trading212.api import Trading212API
+    from trading212 import initialize
+    
     print("\n" + "=" * 60)
-    print(f"PRUEBA DE MONITOREO POST-ALERTA PARA {symbol}")
+    print(f"PRUEBA DE COMPRA Y VENTA EN {'SIMULACIÓN' if simulation else 'REAL'}")
     print("=" * 60)
     
     # Inicializar Trading212
     print("\nInicializando Trading212...")
-    result = trading212_integrator.initialize(simulation_mode=simulation_mode)
+    result = initialize(simulation_mode=simulation)
     
     if not result:
         print("❌ Error al inicializar Trading212")
@@ -188,67 +54,290 @@ def test_trading212_alert_monitoring(symbol, simulation_mode=True):
     
     print("✅ Trading212 inicializado correctamente")
     
-    # Habilitar integración
-    trading212_integrator.enable_integration()
-    print("✅ Integración habilitada")
+    # Obtener instancias necesarias
+    import trading212
+    api_client = trading212._api_client
+    order_manager = trading212._order_manager
     
-    # Simular alerta
-    print(f"\nSimulando alerta para {symbol}...")
-    alert_generated, alert_message = simulate_alert(symbol)
-    
-    if not alert_generated:
-        print("❌ No se pudo generar alerta simulada")
-        return False
-    
-    print(f"✅ Alerta simulada generada para {symbol}")
-    
-    # Procesar alerta
-    print(f"\nProcesando alerta con Trading212...")
-    processing_result = trading212_integrator.process_alert(symbol, alert_message)
-    
-    if not processing_result:
-        print("❌ Error al procesar alerta con Trading212")
-        return False
-    
-    print("✅ Alerta procesada correctamente por Trading212")
-    
-    # Monitorear proceso
-    monitor_duration = 20  # minutos
-    print(f"\nMonitoreando proceso durante {monitor_duration} minutos...")
-    
-    for i in range(monitor_duration):
-        time.sleep(60)  # Esperar 1 minuto
-        print(f"\nEstado después de {i+1} minutos:")
-        status = trading212_integrator.get_status()
-        print(status)
+    # 1. Verificar efectivo disponible
+    wait_for_api("Verificando efectivo disponible")
+    try:
+        cash_info = api_client.get_account_cash()
+        if not cash_info:
+            print("❌ No se pudo obtener información de efectivo")
+            return False
         
-        # Preguntar si se desea detener el monitoreo antes de tiempo
-        if (i+1) % 5 == 0 and i < monitor_duration - 1:  # Cada 5 minutos
-            stop_early = input("\n¿Desea detener el monitoreo ahora? (s/n): ").lower()
-            if stop_early == 's':
+        free_cash = cash_info.get('free', 0)
+        print(f"✅ Efectivo disponible: {free_cash}")
+        
+        if free_cash < amount:
+            print(f"❌ No hay suficiente efectivo para comprar {amount} euros")
+            return False
+    except Exception as e:
+        print(f"❌ Error al verificar efectivo: {e}")
+        return False
+    
+    # 2. Verificar si el instrumento existe
+    wait_for_api("Verificando instrumento")
+    try:
+        instruments = api_client.get_instruments()
+        instrument_found = False
+        
+        for instrument in instruments:
+            if instrument.get('ticker') == ticker:
+                instrument_found = True
+                print(f"✅ Instrumento encontrado: {instrument.get('name')} ({ticker})")
                 break
+        
+        if not instrument_found:
+            print(f"❌ No se encontró el instrumento {ticker}")
+            return False
+    except Exception as e:
+        print(f"❌ Error al verificar instrumento: {e}")
+        return False
     
-    # Detener todos los procesos
-    print("\nDeteniendo todos los procesos...")
-    trading212_integrator.stop_all_processes()
-    print("✅ Todos los procesos detenidos")
+    # 3. Extraer el símbolo base del ticker para usarlo después
+    symbol_base = ticker.split('_')[0] if '_' in ticker else ticker
     
+    # 4. Ejecutar compra
+    wait_for_api("Preparando operación de compra")
+    print(f"\n--- EJECUTANDO COMPRA DE {ticker} POR {quantity} unidades ---")
+    
+    # Probar distintas estrategias de compra
+    buy_success = False
+    
+    # Estrategia 1: place_market_order con cantidad
+    try:
+        print("Intentando compra con place_market_order y cantidad...")
+        result = api_client.place_market_order(ticker=ticker, quantity=quantity)
+        
+        if result:
+            print(f"✅ Orden de compra ejecutada: {result}")
+            buy_success = True
+        else:
+            print("⚠️ No se recibió confirmación de la orden")
+    except Exception as e:
+        print(f"⚠️ Error en estrategia 1: {e}")
+    
+    # Si la estrategia 1 falló, intentar con el OrderManager
+    if not buy_success:
+        try:
+            print("\nObteniendo datos de precio actuales...")
+            # Importar yfinance para obtener datos reales
+            import yfinance as yf
+            
+            # Usar el símbolo base para yfinance
+            ticker_data = yf.Ticker(symbol_base)
+            current_data = ticker_data.history(period="1d", interval="1m")
+            
+            if not current_data.empty:
+                print(f"✅ Datos obtenidos para {symbol_base}")
+                
+                # Intentar colocar una orden directamente usando el OrderManager
+                print("\nIntentando compra con OrderManager...")
+                success = order_manager.execute_entry(symbol_base, current_data)
+                
+                if success:
+                    print(f"✅ Orden colocada usando OrderManager")
+                    buy_success = True
+                else:
+                    print(f"⚠️ OrderManager no pudo ejecutar la orden")
+            else:
+                print(f"⚠️ No se pudieron obtener datos para {symbol_base}")
+        except Exception as e:
+            print(f"⚠️ Error en estrategia 2: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    # Si ninguna estrategia funcionó, salir
+    if not buy_success:
+        print("❌ Todas las estrategias de compra fallaron")
+        return False
+    
+    # 5. Esperar a que se confirme la compra
+    wait_for_api("Esperando confirmación de la compra")
+    
+    try:
+        portfolio = api_client.get_portfolio()
+        position_found = False
+        position_ticker = None
+        
+        # Buscar tanto por ticker completo como por símbolo base
+        potential_tickers = [ticker, symbol_base]
+        
+        for position in portfolio:
+            pos_ticker = position.get('ticker')
+            if pos_ticker in potential_tickers or ticker in pos_ticker:
+                position_found = True
+                position_ticker = pos_ticker
+                position_quantity = position.get('quantity', 0)
+                avg_price = position.get('averagePrice', 0)
+                print(f"✅ Posición confirmada: {position_quantity} unidades de {position_ticker} a {avg_price} por unidad")
+                break
+        
+        if not position_found:
+            print("⚠️ No se encontró la posición en el portafolio. Puede estar pendiente.")
+            print("Portafolio actual:")
+            for pos in portfolio:
+                print(f"  - {pos.get('ticker')}: {pos.get('quantity')} unidades")
+    except Exception as e:
+        print(f"⚠️ Error al verificar portafolio: {e}")
+    
+    # 6. Esperar antes de vender
+    print(f"\nEsperando {wait_before_sell} segundos antes de vender...")
+    time.sleep(wait_before_sell)
+    
+    # 7. Ejecutar venta
+    wait_for_api("Preparando operación de venta")
+    
+    # Si no encontramos la posición antes, intentar de nuevo
+    if not position_found:
+        try:
+            portfolio = api_client.get_portfolio()
+            for position in portfolio:
+                pos_ticker = position.get('ticker')
+                if pos_ticker in potential_tickers or ticker in pos_ticker:
+                    position_found = True
+                    position_ticker = pos_ticker
+                    position_quantity = position.get('quantity', 0)
+                    print(f"✅ Posición encontrada ahora: {position_quantity} unidades de {position_ticker}")
+                    break
+        except Exception as e:
+            print(f"⚠️ Error al verificar portafolio nuevamente: {e}")
+    
+    # Si encontramos una posición, venderla
+    sell_success = False
+    
+    if position_found and position_ticker:
+        print(f"\n--- EJECUTANDO VENTA DE {position_ticker} ---")
+        
+        # Estrategia 1: Venta directa con place_market_order
+        try:
+            print("Intentando venta con place_market_order...")
+            # Obtener la cantidad que podemos vender
+            portfolio = api_client.get_portfolio()
+            for position in portfolio:
+                if position.get('ticker') == position_ticker:
+                    sell_quantity = position.get('quantity', 0)
+                    
+                    if sell_quantity > 0:
+                        print(f"Vendiendo {sell_quantity} unidades de {position_ticker}")
+                        result = api_client.place_market_order(ticker=position_ticker, quantity=sell_quantity)
+                        
+                        if result:
+                            print(f"✅ Orden de venta ejecutada: {result}")
+                            sell_success = True
+                        else:
+                            print("⚠️ No se recibió confirmación de la venta")
+                    else:
+                        print(f"⚠️ Cantidad a vender es 0 o negativa: {sell_quantity}")
+                    break
+        except Exception as e:
+            print(f"⚠️ Error en venta directa: {e}")
+        
+        # Si la estrategia 1 falló, intentar con el OrderManager
+        if not sell_success:
+            try:
+                print("\nObteniendo datos de precio actuales para venta...")
+                # Importar yfinance para obtener datos reales
+                import yfinance as yf
+                
+                # Determinar el símbolo a usar con yfinance
+                from trading212.config import REVERSE_TICKER_MAPPING
+                sell_symbol = REVERSE_TICKER_MAPPING.get(position_ticker, symbol_base)
+                
+                # Obtener datos actuales
+                ticker_data = yf.Ticker(sell_symbol)
+                current_data = ticker_data.history(period="1d", interval="1m")
+                
+                if not current_data.empty:
+                    print(f"✅ Datos obtenidos para {sell_symbol}")
+                    
+                    # Intentar vender usando el OrderManager
+                    print("\nIntentando venta con OrderManager...")
+                    success = order_manager.execute_exit(sell_symbol, current_data, reason="TEST")
+                    
+                    if success:
+                        print(f"✅ Venta ejecutada con OrderManager")
+                        sell_success = True
+                    else:
+                        print(f"⚠️ OrderManager no pudo ejecutar la venta")
+                else:
+                    print(f"⚠️ No se pudieron obtener datos para {sell_symbol}")
+            except Exception as e:
+                print(f"⚠️ Error en venta con OrderManager: {e}")
+                import traceback
+                traceback.print_exc()
+    else:
+        print("❌ No se pudo encontrar una posición para vender")
+    
+    # 8. Verificar que la posición se cerró
+    wait_for_api("Verificando cierre de posición")
+    
+    try:
+        portfolio = api_client.get_portfolio()
+        position_closed = True
+        
+        for position in portfolio:
+            pos_ticker = position.get('ticker')
+            if pos_ticker == position_ticker:
+                position_closed = False
+                break
+        
+        if position_closed:
+            print("✅ Posición cerrada correctamente")
+        else:
+            print("⚠️ La posición aún aparece en el portafolio. Puede estar en proceso de cierre.")
+    except Exception as e:
+        print(f"⚠️ Error al verificar cierre: {e}")
+    
+    # 9. Mostrar resumen
+    wait_for_api("Consultando resumen de operaciones")
+    
+    try:
+        # Mostrar resumen del order_manager si tiene una función para ello
+        if hasattr(order_manager, 'get_order_history_summary'):
+            summary = order_manager.get_order_history_summary()
+            print("\n----- RESUMEN DE OPERACIONES -----")
+            print(summary)
+        else:
+            print("\n----- RESUMEN DE OPERACIONES -----")
+            print("No se pudo obtener un resumen detallado")
+    except Exception as e:
+        print(f"⚠️ Error al obtener resumen: {e}")
+    
+    print("\n" + "=" * 60)
+    print("PRUEBA COMPLETADA")
+    print("=" * 60)
     return True
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Prueba de integración con Trading212')
+def main():
+    parser = argparse.ArgumentParser(description='Prueba simple de compra y venta en Trading212')
     
-    parser.add_argument('--symbol', type=str, default='AAPL', help='Símbolo a usar para la prueba')
-    parser.add_argument('--real', action='store_true', help='Usar modo real (por defecto: simulación)')
-    parser.add_argument('--monitor', action='store_true', help='Realizar prueba de monitoreo extendido')
+    parser.add_argument('--ticker', type=str, default='AAPL_US_EQ', help='Ticker a usar (formato Trading212)')
+    parser.add_argument('--amount', type=float, default=10, help='Cantidad en euros a invertir (default: 10)')
+    parser.add_argument('--quantity', type=float, default=0.1, help='Cantidad de acciones a comprar (default: 0.1)')
+    parser.add_argument('--wait', type=int, default=60, help='Tiempo en segundos entre compra y venta (default: 60)')
+    parser.add_argument('--real', action='store_true', help='Usar modo real, no simulación')
+    parser.add_argument('--rate-limit', type=int, default=10, help='Tiempo mínimo entre operaciones (default: 10 segundos)')
     
     args = parser.parse_args()
     
-    # Crear directorio de datos si no existe
-    os.makedirs("data", exist_ok=True)
+    # Actualizar tiempo de espera global
+    global WAIT_TIME_SECONDS
+    WAIT_TIME_SECONDS = args.rate_limit
     
-    # Ejecutar la prueba correspondiente
-    if args.monitor:
-        test_trading212_alert_monitoring(args.symbol, not args.real)
-    else:
-        test_trading212_integration(args.symbol, not args.real)
+    # Cargar variables de entorno
+    load_dotenv()
+    
+    # Ejecutar prueba
+    test_buy_and_sell(
+        ticker=args.ticker,
+        amount=args.amount,
+        quantity=args.quantity,
+        wait_before_sell=args.wait,
+        simulation=not args.real
+    )
+
+if __name__ == "__main__":
+    main()

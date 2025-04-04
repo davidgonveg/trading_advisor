@@ -205,6 +205,9 @@ def analyze_stock_flexible_thread_safe(symbol, main_db_path=None):
         if sequence_detected:
             logger.info(f"Detección de señal para {symbol}: {details}")
             
+            # Import here to avoid circular imports
+            from notifications.formatter import generate_flexible_alert_message
+            
             # Use the MACD index (the last signal) to generate the alert
             message = generate_flexible_alert_message(symbol, data, details)
             
@@ -443,29 +446,25 @@ def main():
     print(f"• Acciones monitoreadas: {len(config.get_stock_list())}")
     print("-" * 60)
     
-    # Process command line arguments
-    interval = handle_command_line()
-    
-    # If a specific command was executed, terminate
-    if interval is None or not isinstance(interval, int):
-        return
-    
+    # Procesar argumentos de línea de comandos
     try:
-        # Create necessary directories if they don't exist
+        interval = 15.1  # Valor por defecto
+        
+        # Crear directorios necesarios
         for directory in [config.DATA_DIR, config.LOGS_DIR, config.DB_BACKUP_PATH]:
             os.makedirs(directory, exist_ok=True)
         
-        # Create initial database backup if it exists
+        # Crear copia de seguridad inicial de la base de datos si existe
         if os.path.exists(config.DB_PATH):
             create_database_backup()
             
-        # NUEVO: Inicializar Trading212 en modo simulación por defecto
+        # Inicializar Trading212 en modo simulación por defecto
         trading212_integrator.initialize(simulation_mode=True)
         logger.info("Integración con Trading212 inicializada en modo simulación")
         trading212_integrator.enable_integration()
         logger.info("Integración con Trading212 habilitada")
         
-        # Start continuous checks in an independent thread
+        # Iniciar verificaciones continuas en un hilo independiente
         check_thread = threading.Thread(
             target=run_continuous_checks,
             args=(interval,),
@@ -474,29 +473,32 @@ def main():
         
         check_thread.start()
         
-        # Keep the program running
-        print("\nSystem is running. Press Ctrl+C to stop.")
-        while check_thread.is_alive():
-            time.sleep(1)
+        # Mantener el programa en ejecución
+        print("\nEl sistema está en funcionamiento. Presione Ctrl+C para detener.")
+        
+        # Bucle para mantener el programa en ejecución
+        while True:
+            time.sleep(60)  # Esperar 1 minuto
             
     except KeyboardInterrupt:
-        print("\nUser requested stop.")
+        print("\nDetención solicitada por el usuario.")
         running = False
-        logger.info("System stopped by user")
+        logger.info("Sistema detenido por el usuario")
         
-        # NUEVO: Detener procesos de Trading212
+        # Detener procesos de Trading212
         if trading212_integrator.is_initialized():
             trading212_integrator.stop_all_processes()
             logger.info("Procesos de Trading212 detenidos")
             
     except Exception as e:
         print(f"\nError: {e}")
-        logger.error(f"System error: {e}")
+        logger.error(f"Error del sistema: {e}")
+        import traceback
+        traceback.print_exc()
     finally:
-        # Ensure proper termination
+        # Asegurar terminación adecuada
         running = False
-        print("\nSystem terminated.")
-
+        print("\nSistema terminado.")
 
 if __name__ == "__main__":
     main()

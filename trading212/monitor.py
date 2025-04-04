@@ -207,7 +207,7 @@ class PositionMonitor:
         while not self.stop_monitoring:
             try:
                 # Obtener datos actualizados
-                data = get_yfinance_candles(self.symbol, period="1h", interval="1m")
+                data = get_yfinance_candles(self.symbol, period="1d", interval="1m")
                 
                 if data.empty:
                     logger.warning(f"No se pudieron obtener datos para {self.symbol}")
