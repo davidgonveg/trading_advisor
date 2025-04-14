@@ -23,14 +23,13 @@ _order_manager = None
 # Instancia global de la estrategia
 _strategy = None
 
-def initialize(api_key=None, api_url=None, simulation_mode=None):
+def initialize(api_key=None, api_url=None):
     """
     Inicializa el módulo de Trading212.
     
     Args:
         api_key: Clave API para Trading212 (opcional, usa el valor de config si no se proporciona)
         api_url: URL base de Trading212 (opcional, usa el valor de config si no se proporciona)
-        simulation_mode: Modo de simulación (opcional, usa el valor de config si no se proporciona)
         
     Returns:
         bool: True si la inicialización fue exitosa
@@ -43,29 +42,20 @@ def initialize(api_key=None, api_url=None, simulation_mode=None):
         url = api_url or API_URL
         
         # Verificar si la clave API está configurada
-        if not key and not SIMULATION_MODE:
-            logger.error("Se requiere una clave API para Trading212 en modo real")
+        if not key:
+            logger.error("Se requiere una clave API para Trading212")
             return False
-        
-        # Modificar el modo de simulación si se proporciona
-        if simulation_mode is not None:
-            # Modificamos el valor en el módulo config
-            import trading212.config
-            trading212.config.SIMULATION_MODE = simulation_mode
         
         # Crear cliente API
         _api_client = Trading212API(key, url)
         
         # Verificar conexión
-        if not SIMULATION_MODE:
-            account_info = _api_client.get_account_info()
-            if not account_info:
-                logger.error("No se pudo conectar a Trading212")
-                return False
-            
-            logger.info(f"Conectado a Trading212: ID de cuenta {account_info.get('id')}")
-        else:
-            logger.warning("Iniciando en modo de simulación - no se ejecutarán órdenes reales")
+        account_info = _api_client.get_account_info()
+        if not account_info:
+            logger.error("No se pudo conectar a Trading212")
+            return False
+        
+        logger.info(f"Conectado a Trading212: ID de cuenta {account_info.get('id')}")
         
         # Crear gestor de órdenes
         _order_manager = OrderManager(_api_client)

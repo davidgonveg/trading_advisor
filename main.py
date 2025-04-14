@@ -458,9 +458,9 @@ def main():
         if os.path.exists(config.DB_PATH):
             create_database_backup()
             
-        # Inicializar Trading212 en modo simulación por defecto
-        trading212_integrator.initialize(simulation_mode=False)
-        logger.info("Integración con Trading212 inicializada en modo REAL")
+        # Inicializar Trading212
+        trading212_integrator.initialize()
+        logger.info("Integración con Trading212 inicializada")
         trading212_integrator.enable_integration()
         logger.info("Integración con Trading212 habilitada")
         

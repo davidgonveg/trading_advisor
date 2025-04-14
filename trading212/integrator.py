@@ -15,29 +15,23 @@ class AlertsTrading212Integrator:
     basadas en las alertas generadas.
     """
     
-    def __init__(self, api_key=None, simulation_mode=True):
+    def __init__(self, api_key=None):
         """
         Inicializa el integrador.
         
         Args:
             api_key: Clave API para Trading212 (opcional)
-            simulation_mode: Modo de simulación (default: True)
         """
         self.initialized = False
         self.integration_enabled = False
         self.alerted_symbols = {}  # {symbol: {timestamp, message}}
         
         # Inicializar el módulo Trading212
-        if api_key or simulation_mode:
-            self.initialized = trading212.initialize(
-                api_key=api_key,
-                simulation_mode=simulation_mode
-            )
+        if api_key:
+            self.initialized = trading212.initialize(api_key=api_key)
             
             if self.initialized:
                 logger.info("Integración Trading212 inicializada correctamente")
-                if simulation_mode:
-                    logger.warning("Operando en modo SIMULACIÓN")
             else:
                 logger.error("Error al inicializar integración Trading212")
         
@@ -139,13 +133,12 @@ class AlertsTrading212Integrator:
 # Instancia global del integrador
 _integrator = None
 
-def initialize(api_key=None, simulation_mode=False):
+def initialize(api_key=None):
     """
     Inicializa la integración con Trading212.
     
     Args:
         api_key: Clave API para Trading212 (opcional)
-        simulation_mode: Modo de simulación (default: False)
         
     Returns:
         bool: True si la inicialización fue exitosa
@@ -156,7 +149,7 @@ def initialize(api_key=None, simulation_mode=False):
         logger.warning("La integración ya está inicializada")
         return True
     
-    _integrator = AlertsTrading212Integrator(api_key, simulation_mode)
+    _integrator = AlertsTrading212Integrator(api_key)
     return _integrator.initialized
 
 def enable_integration():

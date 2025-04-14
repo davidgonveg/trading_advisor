@@ -47,81 +47,25 @@ class OrderManager:
             bool: True si la orden se ejecutó con éxito
         """
         try:
-            # Verificar si ya existe una posición para este símbolo
-            if symbol in self.active_positions:
-                logger.warning(f"Ya existe una posición activa para {symbol}")
-                return False
-            
-            # Verificar límite de órdenes diarias
-            if len(self.order_history) >= MAX_ORDERS_PER_DAY:
-                logger.warning(f"Se alcanzó el límite diario de órdenes ({MAX_ORDERS_PER_DAY})")
-                return False
-            
             # Convertir símbolo de YFinance a ticker de Trading212
-            if symbol in TICKER_MAPPING:
-                trading212_ticker = TICKER_MAPPING[symbol]
-            else:
-                logger.error(f"No existe mapeo para el símbolo {symbol}")
-                return False
+            trading212_ticker = TICKER_MAPPING.get(symbol, symbol)
             
             # Obtener precio actual
             current_price = data['Close'].iloc[-1]
             
-            # Obtener disponibilidad de efectivo
-            if ENABLE_TRADING and not SIMULATION_MODE:
-                # Validaciones para modo real
-                logger.warning(f"🚨 EJECUTANDO ORDEN DE COMPRA REAL para {symbol}")
-                
-                # Verificar conexión y estado de la cuenta
-                account_info = self.api.get_account_info()
-                if not account_info:
-                    logger.error("No se pudo obtener información de la cuenta")
-                    return False
-                
-                # Obtener información de efectivo
-                cash_info = self.api.get_account_cash()
-                if not cash_info:
-                    logger.error("No se pudo obtener información de efectivo")
-                    return False
-                
-                available_cash = cash_info.get('free', 0)
-                
-                # Verificar instrumentos disponibles
-                instruments = self.api.get_instruments()
-                target_instrument = next((inst for inst in instruments if inst.get('ticker') == trading212_ticker), None)
-                
-                if not target_instrument:
-                    logger.error(f"No se encontró el instrumento para {symbol}")
-                    return False
-                
-                # Validar mínimos y máximos de trading
-                min_trade_qty = target_instrument.get('minTradeQuantity', 0.01)
-                max_open_qty = target_instrument.get('maxOpenQuantity', 100)
-                
-                allocation = available_cash * (CAPITAL_ALLOCATION_PERCENT / 100)
-                
-                if allocation < MIN_ORDER_VALUE_USD:
-                    logger.error(f"Fondos insuficientes. Disponible: ${allocation:.2f}")
-                    return False
-            else:
-                # En modo simulación, usar un valor ficticio
-                allocation = 10000 * (CAPITAL_ALLOCATION_PERCENT / 100)
-                min_trade_qty = 0.01
-                max_open_qty = 100
+            # Obtener información de efectivo
+            cash_info = self.api.get_account_cash()
+            if not cash_info:
+                logger.error("No se pudo obtener información de efectivo")
+                return False
+            
+            available_cash = cash_info.get('free', 0)
             
             # Calcular cantidad a comprar
+            allocation = available_cash * (CAPITAL_ALLOCATION_PERCENT / 100)
             quantity = round(allocation / current_price, 6)
             
-            # Validar cantidad
-            if quantity < min_trade_qty:
-                logger.warning(f"Cantidad {quantity} es menor que el mínimo {min_trade_qty}")
-                return False
-            
-            if quantity > max_open_qty:
-                logger.warning(f"Cantidad {quantity} excede el máximo {max_open_qty}")
-                return False
-            
-            # Asegurar que cumple con el valor mínimo de orden
+            # Validación mínima
             if quantity * current_price < MIN_ORDER_VALUE_USD:
                 logger.warning(f"Valor de orden insuficiente: ${quantity * current_price:.2f} < ${MIN_ORDER_VALUE_USD}")
                 return False
@@ -130,63 +74,36 @@ class OrderManager:
             order_time = datetime.datetime.now()
             
             # Ejecutar orden
-            if ENABLE_TRADING and not SIMULATION_MODE:
-                # Usar mapeo correcto del ticker
-                order_result = self.api.place_market_order(ticker=trading212_ticker, quantity=quantity)
-                
-                if not order_result:
-                    logger.error(f"Error al ejecutar orden para {symbol}")
-                    return False
-                
-                order_id = order_result.get('id')
-                
-                # Esperar confirmación de la orden
-                confirmed = self._wait_for_order_completion(order_id)
-                if not confirmed:
-                    logger.error(f"La orden para {symbol} no se completó")
-                    return False
-                
-                # Actualizar posiciones activas
-                self._refresh_positions()
-                
-                # Registrar en el historial
-                self.order_history.append({
-                    'symbol': symbol,
-                    'action': 'BUY',
-                    'quantity': quantity,
-                    'price': current_price,
-                    'time': order_time,
-                    'order_id': order_id
-                })
-            else:
-                # Modo simulación - registrar la "orden" sin ejecutarla realmente
-                logger.info(f"[SIMULACIÓN] Ejecutando compra de {quantity} {symbol} a ${current_price:.2f}")
-                
-                # Simular un ID de orden
-                order_id = f"sim_{int(time.time())}_{symbol}"
-                
-                # Actualizar posiciones activas simuladas
-                self.active_positions[symbol] = {
-                    'quantity': quantity,
-                    'entry_price': current_price,
-                    'entry_time': order_time,
-                    'order_id': order_id
-                }
-                
-                # Registrar en el historial
-                self.order_history.append({
-                    'symbol': symbol,
-                    'action': 'BUY',
-                    'quantity': quantity,
-                    'price': current_price,
-                    'time': order_time,
-                    'order_id': order_id,
-                    'simulated': True
-                })
+            logger.info(f"Ejecutando compra de {quantity} {symbol} a ${current_price:.2f}")
+            order_result = self.api.place_market_order(ticker=trading212_ticker, quantity=quantity)
+            
+            if not order_result:
+                logger.error(f"Error al ejecutar orden para {symbol}")
+                return False
+            
+            order_id = order_result.get('id')
+            
+            # Registrar en el historial
+            self.order_history.append({
+                'symbol': symbol,
+                'action': 'BUY',
+                'quantity': quantity,
+                'price': current_price,
+                'time': order_time,
+                'order_id': order_id
+            })
+            
+            # Actualizar posiciones activas
+            self.active_positions[symbol] = {
+                'quantity': quantity,
+                'entry_price': current_price,
+                'entry_time': order_time,
+                'order_id': order_id
+            }
             
             logger.info(f"Orden de compra ejecutada para {symbol}: {quantity} a ${current_price:.2f}")
             return True
-            
+        
         except Exception as e:
             logger.error(f"Error al ejecutar entrada para {symbol}: {e}")
             return False
@@ -210,11 +127,7 @@ class OrderManager:
                 return False
             
             # Convertir símbolo de YFinance a ticker de Trading212
-            if symbol in TICKER_MAPPING:
-                trading212_ticker = TICKER_MAPPING[symbol]
-            else:
-                logger.error(f"No existe mapeo para el símbolo {symbol}")
-                return False
+            trading212_ticker = TICKER_MAPPING.get(symbol, symbol)
             
             # Obtener precio actual
             current_price = data['Close'].iloc[-1]
@@ -231,58 +144,29 @@ class OrderManager:
             profit_loss_pct = (current_price / entry_price - 1) * 100
             
             # Ejecutar orden
-            if ENABLE_TRADING and not SIMULATION_MODE:
-                # Usar mapeo correcto del ticker
-                order_result = self.api.place_market_order(ticker=trading212_ticker, quantity=-quantity)
-                
-                if not order_result:
-                    logger.error(f"Error al ejecutar orden de venta para {symbol}")
-                    return False
-                
-                order_id = order_result.get('id')
-                
-                # Esperar confirmación de la orden
-                confirmed = self._wait_for_order_completion(order_id)
-                if not confirmed:
-                    logger.error(f"La orden de venta para {symbol} no se completó")
-                    return False
-                
-                # Actualizar posiciones activas
-                self._refresh_positions()
-                
-                # Registrar en el historial
-                self.order_history.append({
-                    'symbol': symbol,
-                    'action': 'SELL',
-                    'quantity': quantity,
-                    'price': current_price,
-                    'time': order_time,
-                    'order_id': order_id,
-                    'reason': reason,
-                    'profit_loss_pct': profit_loss_pct
-                })
-            else:
-                # Modo simulación - registrar la "orden" sin ejecutarla realmente
-                logger.info(f"[SIMULACIÓN] Ejecutando venta de {quantity} {symbol} a ${current_price:.2f}")
-                
-                # Simular un ID de orden
-                order_id = f"sim_{int(time.time())}_{symbol}_exit"
-                
-                # Registrar en el historial
-                self.order_history.append({
-                    'symbol': symbol,
-                    'action': 'SELL',
-                    'quantity': quantity,
-                    'price': current_price,
-                    'time': order_time,
-                    'order_id': order_id,
-                    'reason': reason,
-                    'profit_loss_pct': profit_loss_pct,
-                    'simulated': True
-                })
-                
-                # Eliminar de posiciones activas
-                del self.active_positions[symbol]
+            logger.info(f"Ejecutando venta de {quantity} {symbol} a ${current_price:.2f}")
+            order_result = self.api.place_market_order(ticker=trading212_ticker, quantity=-quantity)
+            
+            if not order_result:
+                logger.error(f"Error al ejecutar orden de venta para {symbol}")
+                return False
+            
+            order_id = order_result.get('id')
+            
+            # Registrar en el historial
+            self.order_history.append({
+                'symbol': symbol,
+                'action': 'SELL',
+                'quantity': quantity,
+                'price': current_price,
+                'time': order_time,
+                'order_id': order_id,
+                'reason': reason,
+                'profit_loss_pct': profit_loss_pct
+            })
+            
+            # Eliminar de posiciones activas
+            del self.active_positions[symbol]
             
             logger.info(f"Orden de venta ejecutada para {symbol}: {quantity} a ${current_price:.2f}, P/L: {profit_loss_pct:.2f}%, Razón: {reason}")
             return True

@@ -37,6 +37,10 @@ DEBUG = os.getenv('DEBUG', 'False').lower() == 'true'
 ENABLE_TRADING = os.getenv('ENABLE_TRADING', 'False').lower() == 'true'
 SIMULATION_MODE = os.getenv('SIMULATION_MODE', 'True').lower() == 'true'
 
+# Eliminar estas variables o establecerlas a valores fijos
+ENABLE_TRADING = True  # Siempre habilitado
+SIMULATION_MODE = False  # Nunca en modo simulación
+
 # Configuración del análisis técnico
 BOLLINGER_WINDOW = 18
 BOLLINGER_DEVIATIONS = 2.25
