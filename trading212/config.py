@@ -55,7 +55,7 @@ MACD_PEAK_DETECTION_PERIODS = int(os.getenv('TRADING212_MACD_PEAK_PERIODS', 3))
 # Flags de control para habilitar/deshabilitar funcionalidades
 ENABLE_TRADING = os.getenv('ENABLE_TRADING', 'False').lower() == 'true'
 ENABLE_STOP_LOSS = os.getenv('ENABLE_STOP_LOSS', 'True').lower() == 'true'
-SIMULATION_MODE = os.getenv('SIMULATION_MODE', 'True').lower() == 'true'
+SIMULATION_MODE = os.getenv('SIMULATION_MODE', 'False').lower() == 'true'
 
 def get_stock_list():
     """

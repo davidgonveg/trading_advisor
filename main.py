@@ -459,8 +459,8 @@ def main():
             create_database_backup()
             
         # Inicializar Trading212 en modo simulación por defecto
-        trading212_integrator.initialize(simulation_mode=True)
-        logger.info("Integración con Trading212 inicializada en modo simulación")
+        trading212_integrator.initialize(simulation_mode=False)
+        logger.info("Integración con Trading212 inicializada en modo REAL")
         trading212_integrator.enable_integration()
         logger.info("Integración con Trading212 habilitada")
         

@@ -69,19 +69,57 @@ class OrderManager:
             
             # Obtener disponibilidad de efectivo
             if ENABLE_TRADING and not SIMULATION_MODE:
+                # Validaciones para modo real
+                logger.warning(f"🚨 EJECUTANDO ORDEN DE COMPRA REAL para {symbol}")
+                
+                # Verificar conexión y estado de la cuenta
+                account_info = self.api.get_account_info()
+                if not account_info:
+                    logger.error("No se pudo obtener información de la cuenta")
+                    return False
+                
+                # Obtener información de efectivo
                 cash_info = self.api.get_account_cash()
                 if not cash_info:
                     logger.error("No se pudo obtener información de efectivo")
                     return False
                 
                 available_cash = cash_info.get('free', 0)
+                
+                # Verificar instrumentos disponibles
+                instruments = self.api.get_instruments()
+                target_instrument = next((inst for inst in instruments if inst.get('ticker') == trading212_ticker), None)
+                
+                if not target_instrument:
+                    logger.error(f"No se encontró el instrumento para {symbol}")
+                    return False
+                
+                # Validar mínimos y máximos de trading
+                min_trade_qty = target_instrument.get('minTradeQuantity', 0.01)
+                max_open_qty = target_instrument.get('maxOpenQuantity', 100)
+                
                 allocation = available_cash * (CAPITAL_ALLOCATION_PERCENT / 100)
+                
+                if allocation < MIN_ORDER_VALUE_USD:
+                    logger.error(f"Fondos insuficientes. Disponible: ${allocation:.2f}")
+                    return False
             else:
                 # En modo simulación, usar un valor ficticio
                 allocation = 10000 * (CAPITAL_ALLOCATION_PERCENT / 100)
+                min_trade_qty = 0.01
+                max_open_qty = 100
             
             # Calcular cantidad a comprar
             quantity = round(allocation / current_price, 6)
+            
+            # Validar cantidad
+            if quantity < min_trade_qty:
+                logger.warning(f"Cantidad {quantity} es menor que el mínimo {min_trade_qty}")
+                return False
+            
+            if quantity > max_open_qty:
+                logger.warning(f"Cantidad {quantity} excede el máximo {max_open_qty}")
+                return False
             
             # Asegurar que cumple con el valor mínimo de orden
             if quantity * current_price < MIN_ORDER_VALUE_USD:
@@ -93,7 +131,8 @@ class OrderManager:
             
             # Ejecutar orden
             if ENABLE_TRADING and not SIMULATION_MODE:
-                order_result = self.api.place_market_order(trading212_ticker, quantity)
+                # Usar mapeo correcto del ticker
+                order_result = self.api.place_market_order(ticker=trading212_ticker, quantity=quantity)
                 
                 if not order_result:
                     logger.error(f"Error al ejecutar orden para {symbol}")
@@ -193,8 +232,8 @@ class OrderManager:
             
             # Ejecutar orden
             if ENABLE_TRADING and not SIMULATION_MODE:
-                # Cantidad negativa para vender
-                order_result = self.api.place_market_order(trading212_ticker, -quantity)
+                # Usar mapeo correcto del ticker
+                order_result = self.api.place_market_order(ticker=trading212_ticker, quantity=-quantity)
                 
                 if not order_result:
                     logger.error(f"Error al ejecutar orden de venta para {symbol}")
@@ -268,26 +307,31 @@ class OrderManager:
         start_time = time.time()
         
         while time.time() - start_time < max_wait_seconds:
-            order_info = self.api.get_order(order_id)
-            
-            if not order_info:
-                logger.error(f"No se pudo obtener información de la orden {order_id}")
+            try:
+                order_info = self.api.get_order(order_id)
+                
+                if not order_info:
+                    logger.error(f"No se pudo obtener información de la orden {order_id}")
+                    time.sleep(2)
+                    continue
+                
+                status = order_info.get('status')
+                
+                if status == 'FILLED':
+                    logger.info(f"Orden {order_id} completada con éxito")
+                    return True
+                
+                if status in ['REJECTED', 'CANCELLED']:
+                    logger.error(f"Orden {order_id} rechazada o cancelada: {status}")
+                    return False
+                
+                # Si aún no está en un estado final, esperar y verificar nuevamente
+                logger.info(f"Orden {order_id} en estado {status}, esperando...")
                 time.sleep(2)
-                continue
-            
-            status = order_info.get('status')
-            
-            if status == 'FILLED':
-                logger.info(f"Orden {order_id} completada con éxito")
-                return True
-            
-            if status in ['REJECTED', 'CANCELLED']:
-                logger.error(f"Orden {order_id} rechazada o cancelada: {status}")
-                return False
-            
-            # Si aún no está en un estado final, esperar y verificar nuevamente
-            logger.info(f"Orden {order_id} en estado {status}, esperando...")
-            time.sleep(2)
+                
+            except Exception as e:
+                logger.error(f"Error al verificar orden {order_id}: {e}")
+                time.sleep(2)
         
         logger.error(f"Tiempo de espera agotado para la orden {order_id}")
         return False
@@ -354,6 +398,16 @@ class OrderManager:
             summary += f"- {symbol}: {position['quantity']} @ ${position.get('entry_price', 0):.2f}, Entrada: {time_str}\n"
         
         return summary
+    
+    def reset(self):
+        """
+        Reinicia el gestor de órdenes, limpiando historial y posiciones activas.
+        Útil para pruebas o reinicio del sistema.
+        """
+        logger.info("Reiniciando gestor de órdenes")
+        self.order_history.clear()
+        self.active_positions.clear()
+        logger.info("Historial de órdenes y posiciones activas limpiados")
     
     def get_order_history_summary(self):
         """

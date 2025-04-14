@@ -139,13 +139,13 @@ class AlertsTrading212Integrator:
 # Instancia global del integrador
 _integrator = None
 
-def initialize(api_key=None, simulation_mode=True):
+def initialize(api_key=None, simulation_mode=False):
     """
     Inicializa la integración con Trading212.
     
     Args:
         api_key: Clave API para Trading212 (opcional)
-        simulation_mode: Modo de simulación (default: True)
+        simulation_mode: Modo de simulación (default: False)
         
     Returns:
         bool: True si la inicialización fue exitosa
