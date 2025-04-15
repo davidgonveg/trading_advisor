@@ -27,13 +27,19 @@ class AlertsTrading212Integrator:
         self.alerted_symbols = {}  # {symbol: {timestamp, message}}
         
         # Inicializar el módulo Trading212
-        if api_key:
-            self.initialized = trading212.initialize(api_key=api_key)
-            
-            if self.initialized:
-                logger.info("Integración Trading212 inicializada correctamente")
+        try:
+            if api_key:
+                self.initialized = trading212.initialize(api_key=api_key)
+                
+                if self.initialized:
+                    logger.info("Integración Trading212 inicializada correctamente")
+                else:
+                    logger.error("Error al inicializar integración Trading212")
             else:
-                logger.error("Error al inicializar integración Trading212")
+                logger.error("No se proporcionó API Key para Trading212")
+        except Exception as e:
+            logger.error(f"Error durante la inicialización de Trading212: {e}")
+            self.initialized = False
         
     def enable(self):
         """Habilita la integración."""
@@ -145,12 +151,19 @@ def initialize(api_key=None):
     """
     global _integrator
     
+    # Limpiar cualquier instancia previa
     if _integrator is not None:
-        logger.warning("La integración ya está inicializada")
-        return True
+        logger.warning("Reinicializando la integración")
+        _integrator = None
     
-    _integrator = AlertsTrading212Integrator(api_key)
-    return _integrator.initialized
+    # Crear nueva instancia
+    try:
+        _integrator = AlertsTrading212Integrator(api_key)
+        return _integrator.initialized
+    except Exception as e:
+        logger.error(f"Error al inicializar la integración: {e}")
+        _integrator = None
+        return False
 
 def enable_integration():
     """

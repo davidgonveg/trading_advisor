@@ -154,6 +154,9 @@ def check_stocks_spaced(db_connection=None):
     return results
 
 
+# Modificación para main.py
+# Esta versión incluye más validaciones y mensajes de depuración
+
 def analyze_stock_flexible_thread_safe(symbol, main_db_path=None):
     """
     A thread-safe version of analyze_stock_flexible that creates its own database connection.
@@ -175,6 +178,7 @@ def analyze_stock_flexible_thread_safe(symbol, main_db_path=None):
     
     try:
         # Get data combining historical and new if possible
+        logger.info(f"Obteniendo datos para {symbol}...")
         data = get_stock_data(symbol, period='1d', interval='5m', 
                              db_connection=db_connection, 
                              only_new=(db_connection is not None))
@@ -182,6 +186,8 @@ def analyze_stock_flexible_thread_safe(symbol, main_db_path=None):
         if data is None or data.empty or len(data) < 22:
             logger.warning(f"Datos insuficientes para analizar {symbol}")
             return False, f"Datos insuficientes de {symbol}"
+        
+        logger.info(f"Datos obtenidos para {symbol}: {len(data)} registros")
         
         # Check if we already have all calculated indicators
         complete_indicators = all(col in data.columns for col in 
@@ -191,15 +197,18 @@ def analyze_stock_flexible_thread_safe(symbol, main_db_path=None):
         
         # If indicators are missing, calculate all
         if not complete_indicators:
+            logger.info(f"Calculando indicadores técnicos para {symbol}...")
             data = calculate_bollinger(data, window=18, deviations=2.25)
             data = calculate_macd(data, fast=8, slow=21, signal=9)
             data = calculate_stochastic_rsi(data, rsi_period=14, k_period=14, d_period=3, smooth=3)
+            logger.info(f"Indicadores calculados para {symbol}")
         
         # Save historical data if there's a DB connection
         if db_connection:
             save_historical_data(db_connection, symbol, data)
         
         # Detect flexible sequence of signals (maximum 5 candles or 25 minutes between first and last)
+        logger.info(f"Detectando secuencia de señales para {symbol}...")
         sequence_detected, details = detect_signal_sequence(data, max_window=5)
         
         if sequence_detected:
@@ -209,12 +218,25 @@ def analyze_stock_flexible_thread_safe(symbol, main_db_path=None):
             from notifications.formatter import generate_flexible_alert_message
             
             # Use the MACD index (the last signal) to generate the alert
+            logger.info(f"Generando mensaje de alerta para {symbol}...")
             message = generate_flexible_alert_message(symbol, data, details)
             
             # Save alert to the database if there's a connection
             if db_connection:
                 macd_index = details.get("indice_macd", -1)
                 save_alert_to_db(db_connection, symbol, data, macd_index, message, "sequence")
+            
+            # Verificar integración con Trading212
+            if trading212_integrator.is_initialized():
+                logger.info(f"Enviando alerta para {symbol} a Trading212...")
+                trading_result = trading212_integrator.process_alert(symbol, message)
+                
+                if trading_result:
+                    logger.info(f"Alerta para {symbol} procesada por Trading212")
+                else:
+                    logger.warning(f"Error al procesar alerta para {symbol} en Trading212")
+            else:
+                logger.warning(f"Integración con Trading212 no inicializada, no se procesa alerta para {symbol}")
             
             return True, message
         else:
@@ -224,6 +246,8 @@ def analyze_stock_flexible_thread_safe(symbol, main_db_path=None):
         
     except Exception as e:
         logger.error(f"Error analyzing {symbol}: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return False, f"Error analyzing {symbol}: {str(e)}"
     finally:
         # Always close the connection when done
@@ -233,7 +257,6 @@ def analyze_stock_flexible_thread_safe(symbol, main_db_path=None):
                 logger.debug(f"Closed database connection for {symbol}")
             except Exception as e:
                 logger.error(f"Error closing database connection for {symbol}: {e}")
-
 
 
 def run_continuous_checks(interval_minutes=20):
@@ -458,11 +481,26 @@ def main():
         if os.path.exists(config.DB_PATH):
             create_database_backup()
             
-        # Inicializar Trading212
-        trading212_integrator.initialize()
-        logger.info("Integración con Trading212 inicializada")
-        trading212_integrator.enable_integration()
-        logger.info("Integración con Trading212 habilitada")
+        # Inicializar Trading212 con la API Key desde config
+        api_key = config.TRADING212_API_KEY
+        api_url = config.TRADING212_API_URL
+        
+        if api_key:
+            logger.info(f"Inicializando integración con Trading212 usando API URL: {api_url}")
+            init_result = trading212_integrator.initialize(api_key=api_key)
+            
+            if init_result:
+                logger.info("Integración con Trading212 inicializada correctamente")
+                # Solo habilitar si se inicializó correctamente
+                enable_result = trading212_integrator.enable_integration()
+                if enable_result:
+                    logger.info("Integración con Trading212 habilitada correctamente")
+                else:
+                    logger.error("No se pudo habilitar la integración con Trading212")
+            else:
+                logger.error("No se pudo inicializar la integración con Trading212")
+        else:
+            logger.warning("No se ha configurado API_KEY para Trading212, integración deshabilitada")
         
         # Iniciar verificaciones continuas en un hilo independiente
         check_thread = threading.Thread(
@@ -489,16 +527,7 @@ def main():
         if trading212_integrator.is_initialized():
             trading212_integrator.stop_all_processes()
             logger.info("Procesos de Trading212 detenidos")
-            
-    except Exception as e:
-        print(f"\nError: {e}")
-        logger.error(f"Error del sistema: {e}")
-        import traceback
-        traceback.print_exc()
-    finally:
-        # Asegurar terminación adecuada
-        running = False
-        print("\nSistema terminado.")
+
 
 if __name__ == "__main__":
     main()

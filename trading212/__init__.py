@@ -23,13 +23,14 @@ _order_manager = None
 # Instancia global de la estrategia
 _strategy = None
 
-def initialize(api_key=None, api_url=None):
+def initialize(api_key=None, api_url=None, simulation_mode=None):
     """
     Inicializa el módulo de Trading212.
     
     Args:
         api_key: Clave API para Trading212 (opcional, usa el valor de config si no se proporciona)
         api_url: URL base de Trading212 (opcional, usa el valor de config si no se proporciona)
+        simulation_mode: Si se debe usar el modo simulación (opcional, usa el valor de config si no se proporciona)
         
     Returns:
         bool: True si la inicialización fue exitosa
@@ -37,14 +38,24 @@ def initialize(api_key=None, api_url=None):
     global _api_client, _order_manager, _strategy
     
     try:
+        # Limpiar cualquier instancia previa
+        _api_client = None
+        _order_manager = None
+        _strategy = None
+        
         # Usar valores proporcionados o los de configuración
         key = api_key or API_KEY
         url = api_url or API_URL
+        sim_mode = simulation_mode if simulation_mode is not None else SIMULATION_MODE
         
         # Verificar si la clave API está configurada
         if not key:
             logger.error("Se requiere una clave API para Trading212")
             return False
+        
+        # Mostrar modo de operación
+        mode_str = "SIMULACIÓN" if sim_mode else "REAL"
+        logger.info(f"Inicializando Trading212 en modo {mode_str}")
         
         # Crear cliente API
         _api_client = Trading212API(key, url)
@@ -68,6 +79,10 @@ def initialize(api_key=None, api_url=None):
         
     except Exception as e:
         logger.error(f"Error al inicializar módulo Trading212: {e}")
+        # Asegurar que todas las variables sean None en caso de error
+        _api_client = None
+        _order_manager = None
+        _strategy = None
         return False
 
 def process_alert(symbol, alert_message):
