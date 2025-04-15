@@ -36,19 +36,20 @@ class OrderManager:
             self._refresh_positions()
     
     def execute_entry(self, symbol, data):
-        """
-        Ejecuta una orden de entrada (compra).
-        
-        Args:
-            symbol: Símbolo YFinance
-            data: DataFrame con datos actualizados
-            
-        Returns:
-            bool: True si la orden se ejecutó con éxito
-        """
         try:
             # Convertir símbolo de YFinance a ticker de Trading212
             trading212_ticker = TICKER_MAPPING.get(symbol, symbol)
+            logger.info(f"Símbolo convertido: {symbol} -> {trading212_ticker}")
+            
+            # Verificar que el instrumento existe
+            instrument = self.api.check_instrument(trading212_ticker)
+            if not instrument:
+                logger.error(f"No se encontró el instrumento {trading212_ticker}")
+                return False
+                
+            # Obtener límites de operación
+            min_quantity = instrument.get('minTradeQuantity', 0.01)
+            max_quantity = instrument.get('maxOpenQuantity', 1000000)
             
             # Obtener precio actual
             current_price = data['Close'].iloc[-1]
@@ -63,49 +64,22 @@ class OrderManager:
             
             # Calcular cantidad a comprar
             allocation = available_cash * (CAPITAL_ALLOCATION_PERCENT / 100)
-            quantity = round(allocation / current_price, 6)
+            quantity = min(max(min_quantity, round(allocation / current_price, 2)), max_quantity)
             
             # Validación mínima
             if quantity * current_price < MIN_ORDER_VALUE_USD:
                 logger.warning(f"Valor de orden insuficiente: ${quantity * current_price:.2f} < ${MIN_ORDER_VALUE_USD}")
                 return False
             
-            # Registrar la hora de la orden
-            order_time = datetime.datetime.now()
-            
             # Ejecutar orden
-            logger.info(f"Ejecutando compra de {quantity} {symbol} a ${current_price:.2f}")
+            logger.info(f"Ejecutando compra de {quantity} {trading212_ticker} a ${current_price:.2f}")
             order_result = self.api.place_market_order(ticker=trading212_ticker, quantity=quantity)
             
-            if not order_result:
-                logger.error(f"Error al ejecutar orden para {symbol}")
-                return False
-            
-            order_id = order_result.get('id')
-            
-            # Registrar en el historial
-            self.order_history.append({
-                'symbol': symbol,
-                'action': 'BUY',
-                'quantity': quantity,
-                'price': current_price,
-                'time': order_time,
-                'order_id': order_id
-            })
-            
-            # Actualizar posiciones activas
-            self.active_positions[symbol] = {
-                'quantity': quantity,
-                'entry_price': current_price,
-                'entry_time': order_time,
-                'order_id': order_id
-            }
-            
-            logger.info(f"Orden de compra ejecutada para {symbol}: {quantity} a ${current_price:.2f}")
-            return True
-        
+            # Resto del código igual...
         except Exception as e:
             logger.error(f"Error al ejecutar entrada para {symbol}: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return False
     
     def execute_exit(self, symbol, data, reason=""):

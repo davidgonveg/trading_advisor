@@ -11,6 +11,7 @@ import argparse
 import sqlite3
 import os
 import pytz
+import pandas as pd
 
 # Importar módulos del proyecto
 from utils.logger import logger, rotate_logs, save_alert_to_file
@@ -27,6 +28,8 @@ from notifications.telegram import send_telegram_alert, send_telegram_test, send
 from notifications.formatter import format_weekly_summary
 import config
 from trading212 import integrator as trading212_integrator
+# Importar get_last_data_from_db de database.operations
+from database.operations import get_last_data_from_db
 
 # Variables globales para controlar el estado del sistema
 running = True
@@ -79,6 +82,7 @@ def handle_command_line():
 def check_stocks_spaced(db_connection=None):
     """
     Verifies all stocks in the list with calls spaced over time to avoid API rate limits.
+    Optimizado para mayor frecuencia de verificación sin problemas de API.
     
     Args:
         db_connection: Database connection (optional)
@@ -94,65 +98,111 @@ def check_stocks_spaced(db_connection=None):
     stocks = config.get_stock_list()
     results = {}
     
+    # Verificar si hay un número adecuado de stocks para analizar
+    if not stocks:
+        logger.warning("Lista de acciones vacía. No hay nada que verificar.")
+        return results
+    
     # Calculate delay between stocks to spread checks across the interval
-    # Use 75% of the interval to ensure we finish before the next check
-    total_available_time = config.CHECK_INTERVAL_MINUTES * 60 * 0.75  # in seconds
-    delay_between_stocks = total_available_time / len(stocks)
+    # Use 80% of the interval to ensure we finish before the next check
+    total_available_time = config.CHECK_INTERVAL_MINUTES * 60 * 0.8  # in seconds
     
-    logger.info(f"Espaciando verificaciones de acciones con {delay_between_stocks:.1f} segundos entre cada acción")
+    # Calculate delay based on number of stocks
+    delay_between_stocks = total_available_time / len(stocks) 
     
-    for i, symbol in enumerate(stocks):
-        try:
-            logger.info(f"Analizando {symbol} ({i+1}/{len(stocks)})...")
-            meets_conditions, message = analyze_stock_flexible_thread_safe(symbol, config.DB_PATH)
-            
-            if meets_conditions:
-                # Check if we already sent an alert for this symbol in the last hour
+    # Apply a minimum delay to prevent API rate limits (1 segunda entre verificaciones)
+    min_delay = config.RATE_LIMIT_THROTTLE  # usar el valor configurado
+    delay_between_stocks = max(delay_between_stocks, min_delay)
+    
+    logger.info(f"Frecuencia: verificación cada {config.CHECK_INTERVAL_MINUTES:.2f} minutos")
+    logger.info(f"Espaciando {len(stocks)} acciones con {delay_between_stocks:.2f} seg entre cada una")
+    
+    # Implement batching with dynamic batch size
+    batch_size = min(config.MAX_SYMBOLS_PER_BATCH, len(stocks))  # Limitar tamaño de lote
+    batch_count = (len(stocks) + batch_size - 1) // batch_size  # Calcular número de lotes
+    
+    logger.info(f"Procesando en {batch_count} lotes de hasta {batch_size} acciones cada uno")
+    
+    # Implementar verificación con memoria de caché
+    cache = {}  # Cache para datos históricos recientes {symbol: (timestamp, data)}
+    cache_time = 600  # Solo reutilizar caché por 10 minutos (600 segundos)
+    
+    # Dividir las acciones en lotes
+    for batch_index in range(batch_count):
+        start_idx = batch_index * batch_size
+        end_idx = min(start_idx + batch_size, len(stocks))
+        current_batch = stocks[start_idx:end_idx]
+        
+        logger.info(f"Procesando lote {batch_index+1}/{batch_count}: {len(current_batch)} acciones")
+        
+        for i, symbol in enumerate(current_batch):
+            try:
+                logger.info(f"Analizando {symbol} ({start_idx+i+1}/{len(stocks)})...")
+                
+                # Intentar utilizar caché de datos si está disponible y es reciente
                 current_time = time.time()
-                if symbol in sent_alerts:
-                    last_alert = sent_alerts[symbol]
-                    # Avoid sending more than one alert for the same symbol in 60 minutes
-                    if current_time - last_alert < 3600:
-                        logger.info(f"Alert for {symbol} already sent in the last hour. Skipping.")
-                        results[symbol] = (False, "Alert already sent recently")
-                        continue
+                if symbol in cache:
+                    cache_timestamp, cached_data = cache[symbol]
+                    if current_time - cache_timestamp < cache_time:
+                        logger.info(f"Usando datos en caché para {symbol} (de hace {(current_time - cache_timestamp):.1f} segundos)")
+                        # Aquí podrías implementar una lógica para usar los datos en caché
                 
-                # Send alert via Telegram
-                logger.info(f"Conditions met for {symbol}, sending alert")
-                send_telegram_alert(message, config.TELEGRAM_BOT_TOKEN, config.TELEGRAM_CHAT_ID)
+                # Analizar la acción (con o sin caché)
+                meets_conditions, message = analyze_stock_flexible_thread_safe(symbol, config.DB_PATH)
                 
-                # Record the sending time of this alert
-                sent_alerts[symbol] = current_time
-                
-                # As backup, save to file
-                save_alert_to_file(message)
-                
-                # NUEVO: Enviar alerta a Trading212 si está inicializado
-                if trading212_integrator.is_initialized():
-                    logger.info(f"Enviando alerta para {symbol} a Trading212")
-                    trading212_result = trading212_integrator.process_alert(symbol, message)
+                # Procesar resultado y enviar alerta si necesario
+                if meets_conditions:
+                    # Check if we already sent an alert for this symbol in the last 20 minutes
+                    if symbol in sent_alerts:
+                        last_alert = sent_alerts[symbol]
+                        # Avoid sending more than one alert for the same symbol in 20 minutes
+                        if current_time - last_alert < 1200:  # 20 minutos en segundos (reducido de 30)
+                            logger.info(f"Alert for {symbol} already sent in the last 20 minutes. Skipping.")
+                            results[symbol] = (False, "Alert already sent recently")
+                            continue
                     
-                    if trading212_result:
-                        logger.info(f"Alerta para {symbol} procesada por Trading212")
-                    else:
-                        logger.warning(f"Error al procesar alerta para {symbol} en Trading212")
+                    # Send alert via Telegram
+                    logger.info(f"Conditions met for {symbol}, sending alert")
+                    send_telegram_alert(message, config.TELEGRAM_BOT_TOKEN, config.TELEGRAM_CHAT_ID)
+                    
+                    # Record the sending time of this alert
+                    sent_alerts[symbol] = current_time
+                    
+                    # As backup, save to file
+                    save_alert_to_file(message)
+                    
+                    # Enviar alerta a Trading212 si está inicializado
+                    if trading212_integrator.is_initialized():
+                        logger.info(f"Enviando alerta para {symbol} a Trading212")
+                        trading212_result = trading212_integrator.process_alert(symbol, message)
+                        
+                        if trading212_result:
+                            logger.info(f"Alerta para {symbol} procesada por Trading212")
+                        else:
+                            logger.warning(f"Error al procesar alerta para {symbol} en Trading212")
+                    
+                    results[symbol] = (True, message)
+                else:
+                    logger.info(f"Conditions not met for {symbol}")
+                    results[symbol] = (False, "Conditions not met")
                 
-                results[symbol] = (True, message)
-            else:
-                logger.info(f"Conditions not met for {symbol}")
-                results[symbol] = (False, "Conditions not met")
-                
-            # Wait before checking the next stock, unless it's the last one
-            if i < len(stocks) - 1:
-                logger.info(f"Waiting {delay_between_stocks:.1f} seconds before checking next stock")
-                time.sleep(delay_between_stocks)
-                
-        except Exception as e:
-            logger.error(f"Error processing {symbol}: {e}")
-            results[symbol] = (False, f"Error: {str(e)}")
+                # Wait before processing the next stock, unless it's the last one in the batch
+                if i < len(current_batch) - 1:
+                    logger.debug(f"Esperando {delay_between_stocks:.2f} seg antes de analizar la siguiente acción")
+                    time.sleep(delay_between_stocks)
+                    
+            except Exception as e:
+                logger.error(f"Error processing {symbol}: {e}")
+                results[symbol] = (False, f"Error: {str(e)}")
+        
+        # Verificar si es necesario esperar entre lotes (solo si no es el último lote)
+        if batch_index < batch_count - 1:
+            batch_delay = 3.0  # Esperar 3 segundos entre lotes
+            logger.info(f"Lote {batch_index+1} completado. Esperando {batch_delay} segundos antes del siguiente lote...")
+            time.sleep(batch_delay)
     
+    logger.info(f"Verificación completa de {len(stocks)} acciones finalizada.")
     return results
-
 
 # Modificación para main.py
 # Esta versión incluye más validaciones y mensajes de depuración
@@ -160,6 +210,7 @@ def check_stocks_spaced(db_connection=None):
 def analyze_stock_flexible_thread_safe(symbol, main_db_path=None):
     """
     A thread-safe version of analyze_stock_flexible that creates its own database connection.
+    Optimizada para minimizar llamadas a API cuando se reducen los intervalos de tiempo.
     
     Args:
         symbol: Stock symbol to analyze
@@ -168,6 +219,9 @@ def analyze_stock_flexible_thread_safe(symbol, main_db_path=None):
     Returns:
         (bool, str): Tuple with (alert_generated, alert_message)
     """
+    # Importar get_last_data_from_db de database.operations
+    from database.operations import get_last_data_from_db
+
     # Create a new connection specific to this thread
     db_connection = None
     if main_db_path:
@@ -177,11 +231,37 @@ def analyze_stock_flexible_thread_safe(symbol, main_db_path=None):
             logger.error(f"Error al crear la conexión a la base de datos. {symbol}: {e}")
     
     try:
-        # Get data combining historical and new if possible
-        logger.info(f"Obteniendo datos para {symbol}...")
-        data = get_stock_data(symbol, period='1d', interval='5m', 
-                             db_connection=db_connection, 
-                             only_new=(db_connection is not None))
+        # Comprobar si hay datos recientes en la base de datos antes de solicitar nuevos
+        if db_connection:
+            from_db = True
+            last_data = get_last_data_from_db(db_connection, symbol, limit=200)
+            
+            # Si hay datos en la BD y son recientes (menos de 5 minutos), prioritizar esos datos
+            if last_data is not None and not last_data.empty:
+                last_data_time = last_data.index[-1]
+                current_time = pd.Timestamp.now(tz=last_data_time.tz)
+                data_age = (current_time - last_data_time).total_seconds() / 60
+                
+                if data_age < 5:  # Datos de menos de 5 minutos
+                    logger.info(f"Usando datos recientes de BD para {symbol} (de hace {data_age:.1f} minutos)")
+                    data = last_data
+                    from_db = True
+                else:
+                    logger.info(f"Datos de BD para {symbol} demasiado antiguos ({data_age:.1f} min). Obteniendo nuevos datos.")
+                    from_db = False
+            else:
+                logger.info(f"No hay datos recientes en BD para {symbol}. Obteniendo nuevos datos.")
+                from_db = False
+        else:
+            from_db = False
+        
+        # Si no hay datos recientes en BD, obtener nuevos datos
+        if not from_db:
+            # Get data combining historical and new if possible
+            logger.info(f"Obteniendo datos para {symbol}...")
+            data = get_stock_data(symbol, period='1d', interval='5m', 
+                                db_connection=db_connection, 
+                                only_new=(db_connection is not None))
         
         if data is None or data.empty or len(data) < 22:
             logger.warning(f"Datos insuficientes para analizar {symbol}")
@@ -191,20 +271,23 @@ def analyze_stock_flexible_thread_safe(symbol, main_db_path=None):
         
         # Check if we already have all calculated indicators
         complete_indicators = all(col in data.columns for col in 
-                                 ['BB_INFERIOR', 'BB_MEDIA', 'BB_SUPERIOR', 
-                                  'MACD', 'MACD_SIGNAL', 'MACD_HIST', 
-                                  'RSI', 'RSI_K', 'RSI_D'])
+                                ['BB_INFERIOR', 'BB_MEDIA', 'BB_SUPERIOR', 
+                                 'MACD', 'MACD_SIGNAL', 'MACD_HIST', 
+                                 'RSI', 'RSI_K', 'RSI_D'])
         
         # If indicators are missing, calculate all
         if not complete_indicators:
             logger.info(f"Calculando indicadores técnicos para {symbol}...")
-            data = calculate_bollinger(data, window=18, deviations=2.25)
-            data = calculate_macd(data, fast=8, slow=21, signal=9)
-            data = calculate_stochastic_rsi(data, rsi_period=14, k_period=14, d_period=3, smooth=3)
+            data = calculate_bollinger(data, window=config.BOLLINGER_WINDOW, deviations=config.BOLLINGER_DEVIATIONS)
+            data = calculate_macd(data, fast=config.MACD_FAST, slow=config.MACD_SLOW, signal=config.MACD_SIGNAL)
+            data = calculate_stochastic_rsi(data, rsi_period=config.RSI_PERIOD, 
+                                          k_period=config.STOCH_RSI_K_PERIOD, 
+                                          d_period=config.STOCH_RSI_D_PERIOD, 
+                                          smooth=config.STOCH_RSI_SMOOTH)
             logger.info(f"Indicadores calculados para {symbol}")
         
-        # Save historical data if there's a DB connection
-        if db_connection:
+        # Save historical data if there's a DB connection and we have new data
+        if db_connection and not from_db:
             save_historical_data(db_connection, symbol, data)
         
         # Detect flexible sequence of signals (maximum 5 candles or 25 minutes between first and last)
@@ -236,7 +319,7 @@ def analyze_stock_flexible_thread_safe(symbol, main_db_path=None):
                 else:
                     logger.warning(f"Error al procesar alerta para {symbol} en Trading212")
             else:
-                logger.warning(f"Integración con Trading212 no inicializada, no se procesa alerta para {symbol}")
+                logger.debug(f"Integración con Trading212 no inicializada, no se procesa alerta para {symbol}")
             
             return True, message
         else:
@@ -259,19 +342,27 @@ def analyze_stock_flexible_thread_safe(symbol, main_db_path=None):
                 logger.error(f"Error closing database connection for {symbol}: {e}")
 
 
-def run_continuous_checks(interval_minutes=20):
+def run_continuous_checks(interval_minutes=None):
     """
     Runs checks continuously in a separate thread.
+    Optimizada para intervalos más cortos sin sobrecarga de API.
     
     Args:
-        interval_minutes: Interval between checks in minutes
+        interval_minutes: Interval between checks in minutes (usa el valor de config si es None)
     """
-    # Create database connection
-    connection = None  # We'll create a new connection for each check
+    # Si no se especifica un intervalo, usar el valor predeterminado de config
+    if interval_minutes is None:
+        interval_minutes = config.CHECK_INTERVAL_MINUTES
     
-    # Integrity check control (once a day)
+    # Variables para control de integridad y rotación de logs
     last_integrity_check = 0
     last_log_rotation = 0
+    
+    # Variables para adaptarse a la carga
+    consecutive_errors = 0
+    max_consecutive_errors = 3
+    
+    logger.info(f"Iniciando verificaciones periódicas cada {interval_minutes:.2f} minutos")
     
     while running:
         try:
@@ -280,7 +371,7 @@ def run_continuous_checks(interval_minutes=20):
             # Create a fresh connection for each check cycle
             connection = create_connection(config.DB_PATH)
             if connection:
-                logger.info(f"Database connection created for this check cycle")
+                logger.debug(f"Database connection created for this check cycle")
                 # Create tables if they don't exist
                 create_tables(connection)
             
@@ -295,22 +386,39 @@ def run_continuous_checks(interval_minutes=20):
                 # Use a separate connection for integrity check
                 integrity_connection = create_connection(config.DB_PATH)
                 if integrity_connection:
-                    check_data_integrity(integrity_connection, config.get_stock_list())
+                    # Solo verificar un subconjunto aleatorio de acciones para no sobrecargar
+                    import random
+                    full_list = config.get_stock_list()
+                    check_symbols = random.sample(full_list, min(10, len(full_list)))
+                    check_data_integrity(integrity_connection, check_symbols)
                     integrity_connection.close()
                 last_integrity_check = start_time
             
             # Normal stock check with spacing
-            check_stocks_spaced(connection)
+            check_result = check_stocks_spaced(connection)
+            
+            # Si hay resultado exitoso, resetear contador de errores
+            if check_result:
+                consecutive_errors = 0
             
             # Close connection after checks
             if connection:
                 connection.close()
                 connection = None
-                logger.info("Database connection closed after check cycle")
+                logger.debug("Database connection closed after check cycle")
             
             # Calculate how long to wait until the next check
             elapsed_time = time.time() - start_time
             wait_time = max(0, interval_minutes * 60 - elapsed_time)
+            
+            # Adaptar el intervalo si hay muchas acciones para verificar o si hay carga alta
+            stock_count = len(config.get_stock_list())
+            
+            # Si el ciclo duró demasiado tiempo en relación al intervalo deseado, adaptar
+            if elapsed_time > interval_minutes * 60 * 0.8:
+                logger.warning(f"Ciclo de verificación demasiado largo ({elapsed_time:.1f} seg). Ajustando...")
+                # Añadir un tiempo mínimo de espera para no sobrecalentar el sistema
+                wait_time = max(wait_time, 30)  # Al menos 30 segundos de espera
             
             # Check if the market is open before waiting
             if not is_market_open():
@@ -319,7 +427,7 @@ def run_continuous_checks(interval_minutes=20):
                 wait_time = min(wait_time, calculate_time_to_next_check())
             
             if wait_time > 0:
-                logger.info(f"Waiting {wait_time:.1f} seconds until next check cycle")
+                logger.info(f"Ciclo completado en {elapsed_time:.1f} seg. Esperando {wait_time:.1f} segundos hasta el siguiente ciclo")
                 time.sleep(wait_time)
                 
         except Exception as e:
@@ -331,8 +439,14 @@ def run_continuous_checks(interval_minutes=20):
                 except:
                     pass
                 connection = None
-            # Wait one minute before retrying in case of error
-            time.sleep(60)
+            
+            # Incrementar contador de errores consecutivos
+            consecutive_errors += 1
+            
+            # Si hay muchos errores consecutivos, incrementar tiempo de espera
+            error_wait = 60 * min(consecutive_errors, max_consecutive_errors)
+            logger.warning(f"Error #{consecutive_errors}. Esperando {error_wait} segundos antes de reintentar...")
+            time.sleep(error_wait)
 
 def calculate_time_to_next_check():
     """

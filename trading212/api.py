@@ -126,9 +126,34 @@ class Trading212API:
         """
         data = {
             "ticker": ticker,
-            "quantity": quantity
+            "quantity": round(quantity, 4)  # Limitar a 4 decimales
         }
-        return self._make_request('POST', '/api/v0/equity/orders/market', data=data)
+        
+        # Hacer más detallado el logging
+        logger.info(f"Colocando orden: {data}")
+        
+        try:
+            response = self.session.post(
+                urljoin(self.base_url, '/api/v0/equity/orders/market'), 
+                json=data, 
+                timeout=10
+            )
+            
+            if response.status_code != 200:
+                logger.error(f"Error API {response.status_code}: {response.text}")
+                # Mostrar detalles específicos de la respuesta
+                try:
+                    error_data = response.json()
+                    logger.error(f"Detalles del error: {error_data}")
+                except:
+                    pass
+                return None
+                
+            return response.json() if response.content else {}
+            
+        except Exception as e:
+            logger.error(f"Error de conexión: {e}")
+            return None
     
     def place_limit_order(self, ticker, quantity, limit_price, time_validity="DAY"):
         """

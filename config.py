@@ -53,7 +53,7 @@ STOCH_RSI_D_PERIOD = 3
 STOCH_RSI_SMOOTH = 3
 
 # Intervalos de tiempo
-CHECK_INTERVAL_MINUTES = 15.1
+CHECK_INTERVAL_MINUTES = 10.1
 INTEGRITY_CHECK_INTERVAL_SECONDS = 86400  # 24 horas
 LOG_ROTATION_DAYS = 30
 LOG_MAX_FILES = 10
@@ -62,37 +62,85 @@ LOG_MAX_FILES = 10
 MAX_THREADS = 5
 REQUESTS_TIMEOUT = 30  # segundos (aumentado para yfinance)
 API_RETRY_ATTEMPTS = 3
-RATE_LIMIT_THROTTLE = 1.0  # segundos entre solicitudes a yfinance (más conservador)
+RATE_LIMIT_THROTTLE = 1.2  # segundos entre solicitudes a yfinance (más conservador)
+MAX_SYMBOLS_PER_BATCH = 6  # Nuevo parámetro para limitar el número de símbolos por lote
 
-# Lista de acciones para monitorizar
+
 def get_stock_list():
     """
-    Returns the updated list of stocks to monitor.
+    Lista de acciones optimizada para alta liquidez (operaciones de $50,000+ instantáneas),
+    spreads mínimos y características favorables para análisis técnico.
     """
     return [
-        # Magnificent 7
-        'NVDA',  # NVIDIA
-        'TSLA',  # Tesla
-        'META',  # Meta (Facebook)
-        'AAPL',  # Apple
-        'MSFT',  # Microsoft
-        'GOOGL', # Google
-        'AMZN',  # Amazon
+        # Mega Caps - Extrema liquidez (volúmenes diarios de $1B+)
+        'AAPL',  # Apple - Volumen diario ~$7B, spread típico <0.01%
+        'MSFT',  # Microsoft - Volumen diario ~$6B, alta respuesta a patrones técnicos
+        'AMZN',  # Amazon - Volumen diario ~$5B, alta volatilidad intradiaria
+        'GOOGL', # Alphabet - Volumen diario ~$3B, movimientos suaves
+        'META',  # Meta Platforms - Volumen diario ~$4B, reacciona bien a soportes/resistencias
+        'NVDA',  # NVIDIA - Volumen diario ~$12B, alta sensibilidad a indicadores técnicos
+        'TSLA',  # Tesla - Volumen diario ~$10B, extrema volatilidad para señales técnicas
         
-        # Growth stocks
-        'ASTS',  # AST SpaceMobile
-        'PLTR',  # Palantir
-        'AMD',   # AMD - Good for technical analysis with volatility
-        'SMCI',  # Super Micro Computer - Highly volatile, good for TA signals
+        # Large Caps - Muy alta liquidez (volúmenes diarios $500M-$1B+)
+        'AMD',   # Advanced Micro Devices - Excelente para seguir momentum
+        'AVGO',  # Broadcom - Movimientos técnicos bien definidos
+        'QCOM',  # Qualcomm - Responde bien a soportes/resistencias clave
+        'INTC',  # Intel - Alta liquidez con volatilidad controlada
+        'CRM',   # Salesforce - Patrones técnicos claros
+        'CSCO',  # Cisco Systems - Movimientos predecibles con buen volumen
+        'PEP',   # PepsiCo - Baja volatilidad, ideal para operaciones defensivas
+        'KO',    # Coca-Cola - Alta liquidez con movimientos estables
         
-        # AI and tech with strong momentum
-        'ARM',   # ARM Holdings
-        'CRWD',  # CrowdStrike - Cybersecurity with clear technical patterns
-        'SHOP',  # Shopify
-        'UBER',  # Uber - Shows clear technical patterns
-        'SNAP',  # Snap Inc. - Highly responsive to technical indicators
+        # Sectores clave con alta liquidez y volatilidad ideal
+        'JPM',   # JPMorgan Chase - Líder financiero con excelente liquidez
+        'BAC',   # Bank of America - Alta respuesta a señales MACD
+        'GS',    # Goldman Sachs - Movimientos técnicos pronunciados
+        'MS',    # Morgan Stanley - Clara respuesta a indicadores técnicos
+        'WFC',   # Wells Fargo - Alta liquidez en sector financiero
+        
+        # Tecnología de alto volumen y clara respuesta a indicadores
+        'ORCL',  # Oracle - Patrones técnicos definidos
+        'IBM',   # IBM - Estructura técnica tradicional
+        'TXN',   # Texas Instruments - Alta liquidez en semiconductores
+        'PYPL',  # PayPal - Respuesta clara a Bollinger y RSI
+        'ADBE',  # Adobe - Alto volumen con tendencias técnicas claras
+        
+        # Retail con alta liquidez
+        'WMT',   # Walmart - Extrema liquidez con movimientos predecibles
+        'COST',  # Costco - Responde bien a señales técnicas
+        'HD',    # Home Depot - Alta liquidez con movimientos técnicos claros
+        'TGT',   # Target - Buena respuesta a MACD y RSI
+        
+        # Salud - Estables con alto volumen
+        'JNJ',   # Johnson & Johnson - Baja volatilidad, alta liquidez
+        'PFE',   # Pfizer - Excelente liquidez con volatilidad moderada
+        'MRK',   # Merck - Tendencias técnicas claras
+        'ABT',   # Abbott Labs - Movimientos técnicos bien definidos
+        
+        # Energía - Alta liquidez y volatilidad controlada
+        'XOM',   # Exxon Mobil - Enorme liquidez en sector energético
+        'CVX',   # Chevron - Volumen alto con claras zonas de soporte/resistencia
+        
+        # ETFs de alta liquidez para diversificación
+        'SPY',   # S&P 500 ETF - El instrumento más líquido del mercado (~$30B diarios)
+        'QQQ',   # Nasdaq 100 ETF - Extrema liquidez (~$15B diarios)
+        'IWM',   # Russell 2000 ETF - Alta liquidez para small caps (~$5B diarios)
+        'EEM',   # Emerging Markets ETF - Liquidez internacional
+        'XLK',   # Technology Sector ETF - Concentración sectorial con alta liquidez
+        'XLF',   # Financial Sector ETF - Alta respuesta a indicadores técnicos
+        
+        # Acciones cíclicas con alta liquidez
+        'CAT',   # Caterpillar - Excelente para señales técnicas
+        'DE',    # Deere & Co - Liquidez alta con tendencias claras
+        'BA',    # Boeing - Alta volatilidad con volumen considerable
+        
+        # High-Beta con liquidez extrema
+        'UBER',  # Uber - Alta volatilidad con enorme volumen
+        'COIN',  # Coinbase - Extrema volatilidad con alto volumen
+        'CRWD',  # CrowdStrike - Movimientos técnicos pronunciados
+        'SHOP',  # Shopify - Respuesta clara a Bollinger y RSI
+        'SQ',    # Block (Square) - Alta volatilidad intradiaria
     ]
-
 # Configuración de notificaciones
 NOTIFICATIONS_ENABLED = True
 DAILY_SUMMARY_ENABLED = True
