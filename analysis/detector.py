@@ -67,7 +67,7 @@ def detect_signal_sequence(df, max_window=5):
     # 3. Comprobar que ambos eventos (Bollinger y RSI) ocurren cerca en el tiempo
     # Calcular la distancia en velas entre los dos eventos
     events_distance = abs(abs(bollinger_event) - abs(low_rsi_event))
-    if events_distance > 3:  # Máximo 3 velas (15 minutos) de diferencia
+    if events_distance > 7:  # Máximo 3 velas (15 minutos) de diferencia
         return False, {"mensaje": "Ruptura de Bollinger y RSI bajo demasiado distantes"}
     
     # 4. Buscar señal MACD después de los eventos de Bollinger/RSI

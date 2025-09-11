@@ -23,22 +23,80 @@ MAX_POSITION_DURATION_HOURS = int(os.getenv('TRADING212_MAX_POSITION_DURATION', 
 
 # Lista de tickers de Trading212 mapeados desde tickers de YFinance
 TICKER_MAPPING = {
-    # YFinance ticker -> Trading212 ticker
+    # Mega Caps
     "AAPL": "AAPL_US_EQ",
     "MSFT": "MSFT_US_EQ",
-    "GOOGL": "GOOGL_US_EQ",
     "AMZN": "AMZN_US_EQ",
+    "GOOGL": "GOOGL_US_EQ",
     "META": "META_US_EQ",
-    "TSLA": "TSLA_US_EQ",
     "NVDA": "NVDA_US_EQ",
+    "TSLA": "TSLA_US_EQ",
+    
+    # Large Caps
     "AMD": "AMD_US_EQ",
+    "AVGO": "AVGO_US_EQ",
+    "QCOM": "QCOM_US_EQ",
+    "INTC": "INTC_US_EQ",
+    "CRM": "CRM_US_EQ",
+    "CSCO": "CSCO_US_EQ",
+    "PEP": "PEP_US_EQ",
+    "KO": "KO_US_EQ",
+    
+    # Sector Financiero
+    "JPM": "JPM_US_EQ",
+    "BAC": "BAC_US_EQ",
+    "GS": "GS_US_EQ",
+    "MS": "MS_US_EQ",
+    "WFC": "WFC_US_EQ",
+    
+    # Tecnología
+    "ORCL": "ORCL_US_EQ",
+    "IBM": "IBM_US_EQ",
+    "TXN": "TXN_US_EQ",
+    "PYPL": "PYPL_US_EQ",
+    "ADBE": "ADBE_US_EQ",
+    
+    # Retail
+    "WMT": "WMT_US_EQ",
+    "COST": "COST_US_EQ",
+    "HD": "HD_US_EQ",
+    "TGT": "TGT_US_EQ",
+    
+    # Salud
+    "JNJ": "JNJ_US_EQ",
+    "PFE": "PFE_US_EQ",
+    "MRK": "MRK_US_EQ",
+    "ABT": "ABT_US_EQ",
+    
+    # Energía
+    "XOM": "XOM_US_EQ",
+    "CVX": "CVX_US_EQ",
+    
+    # ETFs
+    "SPY": "SPY_US_EQ",
+    "QQQ": "QQQ_US_EQ",
+    "IWM": "IWM_US_EQ",
+    "EEM": "EEM_US_EQ",
+    "XLK": "XLK_US_EQ",
+    "XLF": "XLF_US_EQ",
+    
+    # Cíclicas
+    "CAT": "CAT_US_EQ",
+    "DE": "DE_US_EQ",
+    "BA": "BA_US_EQ",
+    
+    # High-Beta
+    "UBER": "UBER_US_EQ",
+    "COIN": "COIN_US_EQ",
+    "CRWD": "CRWD_US_EQ",
+    "SHOP": "SHOP_US_EQ",
+    "SQ": "SQ_US_EQ",
+    
+    # Adicionales del mapeo original
     "PLTR": "PLTR_US_EQ",
     "ASTS": "ASTS_US_EQ",
     "SMCI": "SMCI_US_EQ",
     "ARM": "ARM_US_EQ",
-    "CRWD": "CRWD_US_EQ",
-    "SHOP": "SHOP_US_EQ",
-    "UBER": "UBER_US_EQ",
     "SNAP": "SNAP_US_EQ",
 }
 

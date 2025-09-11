@@ -110,6 +110,7 @@ def test_buy_and_sell(ticker, amount=10, quantity=0.1, wait_before_sell=60, simu
     try:
         print("Intentando compra con place_market_order y cantidad...")
         result = api_client.place_market_order(ticker=ticker, quantity=quantity)
+        order_result = self.api.place_market_order(ticker=trading212_ticker, quantity=quantity)
         
         if result:
             print(f"✅ Orden de compra ejecutada: {result}")

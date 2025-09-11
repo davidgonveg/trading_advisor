@@ -35,6 +35,8 @@ from database.operations import get_last_data_from_db
 running = True
 sent_alerts = {}  # Registro de alertas enviadas para evitar duplicados
 
+os.makedirs("data/yfinance_cache", exist_ok=True)
+
 
 def handle_command_line():
     """
@@ -81,53 +83,50 @@ def handle_command_line():
 
 def check_stocks_spaced(db_connection=None):
     """
-    Verifies all stocks in the list with calls spaced over time to avoid API rate limits.
-    Optimizado para mayor frecuencia de verificación sin problemas de API.
-    
-    Args:
-        db_connection: Database connection (optional)
+    Verificación optimizada de acciones con mejor manejo de límites de tasa.
     """
-    # Verify if the market is open
+    # Verificar si el mercado está abierto
     if not is_market_open():
         logger.info("Mercado cerrado. No se realizarán verificaciones.")
         return
     
     logger.info("Iniciando verificación espaciada de acciones...")
     
-    # Get updated list of stocks
+    # Obtener lista actualizada de acciones
     stocks = config.get_stock_list()
     results = {}
     
-    # Verificar si hay un número adecuado de stocks para analizar
+    # Verificar si hay un número adecuado de acciones para analizar
     if not stocks:
         logger.warning("Lista de acciones vacía. No hay nada que verificar.")
         return results
     
-    # Calculate delay between stocks to spread checks across the interval
-    # Use 80% of the interval to ensure we finish before the next check
-    total_available_time = config.CHECK_INTERVAL_MINUTES * 60 * 0.8  # in seconds
+    # Inicializar el optimizador de solicitudes si aún no está inicializado
+    try:
+        from yfinance_rate_limiter import initialize, get_queue_stats
+        initialize(db_connection=db_connection)
+        logger.info("Optimizador de solicitudes inicializado correctamente")
+        
+        # Mostrar estadísticas iniciales
+        stats = get_queue_stats()
+        if stats:
+            logger.info(f"Estado inicial de la cola: {stats['queue_size']} pendientes, {stats['active_requests']} activas")
+    except Exception as e:
+        logger.warning(f"Error al inicializar optimizador de solicitudes: {e}")
     
-    # Calculate delay based on number of stocks
-    delay_between_stocks = total_available_time / len(stocks) 
+    # Calcular retardo entre símbolos para espaciar verificaciones
+    total_available_time = config.CHECK_INTERVAL_MINUTES * 60 * 0.8  # en segundos
+    delay_between_stocks = max(config.RATE_LIMIT_THROTTLE, total_available_time / len(stocks))
     
-    # Apply a minimum delay to prevent API rate limits (1 segunda entre verificaciones)
-    min_delay = config.RATE_LIMIT_THROTTLE  # usar el valor configurado
-    delay_between_stocks = max(delay_between_stocks, min_delay)
+    logger.info(f"Procesando {len(stocks)} acciones con {delay_between_stocks:.2f} seg entre cada una")
     
-    logger.info(f"Frecuencia: verificación cada {config.CHECK_INTERVAL_MINUTES:.2f} minutos")
-    logger.info(f"Espaciando {len(stocks)} acciones con {delay_between_stocks:.2f} seg entre cada una")
-    
-    # Implement batching with dynamic batch size
-    batch_size = min(config.MAX_SYMBOLS_PER_BATCH, len(stocks))  # Limitar tamaño de lote
-    batch_count = (len(stocks) + batch_size - 1) // batch_size  # Calcular número de lotes
+    # Implementar verificación por lotes
+    batch_size = min(config.MAX_SYMBOLS_PER_BATCH, len(stocks))
+    batch_count = (len(stocks) + batch_size - 1) // batch_size
     
     logger.info(f"Procesando en {batch_count} lotes de hasta {batch_size} acciones cada uno")
     
-    # Implementar verificación con memoria de caché
-    cache = {}  # Cache para datos históricos recientes {symbol: (timestamp, data)}
-    cache_time = 600  # Solo reutilizar caché por 10 minutos (600 segundos)
-    
-    # Dividir las acciones en lotes
+    # Procesar en lotes para mayor eficiencia
     for batch_index in range(batch_count):
         start_idx = batch_index * batch_size
         end_idx = min(start_idx + batch_size, len(stocks))
@@ -139,36 +138,28 @@ def check_stocks_spaced(db_connection=None):
             try:
                 logger.info(f"Analizando {symbol} ({start_idx+i+1}/{len(stocks)})...")
                 
-                # Intentar utilizar caché de datos si está disponible y es reciente
-                current_time = time.time()
-                if symbol in cache:
-                    cache_timestamp, cached_data = cache[symbol]
-                    if current_time - cache_timestamp < cache_time:
-                        logger.info(f"Usando datos en caché para {symbol} (de hace {(current_time - cache_timestamp):.1f} segundos)")
-                        # Aquí podrías implementar una lógica para usar los datos en caché
-                
-                # Analizar la acción (con o sin caché)
+                # Analizar la acción
                 meets_conditions, message = analyze_stock_flexible_thread_safe(symbol, config.DB_PATH)
                 
-                # Procesar resultado y enviar alerta si necesario
+                # Procesar resultado y enviar alerta si es necesario
                 if meets_conditions:
-                    # Check if we already sent an alert for this symbol in the last 20 minutes
+                    # Verificar si ya enviamos una alerta para este símbolo en los últimos 20 minutos
+                    current_time = time.time()
                     if symbol in sent_alerts:
                         last_alert = sent_alerts[symbol]
-                        # Avoid sending more than one alert for the same symbol in 20 minutes
-                        if current_time - last_alert < 1200:  # 20 minutos en segundos (reducido de 30)
-                            logger.info(f"Alert for {symbol} already sent in the last 20 minutes. Skipping.")
-                            results[symbol] = (False, "Alert already sent recently")
+                        if current_time - last_alert < 1200:  # 20 minutos en segundos
+                            logger.info(f"Ya se envió una alerta para {symbol} en los últimos 20 minutos. Ignorando.")
+                            results[symbol] = (False, "Alerta enviada recientemente")
                             continue
                     
-                    # Send alert via Telegram
-                    logger.info(f"Conditions met for {symbol}, sending alert")
+                    # Enviar alerta vía Telegram
+                    logger.info(f"Se cumplen las condiciones para {symbol}, enviando alerta")
                     send_telegram_alert(message, config.TELEGRAM_BOT_TOKEN, config.TELEGRAM_CHAT_ID)
                     
-                    # Record the sending time of this alert
+                    # Registrar el envío de esta alerta
                     sent_alerts[symbol] = current_time
                     
-                    # As backup, save to file
+                    # Como respaldo, guardar en archivo
                     save_alert_to_file(message)
                     
                     # Enviar alerta a Trading212 si está inicializado
@@ -183,25 +174,52 @@ def check_stocks_spaced(db_connection=None):
                     
                     results[symbol] = (True, message)
                 else:
-                    logger.info(f"Conditions not met for {symbol}")
-                    results[symbol] = (False, "Conditions not met")
+                    logger.info(f"No se cumplen las condiciones para {symbol}")
+                    results[symbol] = (False, "No se cumplen las condiciones")
                 
-                # Wait before processing the next stock, unless it's the last one in the batch
+                # Esperar antes de procesar la siguiente acción, a menos que sea la última del lote
                 if i < len(current_batch) - 1:
                     logger.debug(f"Esperando {delay_between_stocks:.2f} seg antes de analizar la siguiente acción")
                     time.sleep(delay_between_stocks)
                     
             except Exception as e:
-                logger.error(f"Error processing {symbol}: {e}")
+                logger.error(f"Error al procesar {symbol}: {e}")
                 results[symbol] = (False, f"Error: {str(e)}")
         
         # Verificar si es necesario esperar entre lotes (solo si no es el último lote)
         if batch_index < batch_count - 1:
-            batch_delay = 3.0  # Esperar 3 segundos entre lotes
-            logger.info(f"Lote {batch_index+1} completado. Esperando {batch_delay} segundos antes del siguiente lote...")
-            time.sleep(batch_delay)
+            # Mostrar estadísticas de la cola
+            try:
+                from yfinance_rate_limiter import get_queue_stats
+                stats = get_queue_stats()
+                if stats:
+                    logger.info(f"Estado de la cola: {stats['queue_size']} pendientes, {stats['active_requests']} activas")
+                    
+                    # Ajustar el tiempo de espera entre lotes según el estado de la cola
+                    if stats['in_cooldown']:
+                        batch_delay = 10.0  # Esperar más si estamos en enfriamiento
+                        logger.info(f"En período de enfriamiento. Esperando {batch_delay} segundos antes del siguiente lote...")
+                    else:
+                        batch_delay = 3.0  # Esperar lo normal
+                        logger.info(f"Lote {batch_index+1} completado. Esperando {batch_delay} segundos antes del siguiente lote...")
+                    
+                    time.sleep(batch_delay)
+            except Exception as e:
+                batch_delay = 3.0  # Fallback
+                logger.info(f"Lote {batch_index+1} completado. Esperando {batch_delay} segundos antes del siguiente lote...")
+                time.sleep(batch_delay)
     
     logger.info(f"Verificación completa de {len(stocks)} acciones finalizada.")
+    
+    # Mostrar estadísticas finales
+    try:
+        from yfinance_rate_limiter import get_queue_stats
+        stats = get_queue_stats()
+        if stats:
+            logger.info(f"Estadísticas finales: {stats['cache_hits']} hits, {stats['cache_misses']} misses, {stats['error_count']} errores")
+    except:
+        pass
+        
     return results
 
 # Modificación para main.py
@@ -598,19 +616,23 @@ def main():
         # Inicializar Trading212 con la API Key desde config
         api_key = config.TRADING212_API_KEY
         api_url = config.TRADING212_API_URL
-        
+        simulation_mode = config.SIMULATION_MODE  # Usar el valor de config
+
         if api_key:
-            logger.info(f"Inicializando integración con Trading212 usando API URL: {api_url}")
-            init_result = trading212_integrator.initialize(api_key=api_key)
+            logger.info(f"Inicializando integración con Trading212 (URL: {api_url}, Modo: {'SIMULACIÓN' if simulation_mode else 'REAL'})")
+            
+            # Inicializar el módulo Trading212
+            init_result = trading212_integrator.initialize(
+                api_key=api_key, 
+                api_url=api_url,
+                simulation_mode=simulation_mode
+            )
             
             if init_result:
                 logger.info("Integración con Trading212 inicializada correctamente")
-                # Solo habilitar si se inicializó correctamente
-                enable_result = trading212_integrator.enable_integration()
-                if enable_result:
-                    logger.info("Integración con Trading212 habilitada correctamente")
-                else:
-                    logger.error("No se pudo habilitar la integración con Trading212")
+                
+                # La integración ya se habilita automáticamente en el nuevo código
+                logger.info("Integración con Trading212 habilitada")
             else:
                 logger.error("No se pudo inicializar la integración con Trading212")
         else:
