@@ -17,16 +17,21 @@ load_dotenv()
 # 📊 CONFIGURACIÓN DE SÍMBOLOS Y MERCADO
 # =============================================================================
 
-# Símbolos a monitorear (puedes añadir o quitar según prefieras)
+
+# Símbolos a monitorear - S&P 500, NASDAQ 100 y las 7 Magníficas
 SYMBOLS = [
+    # === ÍNDICES PRINCIPALES ===
     "SPY",   # S&P 500 ETF
-    "QQQ",   # Nasdaq 100 ETF  
+    "QQQ",   # Nasdaq 100 ETF
+    
+    # === LAS 7 MAGNÍFICAS (Magnificent Seven) ===
     "AAPL",  # Apple Inc.
+    "MSFT",  # Microsoft Corporation
+    "GOOGL", # Alphabet Inc. (Google)
     "NVDA",  # NVIDIA Corporation
-    "AMD",   # Advanced Micro Devices
     "TSLA",  # Tesla Inc.
-    # "MSFT", # Microsoft (descomentado si quieres añadir)
-    # "GOOGL", # Google (descomentado si quieres añadir)
+    "META",  # Meta Platforms Inc. (Facebook)
+    "AMZN",  # Amazon
 ]
 
 # Timeframe para análisis (en minutos)
@@ -134,8 +139,8 @@ ATR_MULTIPLIERS = {
 # ⏰ FILTROS TEMPORALES
 # =============================================================================
 
-# Zona horaria del mercado
-MARKET_TIMEZONE = "US/Eastern"
+# Zona horaria del mercado (configuración flexible desde .env)
+MARKET_TIMEZONE = os.getenv('TIMEZONE', 'US/Eastern')
 
 # Horarios de trading permitidos (formato 24h)
 TRADING_SESSIONS = {
