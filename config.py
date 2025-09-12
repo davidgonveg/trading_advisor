@@ -146,10 +146,10 @@ MARKET_TIMEZONE = os.getenv('TIMEZONE', 'US/Eastern')
 TRADING_SESSIONS = {
     'MORNING': {
         'START': "09:45",
-        'END': "11:30"
+        'END': "11:45"
     },
     'AFTERNOON': {
-        'START': "14:00", 
+        'START': "13:30", 
         'END': "15:30"
     }
 }
