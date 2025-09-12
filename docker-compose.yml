@@ -12,6 +12,9 @@ services:
     container_name: trading_system_v2
     restart: unless-stopped
     
+    # Comando por defecto: Modo automático para producción
+    command: python main.py auto
+    
     # Variables de entorno
     environment:
       - PYTHONUNBUFFERED=1
