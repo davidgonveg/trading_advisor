@@ -40,3 +40,26 @@ htmlcov/
 *.bak
 
 *.pkl
+
+
+# Base de datos SQLite
+database/trading_data.db
+database/trading_data.db-journal
+database/trading_data.db-wal
+database/trading_data.db-shm
+
+# Cache de datos
+smart_cache/
+*.pkl
+cache/
+
+# Logs detallados
+*.log
+logs/
+database/logs/
+
+# Archivos temporales de análisis
+database/temp_*
+database/backup_*
+*.sqlite
+*.db-journal

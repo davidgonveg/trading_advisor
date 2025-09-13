@@ -589,8 +589,16 @@ class SignalScanner:
             
             logger.info(f"✅ {symbol}: {signal_type} señal detectada - {final_score} pts - {confidence_level}")
             self.signals_generated += 1
-            
+
+            # 🆕 GUARDAR SEÑAL EN BASE DE DATOS
+            try:
+                from database.connection import save_signal_data
+                save_signal_data(signal)
+            except Exception as db_error:
+                logger.warning(f"⚠️ Error guardando señal en DB: {db_error}")
+
             return signal
+            
             
         except Exception as e:
             logger.error(f"❌ Error escaneando {symbol}: {e}")

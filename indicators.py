@@ -527,6 +527,14 @@ class TechnicalIndicators:
             }
             
             logger.info(f"✅ {symbol}: Indicadores calculados exitosamente")
+            
+            # 🆕 GUARDAR EN BASE DE DATOS
+            try:
+                from database.connection import save_indicators_data
+                save_indicators_data(indicators)
+            except Exception as db_error:
+                logger.warning(f"⚠️ Error guardando indicadores en DB: {db_error}")
+
             return indicators
             
         except Exception as e:
