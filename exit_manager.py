@@ -628,13 +628,13 @@ class ExitManager:
                 'long_positions': sum(1 for p in self.active_positions.values() if p.direction == 'LONG'),
                 'short_positions': sum(1 for p in self.active_positions.values() if p.direction == 'SHORT'),
                 'positions_with_deterioration': sum(1 for p in self.active_positions.values() if p.deterioration_count > 0),
-                'avg_days_held': sum((datetime.now() - p.entry_time).days for p in self.active_positions.values()) / len(self.active_positions),
+                'avg_days_held': sum((datetime.now(pytz.UTC) - p.entry_time).days for p in self.active_positions.values()) / len(self.active_positions),
                 'total_unrealized_pnl': sum(p.unrealized_pnl_pct for p in self.active_positions.values()),
                 'positions': {}
             }
             
             for symbol, position in self.active_positions.items():
-                days_held = (datetime.now() - position.entry_time).days
+                days_held = (datetime.now(pytz.UTC) - position.entry_time).days
                 summary['positions'][symbol] = {
                     'direction': position.direction,
                     'entry_price': position.entry_price,

@@ -21,17 +21,17 @@ load_dotenv()
 # Símbolos a monitorear - S&P 500, NASDAQ 100 y las 7 Magníficas
 SYMBOLS = [
     # === ÍNDICES PRINCIPALES ===
-    "SPY",   # S&P 500 ETF
-    "QQQ",   # Nasdaq 100 ETF
-    
+    "^GSPC",  # S&P 500 Index
+    "^NDX",   # Nasdaq 100 Index
+
     # === LAS 7 MAGNÍFICAS (Magnificent Seven) ===
-    "AAPL",  # Apple Inc.
-    "MSFT",  # Microsoft Corporation
-    "GOOGL", # Alphabet Inc. (Google)
-    "NVDA",  # NVIDIA Corporation
-    "TSLA",  # Tesla Inc.
-    "META",  # Meta Platforms Inc. (Facebook)
-    "AMZN",  # Amazon
+    "AAPL",   # Apple Inc.
+    "MSFT",   # Microsoft Corporation
+    "GOOGL",  # Alphabet Inc.
+    "NVDA",   # NVIDIA Corporation
+    "TSLA",   # Tesla Inc.
+    "META",   # Meta Platforms Inc.
+    "AMZN",   # Amazon
 ]
 
 # Timeframe para análisis (en minutos)
