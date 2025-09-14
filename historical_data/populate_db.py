@@ -1,134 +1,170 @@
 #!/usr/bin/env python3
 """
-💾 POPULATE DATABASE - LLENAR BD CON DATOS HISTÓRICOS V4.0
-========================================================
+📊 DATABASE POPULATOR V4.0 - TRADING SYSTEM
+===========================================
 
-Procesa archivos CSV descargados y los inserta en la base de datos,
-calculando indicadores técnicos como el sistema principal.
+Pobla la base de datos con datos históricos + indicadores técnicos calculados
+- Lee archivos CSV de historical_data/raw_data/
+- Calcula indicadores usando TechnicalIndicators existente
+- Guarda todo en database usando save_indicators_data()
 
-🎯 FUNCIONES:
-- Lee CSVs del directorio raw_data/
-- Calcula indicadores técnicos (usando indicators.py del sistema principal)
-- Inserta en tabla indicators_data de la base de datos
-- Validación y limpieza de datos
-- Progress tracking y estadísticas
-
-📊 INTEGRACIÓN:
-- Compatible 100% con sistema principal
-- Mismos indicadores y formatos
-- Lista para backtesting inmediato
+CORREGIDO: Rutas, imports y compatibilidad con estructura del proyecto
 """
 
 import os
 import sys
-import time
 import pandas as pd
-import numpy as np
-from datetime import datetime, timedelta
-from typing import List, Dict, Optional, Tuple, Any
 import logging
 import argparse
-import glob
+from datetime import datetime
+from typing import Dict, List, Optional, Tuple
+import time
 
-# Setup paths para importar desde sistema principal
+# Agregar paths necesarios - desde historical_data/ subir un nivel al proyecto principal
 current_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.dirname(current_dir)
-sys.path.insert(0, current_dir)
-sys.path.insert(0, parent_dir)
+project_root = os.path.dirname(current_dir)
+sys.path.insert(0, project_root)
 
-# Imports
+# Imports de nuestro sistema
 try:
     import config
-    print("✅ Config cargado")
-    
-    # Import from main system
     from database.connection import get_connection, save_indicators_data
-    print("✅ Database connection disponible")
-    
     from indicators import TechnicalIndicators
+    print("✅ Config cargado")
+    print("✅ Database connection disponible") 
     print("✅ Technical indicators disponibles")
-    
 except ImportError as e:
-    print(f"❌ Error importing: {e}")
-    print("📝 Asegúrate de estar en el directorio correcto y tener el sistema principal")
+    print(f"❌ Error importing modules: {e}")
+    print("💡 Asegúrate de estar en historical_data/ y que todos los módulos estén disponibles")
     sys.exit(1)
 
-# Setup logging
+# Configurar logging
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    level=getattr(logging, getattr(config, 'LOG_LEVEL', 'INFO'), 'INFO'),
+    format='%(levelname)s:%(name)s:%(message)s'
 )
 logger = logging.getLogger(__name__)
 
-class DatabasePopulator:
-    """Poblador de base de datos con datos históricos"""
+class HistoricalDataPopulator:
+    """Clase para poblar la base de datos con datos históricos"""
     
     def __init__(self):
-        self.indicators_calculator = TechnicalIndicators()
+        """Inicializar el populador"""
+        self.db_conn = None
+        self.indicators_calculator = None
         self.stats = {
-            'files_processed': 0,
+            'files_completed': 0,
             'files_failed': 0,
-            'total_rows_processed': 0,
-            'total_rows_inserted': 0,
-            'start_time': time.time(),
+            'files_skipped': 0,
             'symbols_processed': set(),
-            'timeframes_processed': set()
+            'timeframes_processed': set(),
+            'rows_processed': 0,
+            'rows_inserted': 0,
+            'start_time': time.time()
         }
+        self.errors = []
         
-        logger.info("💾 Database Populator V4.0 inicializado")
-    
-    def find_csv_files(self, data_dir: str = None) -> List[str]:
-        """Encontrar archivos CSV en directorio raw_data"""
-        if not data_dir:
-            data_dir = 'raw_data'  # Ruta simple y directa
+    def initialize(self) -> bool:
+        """
+        Inicializar conexiones y dependencias
         
-        if not os.path.exists(data_dir):
-            logger.error(f"❌ Directorio {data_dir} no existe")
-            return []
-        
-        # Buscar archivos CSV
-        csv_pattern = os.path.join(data_dir, "*.csv")
-        csv_files = glob.glob(csv_pattern)
-        
-        logger.info(f"📁 Encontrados {len(csv_files)} archivos CSV")
-        
-        # Mostrar algunos ejemplos
-        for i, file in enumerate(csv_files[:5]):
-            filename = os.path.basename(file)
-            file_size = os.path.getsize(file) / 1024  # KB
-            logger.info(f"   {i+1}. {filename} ({file_size:.1f} KB)")
-        
-        if len(csv_files) > 5:
-            logger.info(f"   ... y {len(csv_files) - 5} archivos más")
-        
-        return sorted(csv_files)
-    
-    def parse_filename(self, filepath: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
-        """Extraer información del nombre de archivo CSV"""
+        Returns:
+            bool: True si todo está listo
+        """
         try:
-            filename = os.path.basename(filepath)
-            # Formato esperado: SYMBOL_TIMEFRAME_TIMESTAMP.csv
-            # Ejemplo: AAPL_1d_20250914_152039.csv
+            # Test database connection
+            self.db_conn = get_connection()
+            if self.db_conn is None:
+                logger.error("❌ No se pudo conectar a la base de datos")
+                return False
+            self.db_conn.close()  # Cerrar conexión de test
+            print("✅ Database connection disponible")
             
-            parts = filename.replace('.csv', '').split('_')
-            if len(parts) >= 2:
-                symbol = parts[0]
-                timeframe = parts[1]
-                timestamp = '_'.join(parts[2:]) if len(parts) > 2 else None
-                
-                return symbol, timeframe, timestamp
-            else:
-                logger.warning(f"⚠️ Formato de archivo no reconocido: {filename}")
-                return None, None, None
-                
+            # Initialize technical indicators
+            self.indicators_calculator = TechnicalIndicators()
+            print("✅ Technical indicators disponibles")
+            
+            return True
+            
         except Exception as e:
-            logger.error(f"❌ Error parsing filename {filepath}: {e}")
-            return None, None, None
+            logger.error(f"❌ Error en inicialización: {e}")
+            return False
     
-    def validate_csv_data(self, df: pd.DataFrame, symbol: str, timeframe: str) -> Tuple[bool, str]:
-        """Validar datos del CSV"""
+    def find_csv_files(self, data_dir: str = "raw_data") -> List[Tuple[str, str, float]]:
+        """
+        Encontrar todos los archivos CSV en el directorio
+        
+        Args:
+            data_dir: Directorio donde buscar archivos CSV (relativo a historical_data/)
+            
+        Returns:
+            List de tuplas (filename, full_path, size_kb)
+        """
+        csv_files = []
+        
+        # Asegurar que el directorio es relativo a historical_data/
+        full_data_dir = os.path.join(current_dir, data_dir)
+        
+        if not os.path.exists(full_data_dir):
+            logger.warning(f"⚠️ Directorio {full_data_dir} no existe")
+            return csv_files
+        
+        for filename in os.listdir(full_data_dir):
+            if filename.endswith('.csv'):
+                full_path = os.path.join(full_data_dir, filename)
+                size_kb = os.path.getsize(full_path) / 1024
+                csv_files.append((filename, full_path, size_kb))
+        
+        # Ordenar por tamaño (archivos más pequeños primero para testing)
+        csv_files.sort(key=lambda x: x[2])
+        
+        return csv_files
+    
+    def parse_filename(self, filename: str) -> Optional[Dict[str, str]]:
+        """
+        Parsear información del nombre del archivo
+        
+        Formato esperado: SYMBOL_TIMEFRAME_YYYYMMDD_HHMMSS.csv
+        Ejemplo: AAPL_1d_20250914_152039.csv
+        
+        Args:
+            filename: Nombre del archivo
+            
+        Returns:
+            Dict con symbol, timeframe, date, time o None si no se puede parsear
+        """
         try:
-            # Verificar columnas requeridas
+            # Remover extensión .csv
+            name_parts = filename.replace('.csv', '').split('_')
+            
+            if len(name_parts) < 4:
+                logger.warning(f"⚠️ Filename format not recognized: {filename}")
+                return None
+                
+            return {
+                'symbol': name_parts[0],
+                'timeframe': name_parts[1],
+                'date': name_parts[2],
+                'time': name_parts[3]
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Error parsing filename {filename}: {e}")
+            return None
+    
+    def validate_csv_data(self, df: pd.DataFrame, symbol: str) -> Tuple[bool, str]:
+        """
+        Validar que el CSV tenga el formato correcto
+        
+        Args:
+            df: DataFrame con datos CSV
+            symbol: Símbolo del archivo
+            
+        Returns:
+            Tuple (is_valid, error_message)
+        """
+        try:
+            # Verificar columnas requeridas (coincide con el formato del CSV real)
             required_columns = ['open', 'high', 'low', 'close', 'volume']
             missing_columns = [col for col in required_columns if col not in df.columns]
             
@@ -137,421 +173,385 @@ class DatabasePopulator:
             
             # Verificar que no esté vacío
             if len(df) == 0:
-                return False, "DataFrame is empty"
+                return False, "Empty DataFrame"
             
-            # Verificar tipos de datos
-            for col in ['open', 'high', 'low', 'close', 'volume']:
-                if df[col].dtype not in ['float64', 'int64']:
+            # Verificar tipos de datos numéricos
+            numeric_columns = ['open', 'high', 'low', 'close', 'volume']
+            for col in numeric_columns:
+                if not pd.api.types.is_numeric_dtype(df[col]):
                     try:
                         df[col] = pd.to_numeric(df[col], errors='coerce')
                     except:
-                        return False, f"Cannot convert {col} to numeric"
+                        return False, f"Column {col} is not numeric"
             
-            # Verificar valores razonables
+            # Verificar rangos básicos
             if (df['high'] < df['low']).any():
-                return False, "High < Low found"
+                return False, "Invalid OHLC data: High < Low"
             
-            if (df[['open', 'high', 'low', 'close']] <= 0).any().any():
-                return False, "Zero or negative prices found"
-            
+            if (df['close'] <= 0).any():
+                return False, "Invalid prices: Close <= 0"
+                
             if (df['volume'] < 0).any():
-                return False, "Negative volume found"
+                return False, "Invalid volume: Negative values"
             
-            # Verificar duplicados por timestamp
-            if df.index.duplicated().any():
-                logger.warning(f"⚠️ {symbol} {timeframe}: Removing {df.index.duplicated().sum()} duplicated timestamps")
-                df = df[~df.index.duplicated()]
-            
-            logger.info(f"✅ {symbol} {timeframe}: Validation passed - {len(df)} rows")
-            return True, f"Valid - {len(df)} rows"
+            return True, "OK"
             
         except Exception as e:
             return False, f"Validation error: {str(e)}"
     
-    def calculate_indicators_for_df(self, df: pd.DataFrame, symbol: str) -> pd.DataFrame:
-        """Calcular indicadores técnicos usando sistema principal"""
-        try:
-            logger.info(f"📊 Calculando indicadores para {symbol}...")
-            
-            # Preparar datos en formato que espera indicators.py
-            # El sistema principal espera columnas con nombres específicos
-            data_for_indicators = df.copy()
-            
-            # Asegurar que tenemos el timestamp como índice
-            if 'timestamp' in data_for_indicators.columns:
-                data_for_indicators = data_for_indicators.set_index('timestamp')
-            
-            # Renombrar si es necesario para compatibilidad
-            column_mapping = {
-                'Open': 'open', 'High': 'high', 'Low': 'low', 
-                'Close': 'close', 'Volume': 'volume'
-            }
-            data_for_indicators = data_for_indicators.rename(columns=column_mapping)
-            
-            # Calcular todos los indicadores usando la clase del sistema principal
-            indicators = self.indicators_calculator.calculate_all_indicators(
-                data_for_indicators, symbol
-            )
-            
-            # El método calculate_all_indicators devuelve un dict con todos los indicadores
-            # Necesitamos convertirlo a format para la base de datos
-            
-            # Preparar DataFrame final para insertar
-            result_rows = []
-            
-            # Para cada timestamp en los datos originales
-            for idx, row in data_for_indicators.iterrows():
-                try:
-                    # Datos base OHLCV
-                    base_data = {
-                        'timestamp': idx if pd.notnull(idx) else datetime.now(),
-                        'symbol': symbol,
-                        'open_price': float(row['open']),
-                        'high_price': float(row['high']),
-                        'low_price': float(row['low']),
-                        'close_price': float(row['close']),
-                        'volume': int(row['volume']) if pd.notnull(row['volume']) else 0,
-                    }
-                    
-                    # Agregar indicadores si están disponibles
-                    if 'rsi' in indicators and 'rsi' in indicators['rsi']:
-                        # RSI
-                        rsi_values = indicators['rsi']['rsi_values']
-                        if len(rsi_values) > 0 and not pd.isna(rsi_values.iloc[-1]):
-                            base_data['rsi_value'] = float(rsi_values.iloc[-1])
-                        else:
-                            base_data['rsi_value'] = None
-                    
-                    if 'macd' in indicators:
-                        # MACD
-                        macd_data = indicators['macd']
-                        base_data['macd_line'] = macd_data.get('macd_line')
-                        base_data['macd_signal'] = macd_data.get('signal_line')
-                        base_data['macd_histogram'] = macd_data.get('histogram')
-                    
-                    if 'roc' in indicators and 'roc' in indicators['roc']:
-                        # ROC
-                        base_data['roc_value'] = indicators['roc']['roc']
-                    
-                    if 'vwap' in indicators and 'vwap' in indicators['vwap']:
-                        # VWAP
-                        base_data['vwap_value'] = indicators['vwap']['vwap']
-                    
-                    if 'bollinger' in indicators:
-                        # Bollinger Bands
-                        bb_data = indicators['bollinger']
-                        base_data['bb_upper'] = bb_data.get('upper_band')
-                        base_data['bb_middle'] = bb_data.get('middle_band')
-                        base_data['bb_lower'] = bb_data.get('lower_band')
-                    
-                    if 'atr' in indicators and 'atr' in indicators['atr']:
-                        # ATR
-                        base_data['atr_value'] = indicators['atr']['atr']
-                    
-                    if 'volume_osc' in indicators and 'volume_oscillator' in indicators['volume_osc']:
-                        # Volume Oscillator
-                        base_data['volume_oscillator'] = indicators['volume_osc']['volume_oscillator']
-                    
-                    result_rows.append(base_data)
-                    
-                except Exception as e:
-                    logger.warning(f"⚠️ Error procesando row {idx}: {e}")
-                    continue
-            
-            if not result_rows:
-                logger.error(f"❌ No se pudieron procesar filas para {symbol}")
-                return pd.DataFrame()
-            
-            result_df = pd.DataFrame(result_rows)
-            logger.info(f"✅ {symbol}: Calculados indicadores para {len(result_df)} rows")
-            
-            return result_df
-            
-        except Exception as e:
-            logger.error(f"❌ Error calculando indicadores para {symbol}: {e}")
-            return pd.DataFrame()
-    
-    def insert_to_database(self, df: pd.DataFrame) -> Tuple[bool, str]:
-        """Insertar datos en la base de datos"""
-        try:
-            # Convertir DataFrame a formato para save_indicators_data
-            inserted_count = 0
-            
-            for _, row in df.iterrows():
-                try:
-                    # Crear dict con formato esperado por save_indicators_data
-                    indicator_data = {
-                        'timestamp': row['timestamp'],
-                        'symbol': row['symbol'],
-                        'current_price': row['close_price'],
-                        'open_price': row['open_price'],
-                        'high_price': row['high_price'], 
-                        'low_price': row['low_price'],
-                        'close_price': row['close_price'],
-                        'volume': row['volume'],
-                        'rsi_value': row.get('rsi_value'),
-                        'macd_line': row.get('macd_line'),
-                        'macd_signal': row.get('macd_signal'),
-                        'macd_histogram': row.get('macd_histogram'),
-                        'roc_value': row.get('roc_value'),
-                        'vwap_value': row.get('vwap_value'),
-                        'bb_upper': row.get('bb_upper'),
-                        'bb_middle': row.get('bb_middle'),
-                        'bb_lower': row.get('bb_lower'),
-                        'atr_value': row.get('atr_value'),
-                        'volume_oscillator': row.get('volume_oscillator')
-                    }
-                    
-                    # Usar función del sistema principal para guardar
-                    save_indicators_data(indicator_data)
-                    inserted_count += 1
-                    
-                except Exception as e:
-                    logger.warning(f"⚠️ Error insertando row: {e}")
-                    continue
-            
-            logger.info(f"✅ Insertadas {inserted_count} filas en la base de datos")
-            return True, f"Inserted {inserted_count} rows"
-            
-        except Exception as e:
-            logger.error(f"❌ Error insertando en base de datos: {e}")
-            return False, f"Database error: {str(e)}"
-    
-    def process_single_file(self, filepath: str) -> Tuple[bool, Dict[str, Any]]:
-        """Procesar un archivo CSV individual"""
-        filename = os.path.basename(filepath)
-        logger.info(f"📄 Procesando: {filename}")
+    def prepare_dataframe_for_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Preparar DataFrame para que funcione con TechnicalIndicators
         
-        file_stats = {
-            'filename': filename,
-            'filepath': filepath,
-            'rows_read': 0,
-            'rows_processed': 0,
-            'rows_inserted': 0,
-            'status': 'unknown',
-            'message': '',
-            'processing_time': 0
+        El CSV tiene columnas: Date,open,high,low,close,volume,Dividends,Stock Splits,symbol,timeframe,timestamp
+        TechnicalIndicators espera: Open,High,Low,Close,Volume con índice de tiempo
+        
+        Args:
+            df: DataFrame original del CSV
+            
+        Returns:
+            DataFrame con formato compatible
+        """
+        # Crear copia
+        data = df.copy()
+        
+        # Renombrar columnas al formato esperado por TechnicalIndicators
+        column_mapping = {
+            'open': 'Open',
+            'high': 'High', 
+            'low': 'Low',
+            'close': 'Close',
+            'volume': 'Volume'
         }
         
-        start_time = time.time()
+        data = data.rename(columns=column_mapping)
         
+        # Usar Date como índice si está disponible, sino usar timestamp
+        if 'Date' in data.columns:
+            data['Date'] = pd.to_datetime(data['Date'])
+            data.set_index('Date', inplace=True)
+        elif 'timestamp' in data.columns:
+            data['timestamp'] = pd.to_datetime(data['timestamp'])
+            data.set_index('timestamp', inplace=True)
+        
+        # Ordenar por timestamp
+        data.sort_index(inplace=True)
+        
+        return data
+    
+    def calculate_indicators_from_dataframe(self, df: pd.DataFrame, symbol: str) -> Optional[Dict]:
+        """
+        Calcular indicadores usando DataFrame preparado
+        
+        Args:
+            df: DataFrame con datos OHLCV preparados
+            symbol: Símbolo del activo
+            
+        Returns:
+            Dict con indicadores o None si error
+        """
         try:
-            # Extraer info del filename
-            symbol, timeframe, timestamp = self.parse_filename(filepath)
-            if not symbol or not timeframe:
-                file_stats.update({
-                    'status': 'failed',
-                    'message': 'Cannot parse filename'
-                })
-                return False, file_stats
+            # Verificar que tenemos suficientes datos
+            if len(df) < 30:
+                logger.warning(f"⚠️ {symbol}: Datos insuficientes ({len(df)} filas)")
+                return None
+            
+            logger.info(f"📊 Calculando indicadores para {symbol}...")
+            
+            # Calcular indicadores individuales usando los datos del CSV
+            # En lugar de usar get_all_indicators que descarga de Yahoo,
+            # calculamos cada indicador individualmente con nuestros datos
+            
+            indicators = {
+                'symbol': symbol,
+                'timestamp': datetime.now(),
+                'current_price': float(df['Close'].iloc[-1]),
+                'current_volume': int(df['Volume'].iloc[-1]),
+                'data_points': len(df),
+                
+                # Calcular cada indicador individualmente
+                'macd': self.indicators_calculator.calculate_macd(df),
+                'rsi': self.indicators_calculator.calculate_rsi(df),
+                'vwap': self.indicators_calculator.calculate_vwap(df),
+                'roc': self.indicators_calculator.calculate_roc(df),
+                'bollinger': self.indicators_calculator.calculate_bollinger_bands(df),
+                'volume_osc': self.indicators_calculator.calculate_volume_oscillator(df),
+                'atr': self.indicators_calculator.calculate_atr(df)
+            }
+            
+            return indicators
+            
+        except Exception as e:
+            logger.error(f"❌ Error calculando indicadores para {symbol}: {str(e)}")
+            return None
+    
+    def _safe_calculate_indicator(self, calc_func, df: pd.DataFrame, indicator_name: str) -> Dict:
+        """
+        Calcular un indicador de forma segura con manejo de errores
+        
+        Args:
+            calc_func: Función de cálculo del indicador
+            df: DataFrame con datos
+            indicator_name: Nombre del indicador para logging
+            
+        Returns:
+            Dict con resultado del indicador o valores por defecto
+        """
+        try:
+            result = calc_func(df)
+            logger.debug(f"✅ {indicator_name}: calculado exitosamente")
+            return result
+        except Exception as e:
+            logger.warning(f"⚠️ {indicator_name}: Error en cálculo - {e}")
+            # Devolver valores por defecto según el indicador
+            return self._get_default_indicator_values(indicator_name)
+    
+    def _get_default_indicator_values(self, indicator_name: str) -> Dict:
+        """Obtener valores por defecto para indicadores que fallaron"""
+        defaults = {
+            'MACD': {'macd': 0, 'signal': 0, 'histogram': 0, 'signal_type': 'NEUTRAL', 'signal_strength': 0},
+            'RSI': {'rsi': 50, 'signal_type': 'NEUTRAL', 'signal_strength': 0},
+            'VWAP': {'vwap': 0, 'deviation_pct': 0, 'signal_type': 'NEUTRAL', 'signal_strength': 0},
+            'ROC': {'roc': 0, 'signal_type': 'NEUTRAL', 'signal_strength': 0},
+            'BB': {'upper_band': 0, 'middle_band': 0, 'lower_band': 0, 'bb_position': 0.5, 'signal_type': 'NEUTRAL', 'signal_strength': 0},
+            'VOL': {'volume_oscillator': 0, 'signal_type': 'NEUTRAL', 'signal_strength': 0},
+            'ATR': {'atr': 0, 'atr_percentage': 0, 'volatility_level': 'NORMAL'}
+        }
+        return defaults.get(indicator_name, {})
+    
+    def save_historical_indicators(self, indicators: Dict, original_df: pd.DataFrame) -> bool:
+        """
+        Guardar indicadores históricos en la base de datos
+        
+        Args:
+            indicators: Dict con todos los indicadores calculados
+            original_df: DataFrame original con datos por timestamp
+            
+        Returns:
+            bool: True si se guardó exitosamente
+        """
+        try:
+            # Para datos históricos, guardamos solo el último punto (más reciente)
+            # que es como funciona el sistema en tiempo real
+            
+            # Usar la función existente del sistema
+            success = save_indicators_data(indicators)
+            
+            if success:
+                self.stats['rows_inserted'] += 1
+                logger.info(f"✅ Guardado en database: {indicators['symbol']} @ {indicators['current_price']}")
+            else:
+                logger.error(f"❌ Error guardando en database: {indicators['symbol']}")
+            
+            return success
+            
+        except Exception as e:
+            logger.error(f"❌ Error guardando indicadores históricos: {e}")
+            return False
+    
+    def process_csv_file(self, filename: str, filepath: str) -> bool:
+        """
+        Procesar un archivo CSV individual
+        
+        Args:
+            filename: Nombre del archivo
+            filepath: Path completo al archivo
+            
+        Returns:
+            bool: True si se procesó exitosamente
+        """
+        try:
+            logger.info(f"📄 Procesando: {filename}")
+            
+            # Parsear información del filename
+            file_info = self.parse_filename(filename)
+            if not file_info:
+                self.errors.append(f"{filename}: Invalid filename format")
+                return False
+            
+            symbol = file_info['symbol']
+            timeframe = file_info['timeframe']
             
             # Leer CSV
             try:
-                df = pd.read_csv(filepath, index_col=0, parse_dates=True)
-                file_stats['rows_read'] = len(df)
-                
-                if len(df) == 0:
-                    file_stats.update({
-                        'status': 'skipped',
-                        'message': 'Empty file'
-                    })
-                    return False, file_stats
-                
+                df = pd.read_csv(filepath)
+                self.stats['rows_processed'] += len(df)
             except Exception as e:
-                file_stats.update({
-                    'status': 'failed',
-                    'message': f'Cannot read CSV: {str(e)}'
-                })
-                return False, file_stats
+                self.errors.append(f"{filename}: Failed to read CSV - {e}")
+                return False
             
             # Validar datos
-            is_valid, validation_msg = self.validate_csv_data(df, symbol, timeframe)
+            is_valid, validation_msg = self.validate_csv_data(df, symbol)
             if not is_valid:
-                file_stats.update({
-                    'status': 'failed',
-                    'message': f'Validation failed: {validation_msg}'
-                })
-                return False, file_stats
+                logger.error(f"❌ {symbol} {timeframe}: Validation failed - {validation_msg}")
+                self.errors.append(f"{filename}: {validation_msg}")
+                return False
             
-            # Agregar metadatos si no existen
-            if 'symbol' not in df.columns:
-                df['symbol'] = symbol
-            if 'timeframe' not in df.columns:
-                df['timeframe'] = timeframe
+            logger.info(f"✅ {symbol} {timeframe}: Validation passed - {len(df)} rows")
             
-            file_stats['rows_processed'] = len(df)
+            # Preparar datos para indicadores
+            prepared_df = self.prepare_dataframe_for_indicators(df)
             
-            # Calcular indicadores técnicos
-            df_with_indicators = self.calculate_indicators_for_df(df, symbol)
+            # Calcular indicadores
+            indicators = self.calculate_indicators_from_dataframe(prepared_df, symbol)
+            if not indicators:
+                self.errors.append(f"{filename}: Failed to calculate indicators")
+                return False
             
-            if df_with_indicators.empty:
-                file_stats.update({
-                    'status': 'failed',
-                    'message': 'Failed to calculate indicators'
-                })
-                return False, file_stats
-            
-            # Insertar en base de datos
-            insert_success, insert_msg = self.insert_to_database(df_with_indicators)
-            
-            if insert_success:
-                file_stats.update({
-                    'status': 'completed',
-                    'message': insert_msg,
-                    'rows_inserted': len(df_with_indicators)
-                })
-                
-                # Actualizar stats globales
+            # Guardar en base de datos
+            if self.save_historical_indicators(indicators, df):
+                logger.info(f"✅ {symbol} {timeframe}: Saved to database successfully")
                 self.stats['symbols_processed'].add(symbol)
                 self.stats['timeframes_processed'].add(timeframe)
-                self.stats['total_rows_processed'] += len(df)
-                self.stats['total_rows_inserted'] += len(df_with_indicators)
-                
-                return True, file_stats
+                return True
             else:
-                file_stats.update({
-                    'status': 'failed',
-                    'message': f'Database insertion failed: {insert_msg}'
-                })
-                return False, file_stats
+                self.errors.append(f"{filename}: Failed to save to database")
+                return False
                 
         except Exception as e:
-            file_stats.update({
-                'status': 'failed',
-                'message': f'Processing error: {str(e)}'
-            })
-            return False, file_stats
-        
-        finally:
-            file_stats['processing_time'] = time.time() - start_time
+            logger.error(f"❌ Error procesando {filename}: {str(e)}")
+            self.errors.append(f"{filename}: {str(e)}")
+            return False
     
-    def process_all_files(self, csv_files: List[str]) -> Dict[str, Any]:
-        """Procesar todos los archivos CSV"""
-        logger.info(f"🚀 Procesando {len(csv_files)} archivos CSV...")
+    def run(self, data_dir: str = "raw_data", test_mode: bool = False, max_files: Optional[int] = None) -> Dict:
+        """
+        Ejecutar el proceso completo de población de datos
         
-        results = {
-            'total_files': len(csv_files),
-            'completed_files': 0,
-            'failed_files': 0,
-            'skipped_files': 0,
-            'file_results': [],
-            'summary': {}
-        }
+        Args:
+            data_dir: Directorio con archivos CSV (relativo a historical_data/)
+            test_mode: Si True, solo procesa el primer archivo
+            max_files: Máximo número de archivos a procesar (None = todos)
+            
+        Returns:
+            Dict con estadísticas del proceso
+        """
+        print("💾 DATABASE POPULATOR V4.0")
+        print("=" * 50)
+        logger.info("💾 Database Populator V4.0 inicializado")
         
-        for i, filepath in enumerate(csv_files):
-            logger.info(f"\n📊 Progreso: {i+1}/{len(csv_files)} ({((i+1)/len(csv_files)*100):.1f}%)")
-            
-            success, file_result = self.process_single_file(filepath)
-            results['file_results'].append(file_result)
-            
-            if success:
-                results['completed_files'] += 1
-                self.stats['files_processed'] += 1
-            else:
-                if file_result['status'] == 'skipped':
-                    results['skipped_files'] += 1
+        # Inicializar
+        if not self.initialize():
+            return self.get_final_stats()
+        
+        # Encontrar archivos CSV
+        csv_files = self.find_csv_files(data_dir)
+        if not csv_files:
+            logger.warning(f"⚠️ No se encontraron archivos CSV en {data_dir}")
+            return self.get_final_stats()
+        
+        logger.info(f"📁 Encontrados {len(csv_files)} archivos CSV")
+        for i, (filename, _, size_kb) in enumerate(csv_files, 1):
+            logger.info(f"   {i}. {filename} ({size_kb:.1f} KB)")
+        
+        # Aplicar filtros
+        files_to_process = csv_files
+        
+        if test_mode:
+            files_to_process = csv_files[:1]
+            print("🧪 MODO TEST: Solo procesando primer archivo")
+        elif max_files:
+            files_to_process = csv_files[:max_files]
+            print(f"📊 Procesando primeros {max_files} archivos")
+        
+        logger.info(f"🚀 Procesando {len(files_to_process)} archivos CSV...")
+        
+        # Procesar archivos
+        for i, (filename, filepath, _) in enumerate(files_to_process, 1):
+            try:
+                progress_pct = (i / len(files_to_process)) * 100
+                logger.info(f"\n📊 Progreso: {i}/{len(files_to_process)} ({progress_pct:.1f}%)")
+                
+                if self.process_csv_file(filename, filepath):
+                    self.stats['files_completed'] += 1
                 else:
-                    results['failed_files'] += 1
                     self.stats['files_failed'] += 1
-            
-            # Progress update cada 5 archivos
-            if (i + 1) % 5 == 0:
-                progress = ((i + 1) / len(csv_files)) * 100
-                elapsed = time.time() - self.stats['start_time']
-                eta = (elapsed / (i + 1)) * (len(csv_files) - i - 1)
-                logger.info(f"📈 Progress: {progress:.1f}% - ETA: {eta:.0f}s")
+                    
+            except KeyboardInterrupt:
+                logger.info("🛑 Proceso interrumpido por usuario")
+                break
+            except Exception as e:
+                logger.error(f"❌ Error inesperado procesando {filename}: {e}")
+                self.stats['files_failed'] += 1
+                continue
         
-        # Estadísticas finales
-        total_time = time.time() - self.stats['start_time']
-        success_rate = (results['completed_files'] / len(csv_files)) * 100 if csv_files else 0
+        return self.get_final_stats()
+    
+    def get_final_stats(self) -> Dict:
+        """Obtener estadísticas finales del proceso"""
+        elapsed_time = time.time() - self.stats['start_time']
         
-        results['summary'] = {
+        success_rate = 0
+        if (self.stats['files_completed'] + self.stats['files_failed']) > 0:
+            success_rate = (self.stats['files_completed'] / 
+                          (self.stats['files_completed'] + self.stats['files_failed'])) * 100
+        
+        return {
+            'files_completed': self.stats['files_completed'],
+            'files_failed': self.stats['files_failed'],
+            'files_skipped': self.stats['files_skipped'],
             'success_rate': success_rate,
-            'total_processing_time': total_time,
+            'elapsed_time': elapsed_time,
             'symbols_processed': list(self.stats['symbols_processed']),
             'timeframes_processed': list(self.stats['timeframes_processed']),
-            'total_rows_processed': self.stats['total_rows_processed'],
-            'total_rows_inserted': self.stats['total_rows_inserted'],
-            'avg_processing_time': total_time / len(csv_files) if csv_files else 0
+            'rows_processed': self.stats['rows_processed'],
+            'rows_inserted': self.stats['rows_inserted'],
+            'errors': self.errors
         }
+    
+    def print_final_report(self, stats: Dict):
+        """Imprimir reporte final"""
+        print("=" * 50)
+        print("📊 RESULTADOS FINALES")
+        print("=" * 50)
+        print(f"✅ Archivos completados: {stats['files_completed']}")
+        print(f"❌ Archivos fallidos: {stats['files_failed']}")
+        print(f"⏭️ Archivos omitidos: {stats['files_skipped']}")
+        print(f"📊 Tasa éxito: {stats['success_rate']:.1f}%")
+        print(f"⏱️ Tiempo total: {stats['elapsed_time']:.1f}s")
         
-        return results
+        print(f"📈 ESTADÍSTICAS DE DATOS:")
+        print(f"   Símbolos procesados: {len(stats['symbols_processed'])} ({', '.join(stats['symbols_processed'])})")
+        print(f"   Timeframes procesados: {', '.join(stats['timeframes_processed'])}")
+        print(f"   Filas procesadas: {stats['rows_processed']}")
+        print(f"   Filas insertadas: {stats['rows_inserted']}")
+        
+        if stats['errors']:
+            print(f"❌ ARCHIVOS CON ERRORES:")
+            for error in stats['errors']:
+                print(f"   {error}")
+        
+        if stats['files_completed'] == 0:
+            print("⚠️ No se procesaron archivos exitosamente")
+            print("💡 Revisa los errores y verifica los archivos CSV")
+        else:
+            print(f"🎉 ¡Proceso completado! {stats['rows_inserted']} registros guardados")
 
 def main():
-    """Función principal CLI"""
-    parser = argparse.ArgumentParser(description='Database Populator V4.0')
-    parser.add_argument('--data-dir', default=None,
-                       help='Directorio con archivos CSV (default: raw_data/)')
-    parser.add_argument('--test', action='store_true',
-                       help='Modo test: solo procesar un archivo')
-    parser.add_argument('--symbol', default=None,
-                       help='Procesar solo archivos de un símbolo específico')
+    """Función principal"""
+    parser = argparse.ArgumentParser(description='Poblar base de datos con datos históricos')
+    parser.add_argument('--data-dir', default='raw_data', help='Directorio con archivos CSV (relativo a historical_data/)')
+    parser.add_argument('--test', action='store_true', help='Modo test: solo procesar primer archivo')
+    parser.add_argument('--max-files', type=int, help='Máximo número de archivos a procesar')
     
     args = parser.parse_args()
     
-    print(f"💾 DATABASE POPULATOR V4.0")
-    print(f"=" * 50)
+    # Crear y ejecutar populator
+    populator = HistoricalDataPopulator()
     
-    # Inicializar populator
-    populator = DatabasePopulator()
-    
-    # Encontrar archivos CSV
-    csv_files = populator.find_csv_files(args.data_dir)
-    
-    if not csv_files:
-        print(f"❌ No se encontraron archivos CSV")
-        print(f"💡 Ejecuta primero: python downloader.py --test")
-        return
-    
-    # Filtrar por símbolo si se especifica
-    if args.symbol:
-        csv_files = [f for f in csv_files if args.symbol.upper() in os.path.basename(f).upper()]
-        print(f"🔍 Filtrado por símbolo {args.symbol}: {len(csv_files)} archivos")
-    
-    # Modo test: solo primer archivo
-    if args.test:
-        csv_files = csv_files[:1]
-        print(f"🧪 MODO TEST: Solo procesando primer archivo")
-    
-    # Procesar archivos
-    start_time = time.time()
-    results = populator.process_all_files(csv_files)
-    total_time = time.time() - start_time
-    
-    # Mostrar resultados finales
-    print(f"\n" + "=" * 50)
-    print(f"📊 RESULTADOS FINALES")
-    print(f"=" * 50)
-    print(f"✅ Archivos completados: {results['completed_files']}")
-    print(f"❌ Archivos fallidos: {results['failed_files']}")
-    print(f"⏭️ Archivos omitidos: {results['skipped_files']}")
-    print(f"📊 Tasa éxito: {results['summary']['success_rate']:.1f}%")
-    print(f"⏱️ Tiempo total: {total_time:.1f}s")
-    
-    # Detalles de procesamiento
-    summary = results['summary']
-    print(f"\n📈 ESTADÍSTICAS DE DATOS:")
-    print(f"   Símbolos procesados: {len(summary['symbols_processed'])} ({', '.join(summary['symbols_processed'])})")
-    print(f"   Timeframes procesados: {', '.join(summary['timeframes_processed'])}")
-    print(f"   Filas procesadas: {summary['total_rows_processed']:,}")
-    print(f"   Filas insertadas: {summary['total_rows_inserted']:,}")
-    
-    # Archivos con errores
-    failed_files = [r for r in results['file_results'] if r['status'] == 'failed']
-    if failed_files:
-        print(f"\n❌ ARCHIVOS CON ERRORES:")
-        for file_result in failed_files[:5]:  # Mostrar primeros 5
-            print(f"   {file_result['filename']}: {file_result['message']}")
-        if len(failed_files) > 5:
-            print(f"   ... y {len(failed_files) - 5} más")
-    
-    # Siguiente paso
-    if results['completed_files'] > 0:
-        print(f"\n🎉 ¡Base de datos poblada exitosamente!")
-        print(f"💡 Siguiente paso: python backtest_engine.py")
-    else:
-        print(f"\n⚠️ No se procesaron archivos exitosamente")
-        print(f"💡 Revisa los errores y verifica los archivos CSV")
+    try:
+        stats = populator.run(
+            data_dir=args.data_dir,
+            test_mode=args.test,
+            max_files=args.max_files
+        )
+        
+        populator.print_final_report(stats)
+        
+    except KeyboardInterrupt:
+        print("\n🛑 Proceso cancelado por usuario")
+    except Exception as e:
+        logger.error(f"❌ Error fatal: {e}")
+        print(f"❌ Error fatal: {e}")
 
 if __name__ == "__main__":
     main()
