@@ -30,3 +30,6 @@ pytz>=2023.3                 # Zonas horarias
 # === DESARROLLO Y TESTING ===
 pytest>=7.4.0               # Testing framework
 pytest-cov>=4.1.0           # Coverage de tests
+
+#Otras
+aiohttp
