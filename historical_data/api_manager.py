@@ -17,6 +17,8 @@ CARACTERÍSTICAS:
 - Performance monitoring en tiempo real
 """
 
+import sys
+import os
 import time
 import json
 import asyncio
@@ -27,13 +29,63 @@ from typing import Dict, List, Optional, Tuple, Any
 import logging
 from dataclasses import dataclass, asdict
 from enum import Enum
-import os
 
-# Importar configuración local
-from . import config
+# =============================================================================
+# 🔧 SOLUCION DE IMPORTS - COMPATIBLE STANDALONE Y MÓDULO
+# =============================================================================
+def setup_imports():
+    """Configurar imports para funcionar standalone y como módulo"""
+    # Obtener directorio actual del script
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    # Agregar directorio historical_data al path si no está
+    if current_dir not in sys.path:
+        sys.path.insert(0, current_dir)
+    
+    # Agregar directorio padre (trading_system) al path
+    parent_dir = os.path.dirname(current_dir)
+    if parent_dir not in sys.path:
+        sys.path.insert(0, parent_dir)
 
-# Configurar logging
-logging.basicConfig(level=getattr(logging, config.LOGGING_CONFIG['level']))
+# Ejecutar setup de imports
+setup_imports()
+
+# Importar configuración con fallback
+try:
+    # Intentar import relativo (cuando se usa como módulo)
+    from . import config
+except ImportError:
+    try:
+        # Import absoluto desde historical_data
+        import config
+    except ImportError:
+        # Fallback: cargar desde directorio actual
+        import sys
+        import importlib.util
+        config_path = os.path.join(os.path.dirname(__file__), 'config.py')
+        spec = importlib.util.spec_from_file_location("config", config_path)
+        config = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(config)
+
+# =============================================================================
+# 🔄 CONFIGURACION DE RATE LIMITS COMPARTIDOS
+# =============================================================================
+
+# Rate limits compartidos entre sistema principal e histórico
+RATE_LIMITS_SHARED = {
+    'YAHOO': 1.0,           # 1 seg entre requests (conservador para datos históricos)
+    'ALPHA_VANTAGE': 13.0,  # 13 seg = ~5 requests/min (respeta límite oficial)
+    'TWELVE_DATA': 2.0,     # 2 seg = 30 requests/min (muy conservador)
+    'POLYGON': 15.0,        # 15 seg = 4 requests/min (ultra conservador)
+}
+
+# Configurar logging con fallback seguro
+try:
+    log_level = getattr(logging, config.LOGGING_CONFIG.get('level', 'INFO'), logging.INFO)
+except (AttributeError, KeyError):
+    log_level = logging.INFO
+
+logging.basicConfig(level=log_level)
 logger = logging.getLogger(__name__)
 
 class APIStatus(Enum):
@@ -135,65 +187,39 @@ class APIManager:
                 available.append(api)
         return available
     
-    def get_best_api_for_request(self, prefer_fast: bool = False) -> Optional[str]:
-        """
-        Seleccionar mejor API para próximo request
-        
-        Args:
-            prefer_fast: Preferir APIs más rápidas vs más confiables
-            
-        Returns:
-            Nombre de API o None si ninguna disponible
-        """
-        available_apis = self.get_available_apis()
+    def get_best_api(self) -> Optional[str]:
+        """Obtener la mejor API disponible"""
         today = datetime.now().strftime('%Y-%m-%d')
         
-        # Filtrar APIs que pueden hacer requests
-        usable_apis = []
-        for api in available_apis:
-            stats_key = f"{api}_{today}"
+        best_api = None
+        best_score = -1
+        
+        for api_name in self.get_available_apis():
+            stats_key = f"{api_name}_{today}"
             usage = self.usage_stats.get(stats_key)
             
-            if usage and usage.can_make_request():
-                # Verificar si puede hacer request ahora (rate limiting)
-                if usage.time_until_next_request() == 0:
-                    usable_apis.append((api, usage))
+            if not usage or not usage.can_make_request():
+                continue
+            
+            # Calcular score basado en success rate y response time
+            score = usage.success_rate - (usage.avg_response_time * 10)
+            
+            # Bonus para Yahoo (sin límites)
+            if api_name == 'YAHOO':
+                score += 50
+            
+            if score > best_score:
+                best_score = score
+                best_api = api_name
         
-        if not usable_apis:
-            return None
-        
-        # Estrategia de selección
-        if prefer_fast:
-            # Ordenar por velocidad (menor tiempo de respuesta)
-            usable_apis.sort(key=lambda x: x[1].avg_response_time)
-        else:
-            # Ordenar por prioridad y confiabilidad
-            usable_apis.sort(key=lambda x: (
-                config.API_PRIORITY.index(x[0]),  # Prioridad en config
-                -x[1].success_rate  # Mayor tasa de éxito
-            ))
-        
-        return usable_apis[0][0]
-    
-    def wait_for_rate_limit(self, api_name: str) -> None:
-        """Esperar si es necesario por rate limiting"""
-        today = datetime.now().strftime('%Y-%m-%d')
-        stats_key = f"{api_name}_{today}"
-        usage = self.usage_stats.get(stats_key)
-        
-        if usage:
-            wait_time = usage.time_until_next_request()
-            if wait_time > 0:
-                logger.info(f"⏳ {api_name}: Esperando {wait_time:.1f}s por rate limit...")
-                time.sleep(wait_time)
+        return best_api
     
     def record_request(self, api_name: str, success: bool, response_time: float, 
-                      error: Optional[str] = None):
+                      error_msg: str = None):
         """Registrar resultado de request"""
         today = datetime.now().strftime('%Y-%m-%d')
         stats_key = f"{api_name}_{today}"
         
-        # Crear stats si no existen
         if stats_key not in self.usage_stats:
             self.usage_stats[stats_key] = APIUsage(api_name, today)
         
@@ -204,55 +230,60 @@ class APIManager:
         
         if success:
             usage.requests_successful += 1
-            # Reset status si estaba fallando
-            if self.api_status.get(api_name) == APIStatus.FAILED:
-                self.api_status[api_name] = APIStatus.AVAILABLE
-                logger.info(f"✅ {api_name}: Recuperada - funcionando nuevamente")
+            usage.status = APIStatus.AVAILABLE
         else:
             usage.requests_failed += 1
             
             # Analizar tipo de error
-            if error and "rate limit" in error.lower():
+            if error_msg and ("rate" in error_msg.lower() or "limit" in error_msg.lower()):
+                usage.status = APIStatus.RATE_LIMITED
                 self.api_status[api_name] = APIStatus.RATE_LIMITED
-                logger.warning(f"🚫 {api_name}: Rate limit alcanzado")
-            elif usage.success_rate < 50 and usage.requests_made > 3:
-                self.api_status[api_name] = APIStatus.FAILED
-                logger.error(f"❌ {api_name}: Marcada como fallida (tasa éxito: {usage.success_rate:.1f}%)")
-        
-        # Guardar stats automáticamente cada 10 requests
+            elif error_msg and ("quota" in error_msg.lower() or "exceeded" in error_msg.lower()):
+                usage.status = APIStatus.QUOTA_EXCEEDED
+                self.api_status[api_name] = APIStatus.QUOTA_EXCEEDED
+            else:
+                usage.status = APIStatus.FAILED
+                
+        # Guardar stats periódicamente
         if usage.requests_made % 10 == 0:
             self.save_usage_stats()
     
-    def make_request(self, api_name: str, url: str, params: Dict[str, Any], 
-                    timeout: int = 30) -> Tuple[bool, Optional[Dict], Optional[str]]:
+    def make_request(self, api_name: str, url: str, params: Dict, 
+                    timeout: int = 30) -> Tuple[bool, Optional[Dict], str]:
         """
-        Hacer request a API específica con manejo completo
+        Hacer request a una API específica con rate limiting
         
         Returns:
             Tuple[success, data, error_message]
         """
+        today = datetime.now().strftime('%Y-%m-%d')
+        stats_key = f"{api_name}_{today}"
+        
+        # Verificar si puede hacer request
+        usage = self.usage_stats.get(stats_key)
+        if usage and not usage.can_make_request():
+            error_msg = f"Cuota diaria excedida para {api_name}"
+            return False, None, error_msg
+        
+        # Aplicar rate limiting
+        if usage:
+            wait_time = usage.time_until_next_request()
+            if wait_time > 0:
+                logger.info(f"⏳ Rate limit {api_name}: esperando {wait_time:.1f}s")
+                time.sleep(wait_time)
+        
         start_time = time.time()
         
         try:
-            # Verificar si API está disponible
-            if not config.is_api_available(api_name):
-                return False, None, f"{api_name} no configurada"
-            
-            # Esperar por rate limiting
-            self.wait_for_rate_limit(api_name)
-            
-            logger.debug(f"🌐 {api_name}: {url}")
-            
-            # Hacer request
             response = requests.get(url, params=params, timeout=timeout)
             response_time = time.time() - start_time
             
-            # Verificar status
             if response.status_code == 200:
                 try:
                     data = response.json()
                     self.record_request(api_name, True, response_time)
-                    return True, data, None
+                    return True, data, ""
+                    
                 except json.JSONDecodeError as e:
                     error_msg = f"Error parsing JSON: {e}"
                     self.record_request(api_name, False, response_time, error_msg)
@@ -322,79 +353,19 @@ class APIManager:
         logger.error("💥 Todas las APIs fallaron")
         return False, None, "ALL_APIS_FAILED"
     
-    def get_yahoo_data(self, symbol: str, interval: str, period: str) -> Tuple[bool, Optional[Dict], str]:
-        """Obtener datos de Yahoo Finance"""
-        url = f"{config.API_ENDPOINTS['YAHOO']}{symbol}"
-        params = {
-            'interval': interval,
-            'period': period,
-            'includePrePost': 'false'
-        }
-        
-        success, data, error = self.make_request('YAHOO', url, params)
-        return success, data, 'YAHOO' if success else error
-    
-    def get_alpha_vantage_data(self, symbol: str, interval: str = '15min') -> Tuple[bool, Optional[Dict], str]:
-        """Obtener datos de Alpha Vantage"""
-        function = 'TIME_SERIES_INTRADAY' if interval != '1d' else 'TIME_SERIES_DAILY'
-        
-        params = {
-            'function': function,
-            'symbol': symbol,
-            'apikey': config.API_KEYS['ALPHA_VANTAGE']
-        }
-        
-        if function == 'TIME_SERIES_INTRADAY':
-            params['interval'] = interval
-            params['outputsize'] = 'full'
-        
-        success, data, error = self.make_request('ALPHA_VANTAGE', config.API_ENDPOINTS['ALPHA_VANTAGE'], params)
-        return success, data, 'ALPHA_VANTAGE' if success else error
-    
-    def get_twelve_data(self, symbol: str, interval: str) -> Tuple[bool, Optional[Dict], str]:
-        """Obtener datos de Twelve Data"""
-        url = f"{config.API_ENDPOINTS['TWELVE_DATA']}time_series"
-        
-        params = {
-            'symbol': symbol,
-            'interval': interval,
-            'apikey': config.API_KEYS['TWELVE_DATA'],
-            'outputsize': 5000  # Máximo permitido
-        }
-        
-        success, data, error = self.make_request('TWELVE_DATA', url, params)
-        return success, data, 'TWELVE_DATA' if success else error
-    
-    def get_polygon_data(self, symbol: str, timespan: str = 'minute', multiplier: int = 15) -> Tuple[bool, Optional[Dict], str]:
-        """Obtener datos de Polygon.io"""
-        from_date = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
-        to_date = datetime.now().strftime('%Y-%m-%d')
-        
-        url = f"{config.API_ENDPOINTS['POLYGON']}{symbol}/range/{multiplier}/{timespan}/{from_date}/{to_date}"
-        
-        params = {
-            'apikey': config.API_KEYS['POLYGON']
-        }
-        
-        success, data, error = self.make_request('POLYGON', url, params)
-        return success, data, 'POLYGON' if success else error
-    
-    def get_market_data_with_fallback(self, symbol: str, interval: str = '15m', 
-                                    period: str = '1mo') -> Tuple[bool, Optional[Dict], str]:
+    def get_data(self, symbol: str, interval: str = '15m', period: str = '1mo') -> Tuple[bool, Optional[Dict], str]:
         """
-        Obtener datos con fallback automático entre todas las APIs
+        Obtener datos con fallback automático entre todas las APIs disponibles
         
         Args:
-            symbol: Símbolo bursátil
-            interval: Intervalo (15m, 1h, 1d)
-            period: Período (1mo, 3mo, 1y, 2y)
+            symbol: Símbolo a consultar (ej: 'AAPL')
+            interval: Intervalo (15m, 1h, 1d, etc.)
+            period: Período (1d, 5d, 1mo, 3mo, 1y, etc.)
             
         Returns:
-            Tuple[success, data, source_api]
+            Tuple[success, data, source_api_used]
         """
-        logger.info(f"📊 Obteniendo {symbol} - {interval} - {period}")
-        
-        # Preparar configuraciones para cada API
+        # Configurar URLs para cada API
         url_configs = {}
         
         # Yahoo Finance
@@ -408,19 +379,22 @@ class APIManager:
                 }
             )
         
-        # Alpha Vantage  
+        # Alpha Vantage
         if config.is_api_available('ALPHA_VANTAGE'):
             function = 'TIME_SERIES_INTRADAY' if interval != '1d' else 'TIME_SERIES_DAILY'
-            params = {
+            av_params = {
                 'function': function,
                 'symbol': symbol,
                 'apikey': config.API_KEYS['ALPHA_VANTAGE']
             }
             if function == 'TIME_SERIES_INTRADAY':
-                params['interval'] = interval
-                params['outputsize'] = 'full'
+                av_params['interval'] = interval
+                av_params['outputsize'] = 'full'
             
-            url_configs['ALPHA_VANTAGE'] = (config.API_ENDPOINTS['ALPHA_VANTAGE'], params)
+            url_configs['ALPHA_VANTAGE'] = (
+                config.API_ENDPOINTS['ALPHA_VANTAGE'],
+                av_params
+            )
         
         # Twelve Data
         if config.is_api_available('TWELVE_DATA'):
@@ -484,144 +458,65 @@ class APIManager:
             logger.warning(f"⚠️ Error cargando stats (empezando limpio): {e}")
             self.usage_stats = {}
     
-    def get_daily_summary(self) -> Dict[str, Any]:
+    def get_daily_summary(self) -> Dict[str, Dict]:
         """Obtener resumen diario de uso de APIs"""
         today = datetime.now().strftime('%Y-%m-%d')
         summary = {}
         
-        for api in config.API_PRIORITY:
-            stats_key = f"{api}_{today}"
+        for api_name in config.API_PRIORITY:
+            stats_key = f"{api_name}_{today}"
             usage = self.usage_stats.get(stats_key)
             
             if usage:
-                daily_limit = DAILY_LIMITS_SHARED.get(api.upper(), 0)
-                summary[api] = {
+                summary[api_name] = {
                     'requests_made': usage.requests_made,
-                    'requests_successful': usage.requests_successful,
-                    'requests_failed': usage.requests_failed,
-                    'success_rate': f"{usage.success_rate:.1f}%",
-                    'avg_response_time': f"{usage.avg_response_time:.2f}s",
-                    'daily_limit': daily_limit if daily_limit > 0 else "Unlimited",
-                    'usage_percentage': f"{(usage.requests_made/daily_limit*100):.1f}%" if daily_limit > 0 else "N/A",
-                    'status': usage.status.value
+                    'success_rate': usage.success_rate,
+                    'avg_response_time': usage.avg_response_time,
+                    'status': usage.status.value,
+                    'can_make_request': usage.can_make_request()
                 }
             else:
-                summary[api] = {
+                summary[api_name] = {
                     'requests_made': 0,
-                    'status': self.api_status.get(api, APIStatus.UNAVAILABLE).value
+                    'success_rate': 0.0,
+                    'avg_response_time': 0.0,
+                    'status': self.api_status.get(api_name, APIStatus.UNAVAILABLE).value,
+                    'can_make_request': config.is_api_available(api_name)
                 }
         
         return summary
-    
-    def print_status_report(self):
-        """Imprimir reporte detallado del estado actual"""
-        print("\n🔄 API MANAGER - ESTADO ACTUAL")
-        print("=" * 60)
-        
-        summary = self.get_daily_summary()
-        
-        for api, stats in summary.items():
-            status_emoji = {
-                'available': '✅',
-                'rate_limited': '⏳', 
-                'failed': '❌',
-                'quota_exceeded': '🚫',
-                'unavailable': '⚪'
-            }.get(stats['status'], '❓')
-            
-            print(f"{status_emoji} {api}:")
-            print(f"   Requests: {stats['requests_made']}")
-            if 'success_rate' in stats:
-                print(f"   Éxito: {stats['success_rate']}")
-                print(f"   Tiempo promedio: {stats['avg_response_time']}")
-                print(f"   Límite diario: {stats['daily_limit']}")
-                if stats.get('usage_percentage') != 'N/A':
-                    print(f"   Uso: {stats['usage_percentage']}")
-            print()
-        
-        available_apis = self.get_available_apis()
-        print(f"🚀 APIs disponibles ahora: {', '.join(available_apis) if available_apis else 'Ninguna'}")
-        print("=" * 60)
 
 # =============================================================================
-# 🧪 FUNCIONES DE TESTING
+# 🧪 TESTING Y DEBUGGING
 # =============================================================================
 
 def test_api_manager():
-    """Test básico del API Manager"""
-    print("🧪 TESTING API MANAGER")
-    print("=" * 50)
+    """Test del API Manager"""
+    print("🧪 Testing API Manager...")
     
-    try:
-        # Crear manager
-        manager = APIManager()
-        
-        # Mostrar estado inicial
-        manager.print_status_report()
-        
-        # Test request a Yahoo Finance (símbolo simple)
-        print("📊 Testeando Yahoo Finance con AAPL...")
-        success, data, source = manager.get_yahoo_data('AAPL', '1d', '5d')
-        
-        if success:
-            print(f"✅ Yahoo Finance funcionando - Source: {source}")
-            print(f"   Datos recibidos: {len(data.get('chart', {}).get('result', []))} series")
-        else:
-            print(f"❌ Yahoo Finance falló: {source}")
-        
-        # Mostrar estado final
-        print("\n📊 Estado después del test:")
-        manager.print_status_report()
-        
-        print("✅ Test completado")
-        return True
-        
-    except Exception as e:
-        print(f"❌ Error en test: {e}")
-        return False
-
-def test_api_fallback():
-    """Test del sistema de fallback"""
-    print("🧪 TESTING SISTEMA DE FALLBACK")
-    print("=" * 50)
+    # Crear instancia
+    manager = APIManager()
     
-    try:
-        manager = APIManager()
-        
-        # Test con múltiples APIs
-        print("📊 Testeando fallback con AAPL...")
-        success, data, source_api = manager.get_market_data_with_fallback('AAPL', '15m', '1mo')
-        
-        if success:
-            print(f"✅ Datos obtenidos exitosamente")
-            print(f"   Fuente: {source_api}")
-            print(f"   Tipo de datos: {type(data)}")
-        else:
-            print(f"❌ Todas las APIs fallaron: {source_api}")
-        
-        return success
-        
-    except Exception as e:
-        print(f"❌ Error en test fallback: {e}")
-        return False
+    # Mostrar APIs disponibles
+    print(f"📊 APIs disponibles: {manager.get_available_apis()}")
+    
+    # Test simple con AAPL
+    print("\n🔍 Testing request para AAPL...")
+    success, data, source = manager.get_data('AAPL', interval='1d', period='5d')
+    
+    if success:
+        print(f"✅ Request exitoso usando {source}")
+        print(f"📈 Datos obtenidos: {len(data) if isinstance(data, dict) else 'N/A'} elementos")
+    else:
+        print(f"❌ Request falló: {source}")
+    
+    # Mostrar resumen del día
+    print("\n📋 Resumen diario:")
+    summary = manager.get_daily_summary()
+    for api, stats in summary.items():
+        print(f"  {api}: {stats['requests_made']} requests, "
+              f"{stats['success_rate']:.1f}% éxito, "
+              f"{stats['avg_response_time']:.2f}s promedio")
 
 if __name__ == "__main__":
-    print("🔄 API MANAGER V3.0 - MODO TESTING")
-    print("=" * 60)
-    
-    # Test básico
-    print("1️⃣ Test básico...")
-    basic_success = test_api_manager()
-    
-    if basic_success:
-        print("\n2️⃣ Test sistema de fallback...")
-        fallback_success = test_api_fallback()
-        
-        if fallback_success:
-            print("\n🎉 ¡Todos los tests pasaron!")
-        else:
-            print("\n⚠️ Test de fallback falló")
-    else:
-        print("\n❌ Test básico falló")
-    
-    print("\n🏁 Tests completados")
+    test_api_manager()
