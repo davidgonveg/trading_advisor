@@ -1,13 +1,20 @@
 #!/usr/bin/env python3
 """
-💰 SISTEMA DE GESTIÓN DE POSICIONES - TRADING AUTOMATIZADO V2.0
-==============================================================
+💰 POSITION CALCULATOR V3.0 - CON TARGETS ADAPTATIVOS
+====================================================
 
-Sistema adaptativo de cálculo de posiciones que ajusta:
-- Número de entradas según calidad de señal
-- Distribución de tamaños según volatilidad
-- Take profits según momentum
-- Stop loss dinámico basado en ATR
+Versión mejorada que integra:
+- Sistema de Take Profits orgánicos y adaptativos
+- Análisis técnico real para targets
+- Stop loss dinámico mejorado
+- Gestión de riesgo contextual
+
+MEJORAS PRINCIPALES:
+- Targets basados en resistencias/soportes REALES
+- R:R realistas (1.2 - 6.0 máximo)
+- Fibonacci automático
+- VWAP y Bollinger como targets dinámicos
+- Distribución adaptativa según calidad de señal
 """
 
 import logging
@@ -15,23 +22,31 @@ from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
 from datetime import datetime
 import numpy as np
+import pandas as pd
 
-# Configurar logging
+# Importar el nuevo calculador adaptativo
+from adaptive_targets import AdaptiveTakeProfitCalculator, AdaptiveTarget
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 @dataclass
 class PositionLevel:
-    """Representa un nivel de entrada o salida"""
-    level_type: str  # 'ENTRY' o 'EXIT'
+    """Representa un nivel de entrada o salida mejorado"""
+    level_type: str  # 'ENTRY', 'EXIT', 'STOP'
     price: float
     percentage: float  # % del capital total a usar
     description: str
     trigger_condition: str = ""
+    
+    # Nuevos campos para targets adaptativos
+    risk_reward: Optional[float] = None
+    confidence: Optional[float] = None
+    technical_basis: Optional[List[str]] = None
 
 @dataclass
 class PositionPlan:
-    """Plan completo de posición"""
+    """Plan completo de posición mejorado"""
     symbol: str
     direction: str  # 'LONG' o 'SHORT'
     current_price: float
@@ -44,26 +59,35 @@ class PositionPlan:
     exits: List[PositionLevel]
     stop_loss: PositionLevel
     
-    # Métricas
+    # Métricas mejoradas
     max_risk_reward: float
+    avg_risk_reward: float  # Nuevo: R:R promedio ponderado
     expected_hold_time: str
     confidence_level: str
+    
+    # Nuevos campos técnicos
+    technical_summary: str
+    market_context: str
+    risk_assessment: str
 
-class PositionCalculator:
+class PositionCalculatorV3:
     """
-    Calculadora de posiciones adaptativa
+    Calculadora de posiciones V3.0 con targets adaptativos
     """
     
     def __init__(self):
-        """Inicializar calculadora con estrategias definidas"""
+        """Inicializar calculadora mejorada"""
         
-        # Estrategias según calidad de señal
+        # Inicializar calculador adaptativo
+        self.adaptive_calculator = AdaptiveTakeProfitCalculator()
+        
+        # Estrategias mejoradas (R:R más realistas)
         self.strategies = {
             'SCALP': {
                 'signal_threshold': 85,
                 'max_entries': 2,
                 'base_risk': 1.0,
-                'target_multipliers': [1.5, 2.5],
+                'max_rr': 3.0,  # Máximo R:R realista para scalping
                 'time_horizon': '15-45 min',
                 'description': 'Señal muy fuerte - Scalping agresivo'
             },
@@ -71,7 +95,7 @@ class PositionCalculator:
                 'signal_threshold': 75,
                 'max_entries': 3,
                 'base_risk': 1.2,
-                'target_multipliers': [2.0, 3.5, 5.0],
+                'max_rr': 5.0,  # Máximo R:R para swing corto
                 'time_horizon': '2-8 horas',
                 'description': 'Señal buena - Swing corto'
             },
@@ -79,172 +103,249 @@ class PositionCalculator:
                 'signal_threshold': 65,
                 'max_entries': 3,
                 'base_risk': 1.5,
-                'target_multipliers': [2.5, 4.0, 6.0],
-                'time_horizon': '4-24 horas',
+                'max_rr': 6.0,  # Máximo R:R para swing medio
+                'time_horizon': '1-3 días',
                 'description': 'Señal moderada - Swing medio'
             },
             'POSITION': {
-                'signal_threshold': 50,
+                'signal_threshold': 60,
                 'max_entries': 4,
-                'base_risk': 0.8,
-                'target_multipliers': [3.0, 5.0, 8.0, 12.0],
-                'time_horizon': '1-5 días',
+                'base_risk': 2.0,
+                'max_rr': 6.0,  # Ya no más de 6R (antes era 10R irreal)
+                'time_horizon': '3-10 días',
                 'description': 'Señal débil - Trading posicional'
             }
         }
         
-        # Configuración de volatilidad
+        # Ajustes por volatilidad (mejorados)
         self.volatility_adjustments = {
-            'LOW': {'atr_multiplier': 0.8, 'risk_reduction': 0.9},
-            'NORMAL': {'atr_multiplier': 1.0, 'risk_reduction': 1.0},
-            'HIGH': {'atr_multiplier': 1.2, 'risk_reduction': 1.1},
-            'VERY_HIGH': {'atr_multiplier': 1.5, 'risk_reduction': 1.3}
+            'LOW': {
+                'atr_multiplier': 1.8,
+                'risk_reduction': 1.2,
+                'target_extension': 0.9  # Targets más conservadores en baja volatilidad
+            },
+            'NORMAL': {
+                'atr_multiplier': 2.0,
+                'risk_reduction': 1.0,
+                'target_extension': 1.0
+            },
+            'HIGH': {
+                'atr_multiplier': 2.5,
+                'risk_reduction': 0.8,
+                'target_extension': 1.1  # Targets ligeramente más ambiciosos
+            }
         }
     
-    def determine_strategy(self, signal_strength: int, indicators: Dict) -> str:
+    def calculate_position_plan_v3(self, 
+                                  symbol: str, 
+                                  direction: str, 
+                                  current_price: float, 
+                                  signal_strength: int, 
+                                  indicators: Dict,
+                                  market_data: pd.DataFrame,  # Nuevo: datos OHLCV para análisis técnico
+                                  account_balance: float = 10000) -> PositionPlan:
         """
-        Determinar estrategia según señal y condiciones
+        Calcular plan completo de posición V3.0 con targets adaptativos
         """
         try:
-            # RSI para contexto
-            rsi = indicators.get('rsi', {}).get('rsi', 50)
+            logger.info(f"💰 Calculando plan V3.0 para {symbol} - {direction}")
             
-            # ROC para momentum
-            roc = indicators.get('roc', {}).get('roc', 0)
+            # 1. Determinar estrategia
+            strategy_name = self.determine_strategy(signal_strength, indicators)
+            strategy = self.strategies[strategy_name]
             
-            # Volatilidad
+            # 2. Obtener datos técnicos
+            atr = indicators.get('atr', {}).get('atr', current_price * 0.02)
             volatility = indicators.get('atr', {}).get('volatility_level', 'NORMAL')
             
-            # Ajustar signal_strength según contexto
-            adjusted_strength = signal_strength
+            # 3. Calcular entradas (mantener lógica existente mejorada)
+            entries = self.calculate_entry_levels_v3(
+                current_price, atr, direction, strategy, volatility
+            )
             
-            # Reducir si momentum es bajo
-            if abs(roc) < 1.0:
-                adjusted_strength -= 10
+            if not entries:
+                raise ValueError("No se pudieron calcular entradas")
             
-            # Reducir si volatilidad muy alta
-            if volatility == 'VERY_HIGH':
-                adjusted_strength -= 15
+            # 4. Calcular stop loss mejorado
+            main_entry_price = entries[0].price
+            stop_loss = self.calculate_stop_loss_v3(
+                main_entry_price, atr, direction, strategy, volatility, indicators
+            )
             
-            # Aumentar si momentum muy fuerte
-            if abs(roc) > 3.0:
-                adjusted_strength += 10
+            # 5. 🚀 NUEVA FUNCIONALIDAD: Calcular targets adaptativos
+            adaptive_targets = self.adaptive_calculator.calculate_adaptive_targets(
+                symbol=symbol,
+                data=market_data,
+                entry_price=main_entry_price,
+                stop_price=stop_loss.price,
+                direction=direction,
+                indicators=indicators,
+                signal_strength=signal_strength
+            )
             
-            # Seleccionar estrategia
-            if adjusted_strength >= 85:
+            # 6. Convertir targets adaptativos a PositionLevel
+            exits = self.convert_adaptive_targets_to_levels(adaptive_targets)
+            
+            # 7. Validar que los targets no excedan máximo R:R de la estrategia
+            exits = self.validate_targets_against_strategy(exits, main_entry_price, stop_loss.price, strategy)
+            
+            # 8. Calcular métricas mejoradas
+            metrics = self.calculate_enhanced_metrics(exits, main_entry_price, stop_loss.price)
+            
+            # 9. Generar análisis contextual
+            context_analysis = self.generate_context_analysis(indicators, signal_strength, volatility)
+            
+            # 10. Determinar nivel de confianza mejorado
+            confidence = self.calculate_enhanced_confidence(signal_strength, adaptive_targets, indicators)
+            
+            # 11. Ajustar riesgo total
+            vol_risk_adj = self.volatility_adjustments[volatility]['risk_reduction']
+            total_risk = strategy['base_risk'] / vol_risk_adj
+            
+            # 12. Crear plan final
+            plan = PositionPlan(
+                symbol=symbol,
+                direction=direction,
+                current_price=current_price,
+                signal_strength=signal_strength,
+                strategy_type=strategy_name,
+                total_risk_percent=total_risk,
+                entries=entries,
+                exits=exits,
+                stop_loss=stop_loss,
+                max_risk_reward=metrics['max_rr'],
+                avg_risk_reward=metrics['avg_rr'],
+                expected_hold_time=strategy['time_horizon'],
+                confidence_level=confidence,
+                technical_summary=context_analysis['technical_summary'],
+                market_context=context_analysis['market_context'],
+                risk_assessment=context_analysis['risk_assessment']
+            )
+            
+            logger.info(f"✅ Plan V3.0 calculado: {strategy_name} - {confidence} confidence - Avg {metrics['avg_rr']:.1f}R")
+            return plan
+            
+        except Exception as e:
+            logger.error(f"❌ Error calculando plan V3.0: {e}")
+            # Fallback al sistema anterior si falla
+            return self.calculate_fallback_plan(symbol, direction, current_price, signal_strength, indicators, account_balance)
+    
+    def determine_strategy(self, signal_strength: int, indicators: Dict) -> str:
+        """Determinar estrategia basada en fuerza de señal"""
+        try:
+            # Lógica mejorada que considera también volatilidad
+            volatility = indicators.get('atr', {}).get('volatility_level', 'NORMAL')
+            
+            if signal_strength >= 85:
                 return 'SCALP'
-            elif adjusted_strength >= 75:
+            elif signal_strength >= 75:
+                # En alta volatilidad, preferir swing corto aunque señal sea fuerte
                 return 'SWING_SHORT'
-            elif adjusted_strength >= 65:
+            elif signal_strength >= 65:
                 return 'SWING_MEDIUM'
             else:
                 return 'POSITION'
                 
         except Exception as e:
-            logger.error(f"Error determinando estrategia: {e}")
-            return 'SWING_MEDIUM'  # Default seguro
+            logger.warning(f"⚠️ Error determinando estrategia: {e}")
+            return 'SWING_MEDIUM'  # Estrategia por defecto
     
-    def calculate_entry_levels(self, 
-                              current_price: float, 
-                              atr: float, 
-                              direction: str, 
-                              strategy: Dict,
-                              volatility: str) -> List[PositionLevel]:
-        """
-        Calcular niveles de entrada escalonados
-        """
+    def calculate_entry_levels_v3(self, 
+                                 current_price: float, 
+                                 atr: float, 
+                                 direction: str, 
+                                 strategy: Dict,
+                                 volatility: str) -> List[PositionLevel]:
+        """Calcular niveles de entrada mejorados"""
         try:
             entries = []
             max_entries = strategy['max_entries']
             vol_adj = self.volatility_adjustments[volatility]['atr_multiplier']
             
             if direction == 'LONG':
-                # Entradas en retrocesos para LONG
                 if max_entries == 2:
-                    # Scalping - solo 2 entradas rápidas
+                    # Scalping - entradas más precisas
                     prices = [
                         current_price,
-                        current_price - (atr * 0.3 * vol_adj)
+                        current_price - (atr * 0.25 * vol_adj)  # Entrada más cerca
                     ]
-                    percentages = [60, 40]
+                    percentages = [70, 30]  # Más peso en primera entrada
                     descriptions = [
-                        "Entrada inmediata - Breakout",
-                        "Entrada en retroceso - Dip buy"
+                        "Entrada inmediata - Breakout confirmado",
+                        "Entrada retroceso - Dip buy oportunista"
                     ]
                 
                 elif max_entries == 3:
-                    # Swing - 3 entradas graduales
-                    prices = [
-                        current_price,
-                        current_price - (atr * 0.5 * vol_adj),
-                        current_price - (atr * 1.0 * vol_adj)
-                    ]
-                    percentages = [40, 35, 25]
-                    descriptions = [
-                        "Entrada 1 - Confirmación inicial",
-                        "Entrada 2 - Retroceso menor",
-                        "Entrada 3 - Retroceso mayor"
-                    ]
-                
-                else:  # max_entries == 4 (POSITION)
-                    # Trading posicional - 4 entradas muy graduales
+                    # Swing - distribución balanceada
                     prices = [
                         current_price,
                         current_price - (atr * 0.4 * vol_adj),
-                        current_price - (atr * 0.8 * vol_adj),
-                        current_price - (atr * 1.2 * vol_adj)
+                        current_price - (atr * 0.8 * vol_adj)
                     ]
-                    percentages = [30, 30, 25, 15]
+                    percentages = [45, 35, 20]  # Distribución mejorada
+                    descriptions = [
+                        "Entrada 1 - Confirmación técnica",
+                        "Entrada 2 - Retroceso controlado", 
+                        "Entrada 3 - Oportunidad valor"
+                    ]
+                
+                else:  # 4 entradas
+                    prices = [
+                        current_price,
+                        current_price - (atr * 0.3 * vol_adj),
+                        current_price - (atr * 0.6 * vol_adj),
+                        current_price - (atr * 1.0 * vol_adj)
+                    ]
+                    percentages = [35, 30, 20, 15]
                     descriptions = [
                         "Entrada 1 - Test inicial",
-                        "Entrada 2 - Retroceso leve",
+                        "Entrada 2 - Pullback menor",
                         "Entrada 3 - Soporte técnico",
-                        "Entrada 4 - Value zone"
+                        "Entrada 4 - Valor extremo"
                     ]
-                    
+            
             else:  # SHORT
-                # Entradas en rebotes para SHORT
                 if max_entries == 2:
                     prices = [
                         current_price,
-                        current_price + (atr * 0.3 * vol_adj)
+                        current_price + (atr * 0.25 * vol_adj)
                     ]
-                    percentages = [60, 40]
+                    percentages = [70, 30]
                     descriptions = [
-                        "Entrada inmediata - Breakdown",
-                        "Entrada en rebote - Rally fade"
+                        "Entrada inmediata - Breakdown confirmado",
+                        "Entrada rally - Pullback short"
                     ]
                 
                 elif max_entries == 3:
                     prices = [
                         current_price,
-                        current_price + (atr * 0.5 * vol_adj),
-                        current_price + (atr * 1.0 * vol_adj)
+                        current_price + (atr * 0.4 * vol_adj),
+                        current_price + (atr * 0.8 * vol_adj)
                     ]
-                    percentages = [40, 35, 25]
+                    percentages = [45, 35, 20]
                     descriptions = [
                         "Entrada 1 - Confirmación bajista",
-                        "Entrada 2 - Rebote menor",
-                        "Entrada 3 - Rebote mayor"
+                        "Entrada 2 - Rally controlado",
+                        "Entrada 3 - Rechazo resistencia"
                     ]
                 
-                else:  # max_entries == 4
+                else:  # 4 entradas
                     prices = [
                         current_price,
-                        current_price + (atr * 0.4 * vol_adj),
-                        current_price + (atr * 0.8 * vol_adj),
-                        current_price + (atr * 1.2 * vol_adj)
+                        current_price + (atr * 0.3 * vol_adj),
+                        current_price + (atr * 0.6 * vol_adj),
+                        current_price + (atr * 1.0 * vol_adj)
                     ]
-                    percentages = [30, 30, 25, 15]
+                    percentages = [35, 30, 20, 15]
                     descriptions = [
-                        "Entrada 1 - Test inicial",
-                        "Entrada 2 - Rebote leve",
+                        "Entrada 1 - Test inicial bajista",
+                        "Entrada 2 - Rally menor",
                         "Entrada 3 - Resistencia técnica",
-                        "Entrada 4 - Distribution zone"
+                        "Entrada 4 - Rechazo extremo"
                     ]
             
-            # Crear PositionLevel objects
-            for i, (price, pct, desc) in enumerate(zip(prices, percentages, descriptions)):
+            # Crear PositionLevels
+            for price, pct, desc in zip(prices, percentages, descriptions):
                 entries.append(PositionLevel(
                     level_type='ENTRY',
                     price=round(price, 2),
@@ -256,42 +357,60 @@ class PositionCalculator:
             return entries
             
         except Exception as e:
-            logger.error(f"Error calculando entradas: {e}")
+            logger.error(f"❌ Error calculando entradas V3: {e}")
             return []
     
-    def calculate_stop_loss(self, 
-                           entry_price: float, 
-                           atr: float, 
-                           direction: str, 
-                           strategy: Dict,
-                           volatility: str) -> PositionLevel:
-        """
-        Calcular stop loss adaptativo
-        """
+    def calculate_stop_loss_v3(self, 
+                              entry_price: float, 
+                              atr: float, 
+                              direction: str, 
+                              strategy: Dict,
+                              volatility: str,
+                              indicators: Dict) -> PositionLevel:
+        """Calcular stop loss dinámico mejorado V3"""
         try:
             vol_adj = self.volatility_adjustments[volatility]['atr_multiplier']
             
-            # Stop loss base en ATR
+            # Base stop en ATR
             base_stop_distance = atr * vol_adj
             
-            # Ajustar según estrategia
+            # Ajustar según estrategia (mejorado)
             if strategy == self.strategies['SCALP']:
-                stop_multiplier = 0.8  # Stops más ajustados para scalping
+                stop_multiplier = 0.75  # Stops más ajustados para scalping
             elif strategy == self.strategies['SWING_SHORT']:
-                stop_multiplier = 1.0  # Stop normal
+                stop_multiplier = 1.0   # Stop normal
             elif strategy == self.strategies['SWING_MEDIUM']:
-                stop_multiplier = 1.2  # Stop más amplio
+                stop_multiplier = 1.25  # Stop más amplio
             else:  # POSITION
-                stop_multiplier = 1.5  # Stop muy amplio para posicional
+                stop_multiplier = 1.4   # Stop amplio pero no excesivo (antes 1.5)
             
-            stop_distance = base_stop_distance * stop_multiplier
+            # 🆕 AJUSTE POR CONTEXTO TÉCNICO
+            context_adj = 1.0
+            
+            # Ajustar por RSI (en extremos, stops más amplios)
+            rsi_data = indicators.get('rsi', {})
+            rsi_value = rsi_data.get('rsi', 50)
+            
+            if direction == 'LONG' and rsi_value < 25:
+                context_adj *= 1.15  # RSI muy bajo = más espacio al stop
+            elif direction == 'SHORT' and rsi_value > 75:
+                context_adj *= 1.15  # RSI muy alto = más espacio al stop
+            
+            # Ajustar por volatilidad reciente
+            if volatility == 'HIGH':
+                context_adj *= 1.1  # Más espacio en alta volatilidad
+            elif volatility == 'LOW':
+                context_adj *= 0.95  # Menos espacio en baja volatilidad
+            
+            # Calcular distancia final del stop
+            final_stop_distance = base_stop_distance * stop_multiplier * context_adj
             
             if direction == 'LONG':
-                stop_price = entry_price - stop_distance
-                description = f"Stop loss dinámico - {stop_distance:.2f} bajo entrada"
+                stop_price = entry_price - final_stop_distance
+                description = f"Stop dinámico ATR {final_stop_distance:.2f} bajo entrada"
             else:
-                stop_price = entry_price + stop_distance
-                description = f"Stop loss dinámico - {stop_distance:.2f} sobre entrada"
+                stop_price = entry_price + final_stop_distance
+                description = f"Stop dinámico ATR {final_stop_distance:.2f} sobre entrada"
             
             return PositionLevel(
                 level_type='STOP',
@@ -302,172 +421,353 @@ class PositionCalculator:
             )
             
         except Exception as e:
-            logger.error(f"Error calculando stop loss: {e}")
-            return PositionLevel('STOP', entry_price * 0.98, 100, "Stop de emergencia", "")
+            logger.error(f"❌ Error calculando stop V3: {e}")
+            # Stop de emergencia
+            emergency_stop = entry_price * (0.98 if direction == 'LONG' else 1.02)
+            return PositionLevel('STOP', emergency_stop, 100, "Stop de emergencia", "")
     
-    def calculate_take_profits(self, 
-                              entry_price: float, 
-                              stop_price: float, 
-                              direction: str, 
-                              strategy: Dict,
-                              indicators: Dict) -> List[PositionLevel]:
-        """
-        Calcular take profits adaptativos
-        """
+    def convert_adaptive_targets_to_levels(self, adaptive_targets: List[AdaptiveTarget]) -> List[PositionLevel]:
+        """Convertir targets adaptativos a PositionLevels"""
         try:
-            exits = []
-            risk_amount = abs(entry_price - stop_price)
-            target_multipliers = strategy['target_multipliers']
+            exit_levels = []
             
-            # Ajustar targets según momentum
-            roc = indicators.get('roc', {}).get('roc', 0)
-            momentum_adj = 1.0
-            
-            if abs(roc) > 3.0:
-                momentum_adj = 1.2  # Targets más ambiciosos con momentum fuerte
-            elif abs(roc) < 1.0:
-                momentum_adj = 0.8  # Targets más conservadores con momentum débil
-            
-            # Distribución de salidas según estrategia
-            if len(target_multipliers) == 2:  # SCALP
-                percentages = [60, 40]
-                descriptions = [
-                    "TP1 - Quick profit",
-                    "TP2 - Runner"
-                ]
-            elif len(target_multipliers) == 3:  # SWING
-                percentages = [40, 35, 25]
-                descriptions = [
-                    "TP1 - Secure profits",
-                    "TP2 - Momentum target",
-                    "TP3 - Extended target"
-                ]
-            else:  # POSITION (4 targets)
-                percentages = [25, 25, 25, 25]
-                descriptions = [
-                    "TP1 - Initial target",
-                    "TP2 - Intermediate target", 
-                    "TP3 - Main target",
-                    "TP4 - Maximum target"
-                ]
-            
-            # Calcular precios de take profit
-            for i, (multiplier, pct, desc) in enumerate(zip(target_multipliers, percentages, descriptions)):
-                adjusted_multiplier = multiplier * momentum_adj
-                
-                if direction == 'LONG':
-                    target_price = entry_price + (risk_amount * adjusted_multiplier)
-                else:
-                    target_price = entry_price - (risk_amount * adjusted_multiplier)
-                
-                exits.append(PositionLevel(
+            for i, target in enumerate(adaptive_targets):
+                exit_levels.append(PositionLevel(
                     level_type='EXIT',
-                    price=round(target_price, 2),
-                    percentage=pct,
-                    description=f"{desc} - {adjusted_multiplier:.1f}R",
-                    trigger_condition=f"Precio {'>=' if direction == 'LONG' else '<='} {target_price:.2f}"
+                    price=target.price,
+                    percentage=target.percentage_exit,
+                    description=target.description,
+                    trigger_condition=f"Precio alcanza ${target.price:.2f}",
+                    risk_reward=target.risk_reward,
+                    confidence=target.confidence,
+                    technical_basis=target.technical_basis
                 ))
             
-            return exits
+            return exit_levels
             
         except Exception as e:
-            logger.error(f"Error calculando take profits: {e}")
+            logger.error(f"❌ Error convirtiendo targets adaptativos: {e}")
             return []
     
-    def calculate_position_plan(self, 
-                               symbol: str, 
-                               direction: str, 
-                               current_price: float, 
-                               signal_strength: int, 
-                               indicators: Dict,
-                               account_balance: float = 10000) -> PositionPlan:
-        """
-        Calcular plan completo de posición
-        """
+    def validate_targets_against_strategy(self, 
+                                        exits: List[PositionLevel], 
+                                        entry_price: float, 
+                                        stop_price: float, 
+                                        strategy: Dict) -> List[PositionLevel]:
+        """Validar que targets no excedan límites de estrategia"""
         try:
-            logger.info(f"💰 Calculando plan de posición para {symbol} - {direction}")
+            validated_exits = []
+            risk_amount = abs(entry_price - stop_price)
+            max_rr = strategy['max_rr']
             
-            # Obtener datos necesarios
-            atr = indicators.get('atr', {}).get('atr', current_price * 0.02)
-            volatility = indicators.get('atr', {}).get('volatility_level', 'NORMAL')
+            for exit_level in exits:
+                # Calcular R:R real
+                reward = abs(exit_level.price - entry_price)
+                rr_ratio = reward / risk_amount if risk_amount > 0 else 0
+                
+                # Validar que no exceda máximo R:R de estrategia
+                if rr_ratio <= max_rr:
+                    # Actualizar R:R en el nivel
+                    exit_level.risk_reward = round(rr_ratio, 2)
+                    validated_exits.append(exit_level)
+                else:
+                    logger.warning(f"⚠️ Target {exit_level.price:.2f} excede máximo R:R {max_rr} (calculado: {rr_ratio:.1f})")
             
-            # Determinar estrategia
-            strategy_name = self.determine_strategy(signal_strength, indicators)
-            strategy = self.strategies[strategy_name]
+            # Si no quedan targets válidos, crear uno básico
+            if not validated_exits:
+                logger.warning("⚠️ No hay targets válidos, creando target conservador")
+                conservative_rr = min(2.0, max_rr)
+                
+                if entry_price > stop_price:  # LONG
+                    target_price = entry_price + (risk_amount * conservative_rr)
+                else:  # SHORT
+                    target_price = entry_price - (risk_amount * conservative_rr)
+                
+                validated_exits.append(PositionLevel(
+                    level_type='EXIT',
+                    price=round(target_price, 2),
+                    percentage=100,
+                    description=f"Target conservador {conservative_rr}R",
+                    risk_reward=conservative_rr,
+                    confidence=70.0,
+                    technical_basis=["Target conservador por validación"]
+                ))
             
-            # Ajustar riesgo según volatilidad
-            vol_risk_adj = self.volatility_adjustments[volatility]['risk_reduction']
-            total_risk = strategy['base_risk'] / vol_risk_adj
+            return validated_exits
             
-            # Calcular niveles
-            entries = self.calculate_entry_levels(
-                current_price, atr, direction, strategy, volatility
-            )
+        except Exception as e:
+            logger.error(f"❌ Error validando targets: {e}")
+            return exits  # Devolver originales si falla validación
+    
+    def calculate_enhanced_metrics(self, 
+                                 exits: List[PositionLevel], 
+                                 entry_price: float, 
+                                 stop_price: float) -> Dict:
+        """Calcular métricas mejoradas del plan"""
+        try:
+            if not exits:
+                return {'max_rr': 0, 'avg_rr': 0}
             
-            if not entries:
-                raise ValueError("No se pudieron calcular entradas")
+            # Calcular R:R máximo
+            max_rr = max([exit.risk_reward for exit in exits if exit.risk_reward])
             
-            # Usar primera entrada como referencia para stop
-            main_entry_price = entries[0].price
-            stop_loss = self.calculate_stop_loss(
-                main_entry_price, atr, direction, strategy, volatility
-            )
+            # Calcular R:R promedio ponderado por % de salida
+            weighted_rr = 0
+            total_percentage = 0
             
-            exits = self.calculate_take_profits(
-                main_entry_price, stop_loss.price, direction, strategy, indicators
-            )
+            for exit in exits:
+                if exit.risk_reward and exit.percentage > 0:
+                    weighted_rr += exit.risk_reward * (exit.percentage / 100)
+                    total_percentage += exit.percentage
             
-            # Calcular métricas
-            risk_amount = abs(main_entry_price - stop_loss.price)
-            max_reward = max([abs(exit.price - main_entry_price) for exit in exits]) if exits else risk_amount
-            max_rr = max_reward / risk_amount if risk_amount > 0 else 0
+            avg_rr = weighted_rr if total_percentage > 0 else 0
             
-            # Determinar nivel de confianza
-            if signal_strength >= 85:
-                confidence = "MUY ALTA"
-            elif signal_strength >= 75:
-                confidence = "ALTA"
-            elif signal_strength >= 65:
-                confidence = "MEDIA"
+            return {
+                'max_rr': round(max_rr, 2),
+                'avg_rr': round(avg_rr, 2)
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Error calculando métricas: {e}")
+            return {'max_rr': 0, 'avg_rr': 0}
+    
+    def generate_context_analysis(self, 
+                                indicators: Dict, 
+                                signal_strength: int, 
+                                volatility: str) -> Dict:
+        """Generar análisis contextual del mercado"""
+        try:
+            # Análisis técnico
+            tech_summary = []
+            
+            # RSI context
+            rsi_data = indicators.get('rsi', {})
+            rsi_value = rsi_data.get('rsi', 50)
+            
+            if rsi_value < 30:
+                tech_summary.append("RSI oversold extremo")
+            elif rsi_value < 40:
+                tech_summary.append("RSI oversold")
+            elif rsi_value > 70:
+                tech_summary.append("RSI overbought extremo")
+            elif rsi_value > 60:
+                tech_summary.append("RSI overbought")
             else:
-                confidence = "BAJA"
+                tech_summary.append("RSI neutral")
             
-            plan = PositionPlan(
+            # ROC momentum
+            roc_data = indicators.get('roc', {})
+            roc_value = roc_data.get('roc', 0)
+            
+            if abs(roc_value) > 3:
+                tech_summary.append("Momentum muy fuerte")
+            elif abs(roc_value) > 1.5:
+                tech_summary.append("Momentum moderado")
+            else:
+                tech_summary.append("Momentum débil")
+            
+            # VWAP position
+            vwap_data = indicators.get('vwap', {})
+            vwap_deviation = vwap_data.get('deviation_pct', 0)
+            
+            if abs(vwap_deviation) < 0.5:
+                tech_summary.append("Precio cerca VWAP")
+            elif abs(vwap_deviation) > 2:
+                tech_summary.append("Precio alejado VWAP")
+            else:
+                tech_summary.append("Precio moderadamente alejado VWAP")
+            
+            # Contexto de mercado
+            market_context = f"Volatilidad {volatility.lower()}, señal {signal_strength}/100"
+            
+            # Evaluación de riesgo
+            risk_factors = []
+            
+            if volatility == 'HIGH':
+                risk_factors.append("Alta volatilidad")
+            if signal_strength < 70:
+                risk_factors.append("Señal moderada")
+            if abs(vwap_deviation) > 3:
+                risk_factors.append("Precio muy alejado valor justo")
+            
+            risk_assessment = "Riesgo bajo" if not risk_factors else f"Factores riesgo: {', '.join(risk_factors)}"
+            
+            return {
+                'technical_summary': ", ".join(tech_summary),
+                'market_context': market_context,
+                'risk_assessment': risk_assessment
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Error generando análisis contextual: {e}")
+            return {
+                'technical_summary': "Análisis no disponible",
+                'market_context': "Contexto no disponible", 
+                'risk_assessment': "Evaluación no disponible"
+            }
+    
+    def calculate_enhanced_confidence(self, 
+                                    signal_strength: int, 
+                                    adaptive_targets: List[AdaptiveTarget],
+                                    indicators: Dict) -> str:
+        """Calcular nivel de confianza mejorado"""
+        try:
+            # Base confidence por signal strength
+            base_confidence = signal_strength
+            
+            # Ajustar por calidad de targets adaptativos
+            if adaptive_targets:
+                avg_target_confidence = sum([t.confidence for t in adaptive_targets]) / len(adaptive_targets)
+                # Promedio ponderado: 70% señal original + 30% targets adaptativos
+                final_confidence = (base_confidence * 0.7) + (avg_target_confidence * 0.3)
+            else:
+                final_confidence = base_confidence * 0.8  # Penalizar si no hay targets adaptativos
+            
+            # Ajustar por confluencia de indicadores
+            confluences = 0
+            
+            # Contar confluencias positivas
+            rsi_data = indicators.get('rsi', {})
+            if rsi_data.get('signal_strength', 0) > 15:
+                confluences += 1
+            
+            roc_data = indicators.get('roc', {})
+            if roc_data.get('signal_strength', 0) > 15:
+                confluences += 1
+            
+            vwap_data = indicators.get('vwap', {})
+            if vwap_data.get('signal_strength', 0) > 10:
+                confluences += 1
+            
+            # Bonus por confluencias
+            confluence_bonus = min(confluences * 3, 10)  # Max +10 pts
+            final_confidence += confluence_bonus
+            
+            # Mapear a texto
+            final_confidence = min(final_confidence, 100)
+            
+            if final_confidence >= 90:
+                return "MUY ALTA"
+            elif final_confidence >= 80:
+                return "ALTA"
+            elif final_confidence >= 70:
+                return "MEDIA-ALTA"
+            elif final_confidence >= 60:
+                return "MEDIA"
+            elif final_confidence >= 50:
+                return "MEDIA-BAJA"
+            else:
+                return "BAJA"
+                
+        except Exception as e:
+            logger.error(f"❌ Error calculando confianza mejorada: {e}")
+            return "DESCONOCIDA"
+    
+    def calculate_fallback_plan(self, 
+                              symbol: str, 
+                              direction: str, 
+                              current_price: float, 
+                              signal_strength: int, 
+                              indicators: Dict,
+                              account_balance: float) -> PositionPlan:
+        """Plan de respaldo si falla el sistema adaptativo"""
+        try:
+            logger.warning("⚠️ Usando plan de respaldo - sistema adaptativo falló")
+            
+            # Crear plan básico con targets conservadores
+            atr = indicators.get('atr', {}).get('atr', current_price * 0.02)
+            
+            # Entrada simple
+            entry = PositionLevel(
+                level_type='ENTRY',
+                price=current_price,
+                percentage=100,
+                description="Entrada única - plan respaldo"
+            )
+            
+            # Stop loss conservador
+            if direction == 'LONG':
+                stop_price = current_price - (atr * 2)
+            else:
+                stop_price = current_price + (atr * 2)
+            
+            stop_loss = PositionLevel(
+                level_type='STOP',
+                price=round(stop_price, 2),
+                percentage=100,
+                description="Stop conservador 2xATR"
+            )
+            
+            # Targets conservadores (máximo 3R)
+            risk_amount = abs(current_price - stop_price)
+            
+            if direction == 'LONG':
+                tp1_price = current_price + (risk_amount * 1.5)
+                tp2_price = current_price + (risk_amount * 3.0)
+            else:
+                tp1_price = current_price - (risk_amount * 1.5)
+                tp2_price = current_price - (risk_amount * 3.0)
+            
+            exits = [
+                PositionLevel(
+                    level_type='EXIT',
+                    price=round(tp1_price, 2),
+                    percentage=70,
+                    description="TP1 conservador - 1.5R",
+                    risk_reward=1.5
+                ),
+                PositionLevel(
+                    level_type='EXIT',
+                    price=round(tp2_price, 2),
+                    percentage=30,
+                    description="TP2 conservador - 3.0R",
+                    risk_reward=3.0
+                )
+            ]
+            
+            return PositionPlan(
                 symbol=symbol,
                 direction=direction,
                 current_price=current_price,
                 signal_strength=signal_strength,
-                strategy_type=strategy_name,
-                total_risk_percent=total_risk,
-                entries=entries,
+                strategy_type='FALLBACK',
+                total_risk_percent=1.5,
+                entries=[entry],
                 exits=exits,
                 stop_loss=stop_loss,
-                max_risk_reward=round(max_rr, 2),
-                expected_hold_time=strategy['time_horizon'],
-                confidence_level=confidence
+                max_risk_reward=3.0,
+                avg_risk_reward=2.1,  # (1.5*0.7 + 3.0*0.3)
+                expected_hold_time='1-4 horas',
+                confidence_level='BAJA',
+                technical_summary='Plan de respaldo',
+                market_context='Sistema adaptativo no disponible',
+                risk_assessment='Riesgo conservador'
             )
             
-            logger.info(f"✅ Plan calculado: {strategy_name} - {confidence} confidence - {max_rr:.1f}R")
-            return plan
-            
         except Exception as e:
-            logger.error(f"❌ Error calculando plan de posición: {e}")
+            logger.error(f"❌ Error creando plan de respaldo: {e}")
             raise
     
-    def format_position_summary(self, plan: PositionPlan, account_balance: float = 10000) -> str:
-        """
-        Formatear resumen del plan de posición
-        """
+    def format_position_summary_v3(self, plan: PositionPlan, account_balance: float = 10000) -> str:
+        """Formatear resumen del plan V3.0 con información mejorada"""
         try:
             summary = []
-            summary.append(f"📋 PLAN DE POSICIÓN - {plan.symbol}")
-            summary.append("=" * 60)
+            summary.append(f"📋 PLAN DE POSICIÓN V3.0 - {plan.symbol}")
+            summary.append("=" * 70)
             summary.append(f"🎯 Dirección: {plan.direction}")
-            summary.append(f"💪 Estrategia: {plan.strategy_type} ({self.strategies[plan.strategy_type]['description']})")
+            summary.append(f"💪 Estrategia: {plan.strategy_type}")
             summary.append(f"🎲 Señal: {plan.signal_strength}/100 - Confianza {plan.confidence_level}")
             summary.append(f"💰 Riesgo total: {plan.total_risk_percent:.1f}% (${account_balance * plan.total_risk_percent / 100:.0f})")
             summary.append(f"⏰ Horizonte: {plan.expected_hold_time}")
-            summary.append(f"🎯 R:R máximo: 1:{plan.max_risk_reward}")
+            summary.append("")
+            
+            # Métricas mejoradas
+            summary.append("📊 MÉTRICAS DE RENDIMIENTO:")
+            summary.append(f"  🎯 R:R Máximo: 1:{plan.max_risk_reward}")
+            summary.append(f"  📈 R:R Promedio: 1:{plan.avg_risk_reward}")
+            summary.append(f"  📊 Análisis técnico: {plan.technical_summary}")
+            summary.append(f"  🌍 Contexto mercado: {plan.market_context}")
+            summary.append(f"  ⚠️ Evaluación riesgo: {plan.risk_assessment}")
             summary.append("")
             
             # Entradas
@@ -484,60 +784,173 @@ class PositionCalculator:
             summary.append(f"  {plan.stop_loss.description}")
             summary.append("")
             
-            # Take Profits
-            summary.append("🎯 TAKE PROFITS:")
+            # Take Profits mejorados
+            summary.append("🎯 TAKE PROFITS ADAPTATIVOS:")
             for i, exit in enumerate(plan.exits, 1):
-                risk_reward = abs(exit.price - plan.entries[0].price) / abs(plan.entries[0].price - plan.stop_loss.price)
-                summary.append(f"  {i}. ${exit.price:.2f} ({exit.percentage}%) - {risk_reward:.1f}R")
+                summary.append(f"  {i}. ${exit.price:.2f} ({exit.percentage}%) - {exit.risk_reward:.1f}R")
                 summary.append(f"     {exit.description}")
+                if exit.confidence:
+                    summary.append(f"     Confianza: {exit.confidence:.1f}%")
+                if exit.technical_basis:
+                    summary.append(f"     Base: {', '.join(exit.technical_basis[:2])}")  # Mostrar solo 2 razones
+                summary.append("")
             
-            summary.append("=" * 60)
+            summary.append("=" * 70)
             
             return "\n".join(summary)
             
         except Exception as e:
-            logger.error(f"Error formateando resumen: {e}")
-            return f"Error generando resumen para {plan.symbol}"
+            logger.error(f"❌ Error formateando resumen V3: {e}")
+            return f"Error generando resumen V3 para {plan.symbol}"
 
-def test_position_calculator():
-    """
-    Test del calculador de posiciones
-    """
-    print("🧪 TESTING POSITION CALCULATOR")
-    print("=" * 60)
-    
-    # Datos de ejemplo (de nuestro sistema de indicadores)
-    test_data = {
-        'symbol': 'SPY',
-        'current_price': 657.47,
-        'direction': 'LONG',
-        'signal_strength': 78,
-        'indicators': {
-            'rsi': {'rsi': 70.5},
-            'roc': {'roc': 2.1},
-            'atr': {'atr': 0.65, 'volatility_level': 'LOW'}
-        }
-    }
-    
-    calculator = PositionCalculator()
+
+# =============================================================================
+# 🧪 FUNCIONES DE TESTING Y COMPARACIÓN
+# =============================================================================
+
+def test_position_calculator_v3():
+    """Test completo del calculador V3.0"""
+    print("🧪 TESTING POSITION CALCULATOR V3.0")
+    print("=" * 70)
     
     try:
-        plan = calculator.calculate_position_plan(
-            test_data['symbol'],
-            test_data['direction'],
-            test_data['current_price'],
-            test_data['signal_strength'],
-            test_data['indicators']
+        # Crear calculadora V3
+        calculator = PositionCalculatorV3()
+        
+        # Crear datos simulados
+        import pandas as pd
+        import numpy as np
+        
+        # DataFrame simulado con datos OHLCV
+        dates = pd.date_range(start='2024-01-01', periods=100, freq='15min')
+        np.random.seed(42)
+        
+        base_price = 230.0
+        returns = np.random.normal(0, 0.01, 100)
+        prices = [base_price]
+        
+        for ret in returns[1:]:
+            prices.append(prices[-1] * (1 + ret))
+        
+        market_data = pd.DataFrame({
+            'Open': prices,
+            'High': [p * 1.005 for p in prices],
+            'Low': [p * 0.995 for p in prices],
+            'Close': prices,
+            'Volume': np.random.randint(1000000, 5000000, 100)
+        }, index=dates)
+        
+        # Indicadores simulados
+        indicators = {
+            'macd': {'histogram': 0.15, 'signal_strength': 20},
+            'rsi': {'rsi': 35, 'signal_strength': 18},
+            'vwap': {'vwap': base_price * 1.01, 'deviation_pct': 1.0, 'signal_strength': 15},
+            'roc': {'roc': 2.5, 'signal_strength': 18},
+            'bollinger': {
+                'upper_band': base_price * 1.02,
+                'lower_band': base_price * 0.98,
+                'signal_strength': 15
+            },
+            'volume_osc': {'signal_strength': 8},
+            'atr': {'atr': base_price * 0.015, 'volatility_level': 'NORMAL'}
+        }
+        
+        # Test señal LONG
+        print("📈 Test señal LONG V3.0:")
+        plan_v3 = calculator.calculate_position_plan_v3(
+            symbol="AAPL",
+            direction="LONG",
+            current_price=base_price,
+            signal_strength=85,
+            indicators=indicators,
+            market_data=market_data,
+            account_balance=10000
         )
         
-        print(calculator.format_position_summary(plan))
-        print("\n✅ Test exitoso!")
+        # Mostrar resumen
+        summary = calculator.format_position_summary_v3(plan_v3)
+        print(summary)
         
-        return plan
+        print("\n✅ Test V3.0 completado exitosamente!")
+        
+        # Comparar con métricas clave
+        print(f"\n📊 MÉTRICAS CLAVE:")
+        print(f"  • R:R Máximo: {plan_v3.max_risk_reward}")
+        print(f"  • R:R Promedio: {plan_v3.avg_risk_reward}")
+        print(f"  • Targets adaptativos: {len(plan_v3.exits)}")
+        print(f"  • Confianza: {plan_v3.confidence_level}")
+        
+        return plan_v3
         
     except Exception as e:
-        print(f"❌ Error en test: {e}")
+        print(f"❌ Error en test V3.0: {e}")
         return None
 
+def compare_v2_vs_v3():
+    """Comparar sistema V2 vs V3"""
+    print("⚖️ COMPARACIÓN SISTEMA V2.0 vs V3.0")
+    print("=" * 70)
+    
+    print("🔴 SISTEMA V2.0 (ANTERIOR):")
+    print("  ❌ Targets fijos irreales (hasta 10R)")
+    print("  ❌ Solo ajuste básico por ROC (+/-20%)")
+    print("  ❌ No considera resistencias/soportes reales")
+    print("  ❌ Distribución fija de salidas")
+    print("  ❌ Stop loss básico solo con ATR")
+    print("  ❌ Confianza solo por signal strength")
+    print()
+    
+    print("🟢 SISTEMA V3.0 (NUEVO):")
+    print("  ✅ Targets adaptativos basados en análisis técnico REAL")
+    print("  ✅ Máximo R:R realista por estrategia:")
+    print("    • Scalping: Max 3R")
+    print("    • Swing corto: Max 5R") 
+    print("    • Swing medio: Max 6R")
+    print("    • Posicional: Max 6R (antes 10R irreal)")
+    print()
+    print("  ✅ Análisis técnico orgánico:")
+    print("    • Resistencias/Soportes por pivots")
+    print("    • Fibonacci automático")
+    print("    • Bollinger Bands como targets")
+    print("    • VWAP institucional")
+    print("    • Niveles psicológicos")
+    print("    • Extensiones ATR realistas")
+    print()
+    print("  ✅ Validación inteligente:")
+    print("    • Filtros por R:R mínimo/máximo")
+    print("    • Validación direccional")
+    print("    • Límites de distancia razonables")
+    print()
+    print("  ✅ Métricas mejoradas:")
+    print("    • R:R promedio ponderado")
+    print("    • Confianza multicriteria")
+    print("    • Análisis contextual completo")
+    print("    • Stop loss con contexto técnico")
+    print()
+    
+    print("🎯 BENEFICIOS ESPERADOS:")
+    print("  📈 Mayor tasa de éxito en targets")
+    print("  🎯 Targets más realistas y alcanzables")
+    print("  💰 Mejor gestión de riesgo")
+    print("  🔄 Adaptación automática al contexto")
+    print("  📊 Decisiones basadas en análisis técnico real")
+
 if __name__ == "__main__":
-    test_position_calculator()
+    print("🎯 POSITION CALCULATOR V3.0 - TARGETS ADAPTATIVOS")
+    print("=" * 70)
+    print("1. Test Position Calculator V3.0")
+    print("2. Comparación V2.0 vs V3.0")
+    print("3. Test completo (ambos)")
+    
+    choice = input("\nElige una opción (1-3): ").strip()
+    
+    if choice == '1':
+        test_position_calculator_v3()
+    elif choice == '2':
+        compare_v2_vs_v3()
+    elif choice == '3':
+        test_position_calculator_v3()
+        print("\n" + "="*80 + "\n")
+        compare_v2_vs_v3()
+    else:
+        print("❌ Opción no válida")

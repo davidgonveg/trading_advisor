@@ -27,6 +27,17 @@ import html
 
 # Importar configuración y módulos del sistema
 import config
+# 🆕 V3.0: Import targets adaptativos
+try:
+    import config
+    if getattr(config, 'USE_ADAPTIVE_TARGETS', False):
+        from position_calculator import PositionPlan as PositionPlanV3
+        V3_AVAILABLE = True
+    else:
+        V3_AVAILABLE = False
+except ImportError:
+    V3_AVAILABLE = False
+    
 from scanner import TradingSignal
 from position_calculator import PositionPlan
 
@@ -129,40 +140,85 @@ class TelegramBot:
             message_lines.append(f"⏰ <b>Hora:</b> {time_str} España ({session})")
             message_lines.append("")
             
-            # === PLAN DE POSICIÓN ===
-            if signal.position_plan:
+            # 🆕 V3.0: Mostrar targets adaptativos si están disponibles
+            if hasattr(signal, 'position_plan') and signal.position_plan and hasattr(signal.position_plan, 'exits'):
                 plan = signal.position_plan
                 
-                # Entradas escalonadas
-                message_lines.append("💰 <b>ENTRADAS ESCALONADAS:</b>")
-                for i, entry in enumerate(plan.entries, 1):
-                    message_lines.append(f"• <b>Entrada {i}</b> ({entry.percentage}%): ${entry.price:.2f}")
-                message_lines.append("")
+                # Verificar si tiene targets adaptativos (V3.0)
+                has_adaptive_targets = any(
+                    hasattr(exit_level, 'technical_basis') and exit_level.technical_basis 
+                    for exit_level in plan.exits
+                )
                 
-                # Take Profits
-                message_lines.append("🎯 <b>TAKE PROFITS:</b>")
-                for i, exit_level in enumerate(plan.exits, 1):
-                    # Calcular R:R para cada TP
-                    entry_price = plan.entries[0].price
-                    stop_price = plan.stop_loss.price
-                    risk = abs(entry_price - stop_price)
-                    reward = abs(exit_level.price - entry_price)
-                    rr_ratio = reward / risk if risk > 0 else 0
+                if has_adaptive_targets:
+                    message_lines.append("🎯 <b>TARGETS ADAPTATIVOS V3.0:</b>")
                     
-                    message_lines.append(f"• <b>TP{i}</b> ({exit_level.percentage}%): ${exit_level.price:.2f} - {rr_ratio:.1f}R")
-                message_lines.append("")
+                    for i, exit_level in enumerate(plan.exits, 1):
+                        # R:R del target
+                        rr_text = f" - {exit_level.risk_reward:.1f}R" if hasattr(exit_level, 'risk_reward') and exit_level.risk_reward else ""
+                        message_lines.append(f"• <b>TP{i}</b> ({exit_level.percentage}%): ${exit_level.price:.2f}{rr_text}")
+                        
+                        # Mostrar confianza si está disponible
+                        if hasattr(exit_level, 'confidence') and exit_level.confidence:
+                            message_lines.append(f"  Confianza: {exit_level.confidence:.0f}%")
+                        
+                        # Mostrar base técnica (máximo 1 línea)
+                        if hasattr(exit_level, 'technical_basis') and exit_level.technical_basis:
+                            basis = exit_level.technical_basis[0] if isinstance(exit_level.technical_basis, list) else str(exit_level.technical_basis)
+                            message_lines.append(f"  Base: {basis}")
+                    
+                    message_lines.append("")
+                    
+                    # Métricas mejoradas V3.0
+                    message_lines.append("📈 <b>MÉTRICAS V3.0:</b>")
+                    if hasattr(plan, 'max_risk_reward'):
+                        message_lines.append(f"• <b>R:R Máximo:</b> 1:{plan.max_risk_reward}")
+                    if hasattr(plan, 'avg_risk_reward'):
+                        message_lines.append(f"• <b>R:R Promedio:</b> 1:{plan.avg_risk_reward}")
+                    if hasattr(plan, 'strategy_type'):
+                        message_lines.append(f"• <b>Estrategia:</b> {plan.strategy_type}")
+                    message_lines.append("")
+                    
+                    # Contexto técnico V3.0
+                    if hasattr(plan, 'technical_summary') and plan.technical_summary:
+                        message_lines.append("🔍 <b>ANÁLISIS V3.0:</b>")
+                        message_lines.append(f"• {plan.technical_summary}")
+                        if hasattr(plan, 'market_context'):
+                            message_lines.append(f"• {plan.market_context}")
+                        message_lines.append("")
                 
-                # Stop Loss
-                message_lines.append(f"🛡️ <b>Stop Loss:</b> ${plan.stop_loss.price:.2f}")
-                message_lines.append("")
-                
-                # Métricas de la operación
-                message_lines.append("📈 <b>MÉTRICAS:</b>")
-                message_lines.append(f"• <b>R:R Máximo:</b> 1:{plan.max_risk_reward:.1f}")
-                message_lines.append(f"• <b>Estrategia:</b> {plan.strategy_type}")
-                message_lines.append(f"• <b>Tiempo estimado:</b> {plan.expected_hold_time}")
-                message_lines.append(f"• <b>Riesgo:</b> {plan.total_risk_percent:.1f}% del capital")
-                message_lines.append("")
+                else:
+                    # === PLAN DE POSICIÓN CLÁSICO V2.0 ===
+                    # Entradas escalonadas
+                    message_lines.append("💰 <b>ENTRADAS ESCALONADAS:</b>")
+                    for i, entry in enumerate(plan.entries, 1):
+                        message_lines.append(f"• <b>Entrada {i}</b> ({entry.percentage}%): ${entry.price:.2f}")
+                    message_lines.append("")
+                    
+                    # Take Profits clásicos
+                    message_lines.append("🎯 <b>TAKE PROFITS:</b>")
+                    for i, exit_level in enumerate(plan.exits, 1):
+                        # Calcular R:R para cada TP
+                        entry_price = plan.entries[0].price
+                        stop_price = plan.stop_loss.price
+                        risk = abs(entry_price - stop_price)
+                        reward = abs(exit_level.price - entry_price)
+                        rr_ratio = reward / risk if risk > 0 else 0
+                        
+                        message_lines.append(f"• <b>TP{i}</b> ({exit_level.percentage}%): ${exit_level.price:.2f} - {rr_ratio:.1f}R")
+                    message_lines.append("")
+                    
+                    # Stop Loss
+                    message_lines.append(f"🛡️ <b>Stop Loss:</b> ${plan.stop_loss.price:.2f}")
+                    message_lines.append("")
+                    
+                    # Métricas de la operación
+                    message_lines.append("📈 <b>MÉTRICAS:</b>")
+                    message_lines.append(f"• <b>R:R Máximo:</b> 1:{plan.max_risk_reward:.1f}")
+                    message_lines.append(f"• <b>Estrategia:</b> {plan.strategy_type}")
+                    message_lines.append(f"• <b>Tiempo estimado:</b> {plan.expected_hold_time}")
+                    message_lines.append(f"• <b>Riesgo:</b> {plan.total_risk_percent:.1f}% del capital")
+                    message_lines.append("")
             
             # === ANÁLISIS TÉCNICO ===
             message_lines.append("📊 <b>ANÁLISIS TÉCNICO:</b>")
@@ -212,7 +268,13 @@ class TelegramBot:
                 message_lines.append("")
             
             # === FOOTER ===
-            message_lines.append(f"{confidence_emoji} <i>Trading automatizado - Señal #{signal.signal_strength}</i>")
+            if V3_AVAILABLE and hasattr(signal, 'position_plan') and signal.position_plan and hasattr(signal.position_plan, 'exits'):
+                has_adaptive = any(hasattr(exit, 'technical_basis') for exit in signal.position_plan.exits)
+                footer_version = "V3.0 Targets Adaptativos" if has_adaptive else "V2.0 Clásico"
+            else:
+                footer_version = "V2.0"
+            
+            message_lines.append(f"{confidence_emoji} <i>Trading automatizado {footer_version} - Señal #{signal.signal_strength}</i>")
             
             return "\n".join(message_lines)
             

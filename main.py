@@ -31,12 +31,38 @@ import config
 from scanner import SignalScanner, TradingSignal
 from telegram_bot import TelegramBot
 
+# Configurar logging
+logging.basicConfig(
+    level=getattr(logging, config.LOG_LEVEL, 'INFO'),
+    format=config.LOG_FORMAT,
+    handlers=[
+        logging.FileHandler(config.LOG_FILE, encoding='utf-8'),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger(__name__)
+
 # Importar EXIT MANAGEMENT SYSTEM
 try:
     from exit_manager import ExitManager, ExitSignal, ExitUrgency, ActivePosition
     EXIT_MANAGER_AVAILABLE = True
 except ImportError:
     EXIT_MANAGER_AVAILABLE = False
+    
+V3_SYSTEM_AVAILABLE = False
+
+try:
+    import config
+    if getattr(config, 'USE_ADAPTIVE_TARGETS', False):
+        import adaptive_targets
+        import position_calculator
+        V3_SYSTEM_AVAILABLE = True
+        logger.info("✅ Sistema de targets adaptativos V3.0 disponible")
+    else:
+        logger.info("📊 Sistema V3.0 desactivado en config - usando V2.0")
+except ImportError as e:
+    logger.warning(f"⚠️ Sistema V3.0 no disponible: {e}")
+    logger.info("📊 Usando sistema clásico V2.0")
 
 # Importar DYNAMIC MONITOR (NUEVO)
 try:
@@ -54,16 +80,6 @@ try:
 except ImportError:
     SMART_FEATURES_AVAILABLE = False
 
-# Configurar logging
-logging.basicConfig(
-    level=getattr(logging, config.LOG_LEVEL, 'INFO'),
-    format=config.LOG_FORMAT,
-    handlers=[
-        logging.FileHandler(config.LOG_FILE, encoding='utf-8'),
-        logging.StreamHandler(sys.stdout)
-    ]
-)
-logger = logging.getLogger(__name__)
 
 class SmartTradingSystemV23WithDynamicMonitoring:
     """
@@ -151,8 +167,14 @@ class SmartTradingSystemV23WithDynamicMonitoring:
         return self.scanner.is_market_open()
     
     def perform_scan_with_dynamic_integration(self) -> List[TradingSignal]:
-        """🎯 NUEVO: Escaneo integrado con dynamic monitor"""
+        """🎯 NUEVO: Escaneo integrado con dynamic monitor y V3.0"""
         try:
+            # 🆕 V3.0: Loggear si se están usando targets adaptativos
+            if V3_SYSTEM_AVAILABLE:
+                logger.info("🎯 Escaneo con targets adaptativos V3.0 activado")
+            else:
+                logger.info("📊 Escaneo con sistema clásico V2.0")
+            
             logger.info(f"🔍 Iniciando escaneo #{self.total_scans + 1} con integración dinámica")
             
             # 1. Realizar escaneo normal
@@ -172,11 +194,12 @@ class SmartTradingSystemV23WithDynamicMonitoring:
                         success = self.dynamic_monitor.add_monitor_target(
                             symbol=signal.symbol,
                             signal=signal,
-                            reason=f"Nueva señal {signal.signal_type}"
+                            reason=f"Nueva señal {signal.signal_type} {'V3.0' if V3_SYSTEM_AVAILABLE else 'V2.0'}"
                         )
                         
                         if success:
-                            logger.info(f"📊 {signal.symbol}: Añadido a monitoreo dinámico")
+                            version_info = " (V3.0)" if V3_SYSTEM_AVAILABLE else " (V2.0)"
+                            logger.info(f"📊 {signal.symbol}: Añadido a monitoreo dinámico{version_info}")
                         else:
                             logger.warning(f"⚠️ {signal.symbol}: No se pudo añadir a monitoreo dinámico")
                     
@@ -192,7 +215,8 @@ class SmartTradingSystemV23WithDynamicMonitoring:
             
             # Log resultado
             if signals:
-                logger.info(f"✅ Escaneo completado: {len(signals)} señales detectadas e integradas")
+                version_msg = "con targets adaptativos V3.0" if V3_SYSTEM_AVAILABLE else "con sistema clásico V2.0"
+                logger.info(f"✅ Escaneo completado: {len(signals)} señales detectadas e integradas {version_msg}")
             else:
                 logger.info("📊 Escaneo completado: Sin señales válidas")
             
@@ -608,9 +632,12 @@ class SmartTradingSystemV23WithDynamicMonitoring:
             self.telegram.send_system_alert("ERROR", f"Error v2.3: {str(e)}")
     
     def _show_system_info_v23(self):
-        """Mostrar información detallada v2.3"""
+        """Mostrar información detallada v2.3 con info V3.0"""
         logger.info("=" * 70)
-        logger.info("🚀 SMART TRADING SYSTEM V2.3 CON DYNAMIC MONITORING")
+        if V3_SYSTEM_AVAILABLE:
+            logger.info("🚀 SMART TRADING SYSTEM V2.3 CON TARGETS ADAPTATIVOS V3.0")
+        else:
+            logger.info("🚀 SMART TRADING SYSTEM V2.3 CON DYNAMIC MONITORING")
         logger.info("=" * 70)
         
         # Componentes
@@ -620,12 +647,21 @@ class SmartTradingSystemV23WithDynamicMonitoring:
         logger.info(f"   🚪 Exit Manager: {'✅' if self.exit_manager else '❌'}")
         logger.info(f"   🎯 Dynamic Monitor: {'✅' if self.dynamic_monitor else '❌'}")
         logger.info(f"   🔥 Smart Features: {'✅' if self.smart_components else '❌'}")
+        logger.info(f"   🎯 Targets Adaptativos V3.0: {'✅' if V3_SYSTEM_AVAILABLE else '❌'}")
         
         # Símbolos y configuración
         logger.info(f"📊 SÍMBOLOS: {len(config.SYMBOLS)}")
         logger.info(f"   {', '.join(config.SYMBOLS)}")
         
-        # Posiciones activas
+        # Información V3.0
+        if V3_SYSTEM_AVAILABLE:
+            logger.info("🎯 CONFIGURACIÓN V3.0:")
+            logger.info("   • Targets basados en análisis técnico real")
+            logger.info("   • R:R máximo realista: 6.0 (no más 10R)")
+            logger.info("   • Fibonacci, VWAP, Bollinger como targets")
+            logger.info("   • Fallback automático a V2.0 si falla")
+        
+        # Posiciones activas (resto igual)
         if self.exit_manager:
             positions_summary = self.exit_manager.get_positions_summary()
             total_positions = positions_summary.get('total_positions', 0)
@@ -639,7 +675,7 @@ class SmartTradingSystemV23WithDynamicMonitoring:
                 logger.info(f"   🟢 LONG: {long_pos} | 🔴 SHORT: {short_pos}")
                 logger.info(f"   📈 PnL total: {total_pnl:+.1f}%")
         
-        # Dynamic Monitor info
+        # Dynamic Monitor info (resto igual)
         if self.dynamic_monitor:
             monitor_stats = self.dynamic_monitor.get_monitoring_stats()
             logger.info(f"🎯 DYNAMIC MONITOR:")

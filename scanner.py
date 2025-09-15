@@ -25,12 +25,29 @@ import warnings
 
 # Importar nuestros módulos
 from indicators import TechnicalIndicators
-from position_calculator import PositionCalculator, PositionPlan
+# from position_calculator import PositionCalculatorV3, PositionPlan
 import config
+
 
 # Configurar logging
 logging.basicConfig(level=getattr(logging, config.LOG_LEVEL, 'INFO'))
 logger = logging.getLogger(__name__)
+
+
+# 🆕 V3.0: Import calculador híbrido
+try:
+    import config
+    if getattr(config, 'USE_ADAPTIVE_TARGETS', False):
+        from position_calculator import PositionCalculatorV3, PositionPlan
+        USE_V3 = True
+        logger.info("🎯 Scanner: Targets adaptativos V3.0 ACTIVADOS")
+    else:
+        USE_V3 = False
+        logger.info("📊 Scanner: Usando sistema clásico V2.0")
+except ImportError:
+    USE_V3 = False
+    logger.info("⚠️ Scanner: V3.0 no disponible, usando V2.0")
+    
 
 # Suprimir warnings
 warnings.filterwarnings('ignore')
@@ -59,6 +76,10 @@ class TradingSignal:
     risk_reward_ratio: float = 0.0
     expected_hold_time: str = ""
     market_context: str = ""
+    
+    # 🆕 NUEVO: Datos para análisis técnico
+    market_data: Optional[pd.DataFrame] = None  # Datos OHLCV para targets adaptativos
+    position_plan: Optional[PositionPlan] = None
 
 class SignalScanner:
     """
@@ -68,7 +89,12 @@ class SignalScanner:
     def __init__(self):
         """Inicializar el scanner con todos los componentes"""
         self.indicators = TechnicalIndicators()
-        self.position_calc = PositionCalculator()
+        # Por esta:
+        if USE_V3:
+            self.position_calc = PositionCalculatorV3()
+        else:
+            from position_calculator_v2 import PositionCalculator as PositionCalculatorV2
+            self.position_calc = PositionCalculator()
         
         # Configurar zona horaria del mercado (desde config que lee .env)
         self.market_tz = pytz.timezone(config.MARKET_TIMEZONE)

@@ -217,6 +217,38 @@ TEST_MODE = os.getenv('TEST_MODE', 'False').lower() == 'true'
 # Símbolos para testing (más pequeño)
 TEST_SYMBOLS = ["SPY", "AAPL"]
 
+
+# Habilitar/deshabilitar sistema adaptativo
+USE_ADAPTIVE_TARGETS = True
+
+# Límites de R:R por estrategia
+ADAPTIVE_RR_LIMITS = {
+    'SCALP': {'min': 1.2, 'max': 3.0},
+    'SWING_SHORT': {'min': 1.5, 'max': 5.0},
+    'SWING_MEDIUM': {'min': 1.8, 'max': 6.0},
+    'POSITION': {'min': 2.0, 'max': 6.0}
+}
+
+# Configuración análisis técnico
+TECHNICAL_ANALYSIS_CONFIG = {
+    'LOOKBACK_PERIOD': 50,           # Velas para análisis pivots
+    'FIBONACCI_LEVELS': [1.236, 1.382, 1.618, 2.618],  # Extensiones Fibonacci
+    'PSYCHOLOGICAL_LEVELS': [1, 2.5, 5, 10],           # Niveles psicológicos
+    'ATR_EXTENSIONS': [2, 3, 4, 6],                     # Múltiplos ATR para targets
+    'MAX_TARGET_DISTANCE_PCT': 20                        # Máx distancia target %
+}
+
+# Configuración scoring
+TARGET_SCORING_WEIGHTS = {
+    'FIBONACCI': 90,
+    'VWAP': 85,
+    'RESISTANCE': 80,
+    'SUPPORT': 80,
+    'BOLLINGER': 75,
+    'PSYCHOLOGICAL': 65,
+    'ATR_EXTENSION': 60
+}
+
 # =============================================================================
 # 🔍 VALIDACIÓN DE CONFIGURACIÓN
 # =============================================================================

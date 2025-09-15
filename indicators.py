@@ -523,7 +523,10 @@ class TechnicalIndicators:
                 'roc': self.calculate_roc(data),
                 'bollinger': self.calculate_bollinger_bands(data),
                 'volume_osc': self.calculate_volume_oscillator(data),
-                'atr': self.calculate_atr(data)
+                'atr': self.calculate_atr(data),
+                
+                # 🆕 NUEVO: Conservar datos OHLCV para targets adaptativos
+                'market_data': data  # Datos completos para análisis técnico
             }
             
             logger.info(f"✅ {symbol}: Indicadores calculados exitosamente")
