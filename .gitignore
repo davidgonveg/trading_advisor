@@ -63,3 +63,6 @@ database/temp_*
 database/backup_*
 *.sqlite
 *.db-journal
+
+*.pkl
+*.csv
