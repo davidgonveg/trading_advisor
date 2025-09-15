@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from enum import Enum
 import json
 import os
+import pytz  # 🔧 FIX: Añadido import para timezone
 
 # Importar módulos del sistema
 from scanner import TradingSignal, SignalScanner
@@ -96,6 +97,10 @@ class ExitManager:
         self.scanner = SignalScanner()
         self.indicators = TechnicalIndicators()
         
+        # 🔧 FIX: Configurar timezone para operaciones de fecha
+        self.market_tz = pytz.timezone(config.MARKET_TIMEZONE)
+        self.utc_tz = pytz.UTC
+        
         # Configuración de deterioro
         self.deterioration_thresholds = {
             'MILD': 60,      # Puntuación 60-69: Deterioro leve
@@ -109,6 +114,33 @@ class ExitManager:
         
         logger.info("🚪 Exit Manager inicializado")
         logger.info(f"📊 Posiciones activas cargadas: {len(self.active_positions)}")
+    
+    # 🔧 FIX: Función helper para obtener tiempo consistente
+    def _get_current_time(self) -> datetime:
+        """Obtener tiempo actual con timezone consistente"""
+        return datetime.now(self.utc_tz)
+    
+    # 🔧 FIX: Función helper para asegurar timezone awareness
+    def _ensure_timezone_aware(self, dt: datetime) -> datetime:
+        """Asegurar que datetime tiene timezone"""
+        if dt.tzinfo is None:
+            # Si no tiene timezone, asumir que es market timezone
+            return self.market_tz.localize(dt).astimezone(self.utc_tz)
+        else:
+            # Si ya tiene timezone, convertir a UTC
+            return dt.astimezone(self.utc_tz)
+    
+    # 🔧 FIX: Función helper para calcular días de forma segura
+    def _calculate_days_held(self, entry_time: datetime) -> int:
+        """Calcular días transcurridos con timezone awareness"""
+        try:
+            current_time = self._get_current_time()
+            entry_time_utc = self._ensure_timezone_aware(entry_time)
+            delta = current_time - entry_time_utc
+            return delta.days
+        except Exception as e:
+            logger.error(f"❌ Error calculando días: {e}")
+            return 0
     
     def add_position(self, signal: TradingSignal, entry_price: float) -> bool:
         """
@@ -126,15 +158,18 @@ class ExitManager:
                 logger.error(f"❌ {signal.symbol}: Sin plan de posición")
                 return False
             
+            # 🔧 FIX: Asegurar timezone en entry_time
+            entry_time = self._ensure_timezone_aware(signal.timestamp)
+            
             position = ActivePosition(
                 symbol=signal.symbol,
                 direction=signal.signal_type,
                 entry_signal=signal,
-                entry_time=signal.timestamp,
+                entry_time=entry_time,
                 entry_price=entry_price,
                 position_plan=signal.position_plan,
                 current_price=entry_price,
-                last_evaluation=datetime.now()
+                last_evaluation=self._get_current_time()  # 🔧 FIX: Usar método consistente
             )
             
             self.active_positions[signal.symbol] = position
@@ -156,8 +191,11 @@ class ExitManager:
         try:
             if symbol in self.active_positions:
                 position = self.active_positions[symbol]
+                # 🔧 FIX: Usar método seguro para calcular días
+                days_held = self._calculate_days_held(position.entry_time)
+                
                 logger.info(f"🚪 {symbol}: Posición removida - {reason}")
-                logger.info(f"   Tiempo mantenida: {(datetime.now() - position.entry_time).days} días")
+                logger.info(f"   Tiempo mantenida: {days_held} días")
                 logger.info(f"   Alertas de exit enviadas: {position.exit_alerts_sent}")
                 
                 del self.active_positions[symbol]
@@ -449,7 +487,7 @@ class ExitManager:
             
             # Actualizar precio actual
             position.current_price = indicators['current_price']
-            position.last_evaluation = datetime.now()
+            position.last_evaluation = self._get_current_time()  # 🔧 FIX: Usar método consistente
             
             # Calcular PnL actual
             if position.direction == 'LONG':
@@ -508,7 +546,7 @@ class ExitManager:
                 volume_divergence=volume_divergence,
                 recommended_action=recommended_action,
                 exit_percentage=exit_percentage,
-                timestamp=datetime.now(),
+                timestamp=self._get_current_time(),  # 🔧 FIX: Usar método consistente
                 current_indicators=indicators
             )
             
@@ -593,12 +631,22 @@ class ExitManager:
                 positions_data = json.load(f)
             
             for symbol, data in positions_data.items():
+                # 🔧 FIX: Manejo mejorado de datetime al cargar
+                entry_time_str = data['entry_time']
+                if 'T' in entry_time_str:
+                    entry_time = datetime.fromisoformat(entry_time_str[:19])
+                else:
+                    entry_time = datetime.fromisoformat(entry_time_str)
+                
+                # Asegurar timezone awareness
+                entry_time = self._ensure_timezone_aware(entry_time)
+                
                 # Crear posición básica (sin objetos completos por simplicidad)
                 position = ActivePosition(
                     symbol=data['symbol'],
                     direction=data['direction'],
                     entry_signal=None,  # Se reconstruirá si es necesario
-                    entry_time=datetime.fromisoformat(data['entry_time'][:19]) if 'T' in data['entry_time'] else datetime.fromisoformat(data['entry_time']),
+                    entry_time=entry_time,
                     entry_price=data['entry_price'],
                     position_plan=None,  # Se reconstruirá si es necesario
                     current_price=data.get('current_price', data['entry_price']),
@@ -608,7 +656,12 @@ class ExitManager:
                 )
                 
                 if data.get('last_evaluation'):
-                    position.last_evaluation = datetime.fromisoformat(data['last_evaluation'])
+                    last_eval_str = data['last_evaluation']
+                    if 'T' in last_eval_str:
+                        last_eval = datetime.fromisoformat(last_eval_str[:19])
+                    else:
+                        last_eval = datetime.fromisoformat(last_eval_str)
+                    position.last_evaluation = self._ensure_timezone_aware(last_eval)
                 
                 self.active_positions[symbol] = position
             
@@ -618,23 +671,35 @@ class ExitManager:
             logger.error(f"❌ Error cargando posiciones: {e}")
     
     def get_positions_summary(self) -> Dict:
-        """Obtener resumen de posiciones activas"""
+        """🔧 FIX: Obtener resumen de posiciones activas con timezone fix"""
         try:
             if not self.active_positions:
                 return {'total_positions': 0}
             
+            current_time = self._get_current_time()
+            
+            # Calcular métricas agregadas de forma segura
+            total_days = 0
+            total_positions = len(self.active_positions)
+            
+            for position in self.active_positions.values():
+                days_held = self._calculate_days_held(position.entry_time)
+                total_days += days_held
+            
+            avg_days_held = total_days / total_positions if total_positions > 0 else 0
+            
             summary = {
-                'total_positions': len(self.active_positions),
+                'total_positions': total_positions,
                 'long_positions': sum(1 for p in self.active_positions.values() if p.direction == 'LONG'),
                 'short_positions': sum(1 for p in self.active_positions.values() if p.direction == 'SHORT'),
                 'positions_with_deterioration': sum(1 for p in self.active_positions.values() if p.deterioration_count > 0),
-                'avg_days_held': sum((datetime.now() - p.entry_time).days for p in self.active_positions.values()) / len(self.active_positions),
+                'avg_days_held': round(avg_days_held, 1),
                 'total_unrealized_pnl': sum(p.unrealized_pnl_pct for p in self.active_positions.values()),
                 'positions': {}
             }
             
             for symbol, position in self.active_positions.items():
-                days_held = (datetime.now() - position.entry_time).days
+                days_held = self._calculate_days_held(position.entry_time)
                 summary['positions'][symbol] = {
                     'direction': position.direction,
                     'entry_price': position.entry_price,
@@ -648,8 +713,8 @@ class ExitManager:
             return summary
             
         except Exception as e:
-            logger.error(f"❌ Error en resumen posiciones: {e}")
-            return {'error': str(e)}
+            logger.error(f"❌ Error en resumen posiciones (FIXED): {e}")
+            return {'error': str(e), 'total_positions': 0}
 
 
 # =============================================================================
