@@ -583,7 +583,7 @@ class SignalScanner:
             
             if entry_quality != "NO_TRADE":
                 try:
-                    position_plan = self.position_calc.calculate_position_plan(
+                    position_plan = self.position_calc.calculate_position_plan_v3(
                         symbol=symbol,
                         direction=signal_type,
                         current_price=current_price,
