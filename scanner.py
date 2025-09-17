@@ -69,9 +69,6 @@ class TradingSignal:
     indicator_scores: Dict[str, int]
     indicator_signals: Dict[str, str]
     
-    # Plan de posición (si aplicable)
-    position_plan: Optional[PositionPlan] = None
-    
     # Métricas adicionales
     risk_reward_ratio: float = 0.0
     expected_hold_time: str = ""
@@ -93,7 +90,7 @@ class SignalScanner:
         if USE_V3:
             self.position_calc = PositionCalculatorV3()
         else:
-            from position_calculator_v2 import PositionCalculator as PositionCalculatorV2
+            from position_calculator import PositionCalculatorV3 as PositionCalculatorV2
             self.position_calc = PositionCalculator()
         
         # Configurar zona horaria del mercado (desde config que lee .env)

@@ -145,8 +145,8 @@ MARKET_TIMEZONE = os.getenv('TIMEZONE', 'US/Eastern')
 # Horarios de trading permitidos (formato 24h)
 TRADING_SESSIONS = {
     'MORNING': {
-        'START': "09:45",
-        'END': "11:45"
+        'START': "10:00",
+        'END': "12:00"
     },
     'AFTERNOON': {
         'START': "13:30", 
