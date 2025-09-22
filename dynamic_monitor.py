@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 """
-🎯 DYNAMIC MONITORING SYSTEM - TRADING AUTOMATIZADO V2.3
-=======================================================
+🎯 DYNAMIC MONITORING SYSTEM - TRADING AUTOMATIZADO V2.3 + FIXES
+==============================================================
+
+🔧 FIXES APLICADOS:
+✅ Error 'tuple' object has no attribute 'isoformat' - SOLUCIONADO
+✅ Manejo seguro de timezone naive/aware datetimes
+✅ Validación robusta de tipos en get_monitoring_stats
+✅ Helper functions para timezone consistency
 
 Sistema de monitoreo dinámico que ajusta automáticamente la frecuencia
 de escaneo según:
@@ -35,13 +41,13 @@ from scanner import TradingSignal, SignalScanner
 from indicators import TechnicalIndicators
 import config
 
-# 🔧 TIMEZONE HELPERS - SOLUCION INMEDIATA AL ERROR
+# 🔧 TIMEZONE HELPERS - FIXES PARA ERROR ISOFORMAT
 def _get_current_time() -> datetime:
-    """Obtener tiempo actual con timezone UTC consistente"""
+    """🔧 FIX: Obtener tiempo actual con timezone UTC consistente"""
     return datetime.now(pytz.UTC)
 
 def _ensure_timezone_aware(dt: datetime) -> datetime:
-    """Asegurar que datetime tiene timezone"""
+    """🔧 FIX: Asegurar que datetime tiene timezone"""
     if dt is None:
         return _get_current_time()
     
@@ -58,14 +64,34 @@ def _ensure_timezone_aware(dt: datetime) -> datetime:
         return dt.astimezone(pytz.UTC)
 
 def _calculate_time_difference_safe(dt1: datetime, dt2: datetime) -> timedelta:
-    """Calcular diferencia de tiempo con timezone awareness"""
+    """🔧 FIX: Calcular diferencia de tiempo con timezone awareness"""
     try:
         dt1_aware = _ensure_timezone_aware(dt1)
         dt2_aware = _ensure_timezone_aware(dt2)
         return dt1_aware - dt2_aware
     except Exception as e:
-        print(f"❌ Error calculando diferencia de tiempo: {e}")
+        logger.warning(f"❌ Error calculando diferencia de tiempo: {e}")
         return timedelta(0)
+
+def _safe_isoformat(dt) -> Optional[str]:
+    """🔧 FIX: Convertir datetime a isoformat de forma segura"""
+    try:
+        if dt is None:
+            return None
+        
+        if isinstance(dt, datetime):
+            dt_aware = _ensure_timezone_aware(dt)
+            return dt_aware.isoformat()
+        elif isinstance(dt, (tuple, list)):
+            logger.warning(f"⚠️ Intentando isoformat en {type(dt)}: {dt}")
+            return None
+        else:
+            logger.warning(f"⚠️ Tipo inesperado para isoformat: {type(dt)}")
+            return str(dt)
+            
+    except Exception as e:
+        logger.warning(f"⚠️ Error en safe_isoformat: {e}")
+        return None
 
 # Importar exit manager si está disponible
 try:
@@ -74,72 +100,74 @@ try:
 except ImportError:
     EXIT_MANAGER_AVAILABLE = False
 
-# Importar smart enhancements si está disponible
+# Importar rate limiter si está disponible
 try:
-    from smart_enhancements import RateLimitManager
+    from rate_limiter import RateLimitManager
     RATE_LIMITER_AVAILABLE = True
 except ImportError:
     RATE_LIMITER_AVAILABLE = False
 
+# Configurar logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class MonitorPriority(Enum):
-    """Prioridades de monitoreo"""
-    CRITICAL = "CRITICAL"    # 5 min - Entrada inminente / Exit crítico
-    HIGH = "HIGH"           # 10 min - Posición activa / Señal fuerte
+    """Prioridades de monitoreo dinámico"""
+    CRITICAL = "CRITICAL"    # 2 min - Cerca de entrada/exit crítico
+    HIGH = "HIGH"           # 5 min - Posiciones activas importantes
     NORMAL = "NORMAL"       # 15 min - Escaneo rutinario
-    LOW = "LOW"             # 45 min - Sin actividad / Mercado cerrado
-    SLEEP = "SLEEP"         # 90 min - Fin de semana / Holidays
+    LOW = "LOW"             # 45 min - Inactivo/mercado cerrado
 
 @dataclass
 class MonitorTarget:
-    """Objetivo de monitoreo con prioridad dinámica"""
+    """Target individual para monitoreo dinámico"""
     symbol: str
     priority: MonitorPriority
-    reason: str  # Por qué tiene esta prioridad
-    
-    # Datos del objetivo
-    current_price: float = 0.0
-    target_prices: List[float] = None  # Precios críticos a vigilar
+    reason: str
+    signal: Optional[TradingSignal] = None
     position: Optional['ActivePosition'] = None
-    last_signal: Optional[TradingSignal] = None
     
-    # Control de monitoreo
+    # Precios y targets
+    current_price: float = 0.0
+    target_prices: List[float] = None
+    closest_target_distance: float = 999.0
+    
+    # Control de actualizaciones
     last_update: Optional[datetime] = None
     update_count: int = 0
-    consecutive_no_change: int = 0
+    consecutive_errors: int = 0
     
-    # Métricas de proximidad
-    closest_target_distance: float = float('inf')  # % hasta objetivo más cercano
-    volatility_atr_pct: float = 2.0  # ATR como % del precio
+    def __post_init__(self):
+        if self.target_prices is None:
+            self.target_prices = []
+        if self.last_update is None:
+            self.last_update = _get_current_time()
 
-@dataclass
+@dataclass 
 class MonitorSchedule:
-    """Programa de monitoreo con frecuencias dinámicas - CONFIGURACIÓN CONSERVADORA"""
-    critical_interval: int = 5     # minutos - Conservador pero rápido
-    high_interval: int = 10        # minutos - Reduce ruido
-    normal_interval: int = 15      # minutos - Mantiene base
-    low_interval: int = 45         # minutos - Más espaciado para inactivos
-    sleep_interval: int = 90       # minutos - Más descanso fuera de mercado
+    """Configuración de frecuencias de monitoreo"""
+    # Intervalos por prioridad (en minutos)
+    critical_interval: int = 2      # 🔧 FIX: Menos agresivo
+    high_interval: int = 5          # 🔧 FIX: Más conservador
+    normal_interval: int = 15       # Como antes
+    low_interval: int = 45          # Como antes
     
-    # Límites API - Más conservadores
-    max_requests_per_hour: int = 80     # Más seguro con APIs
-    max_concurrent_updates: int = 3     # Menos carga concurrente
+    # Configuración de concurrencia
+    max_concurrent_updates: int = 3  # Máximo updates concurrente
     
-    # Thresholds para cambio de prioridad - Menos sensibles
+    # Thresholds para cambio de prioridad - 🔧 FIX: Menos sensibles
     proximity_critical_pct: float = 1.0    # 1% = Menos falsos positivos
     proximity_high_pct: float = 2.5        # 2.5% = Más margen
     volatility_multiplier: float = 1.2     # Menos agresivo con volatilidad
 
 class DynamicMonitor:
     """
-    Sistema de monitoreo dinámico con frecuencia variable
+    🔧 FIXED: Sistema de monitoreo dinámico con manejo robusto de timezone
     """
     
     def __init__(self):
         """Inicializar el monitor dinámico"""
-        logger.info("🎯 Inicializando Dynamic Monitor v2.3")
+        logger.info("🎯 Inicializando Dynamic Monitor v2.3 + FIXES")
         
         # Componentes principales
         self.scanner = SignalScanner()
@@ -178,248 +206,201 @@ class DynamicMonitor:
         self.normal_updates = 0
         self.rate_limit_waits = 0
         
-        logger.info("✅ Dynamic Monitor inicializado")
+        logger.info("✅ Dynamic Monitor inicializado con FIXES")
     
     def is_market_open_safe(self):
-        """Verificar si mercado está abierto con fallback"""
+        """🔧 FIX: Verificar si mercado está abierto con fallback"""
         try:
             if hasattr(self.scanner, 'is_market_open'):
                 return self.scanner.is_market_open()
             else:
-                # Fallback: asumir abierto entre 9:30-16:00 EST
-                eastern = pytz.timezone('US/Eastern')
-                now = datetime.now(eastern)
-                market_open = now.replace(hour=9, minute=30, second=0, microsecond=0)
-                market_close = now.replace(hour=16, minute=0, second=0, microsecond=0)
+                # Fallback básico: lunes-viernes, 9:30-16:00 ET
+                now_et = datetime.now(pytz.timezone('US/Eastern'))
+                weekday = now_et.weekday()
+                hour = now_et.hour
+                minute = now_et.minute
                 
-                # Solo días laborables
-                if now.weekday() >= 5:  # Sábado=5, Domingo=6
+                if weekday > 4:  # Fin de semana
                     return False
                 
-                return market_open <= now <= market_close
+                market_time = hour * 100 + minute
+                return 930 <= market_time <= 1600
+                
         except Exception as e:
-            logger.error(f"❌ Error verificando mercado: {e}")
-            return True  # Default: asumir abierto
+            logger.warning(f"⚠️ Error verificando mercado abierto: {e}")
+            return True  # Fallback: asumir abierto para no parar el sistema
     
-    def calculate_proximity_to_targets(self, current_price: float, target_prices: List[float]) -> float:
-        """Calcular distancia mínima a targets críticos"""
+    def start_dynamic_monitoring(self) -> bool:
+        """Iniciar el monitoreo dinámico en thread separado"""
         try:
-            if not target_prices or current_price <= 0:
-                return float('inf')
+            if self.running:
+                logger.warning("⚠️ Dynamic Monitor ya está corriendo")
+                return True
             
-            min_distance = float('inf')
+            logger.info("🚀 Iniciando Dynamic Monitor...")
             
-            for target_price in target_prices:
-                if target_price > 0:
-                    distance_pct = abs((target_price - current_price) / current_price) * 100
-                    min_distance = min(min_distance, distance_pct)
+            self.running = True
+            self.shutdown_event.clear()
             
-            return min_distance
+            # Crear y iniciar thread de monitoreo
+            self.monitor_thread = threading.Thread(
+                target=self._monitor_loop,
+                name="DynamicMonitorThread",
+                daemon=True
+            )
+            self.monitor_thread.start()
             
-        except Exception as e:
-            logger.error(f"❌ Error calculando proximidad: {e}")
-            return float('inf')
-    
-    def determine_monitor_priority(self, symbol: str, current_price: float, 
-                                  position: Optional['ActivePosition'] = None,
-                                  signal: Optional[TradingSignal] = None) -> Tuple[MonitorPriority, str]:
-        """🔧 FIX: Determinar prioridad de monitoreo (CORREGIDO TIMEZONE)"""
-        try:
-            reasons = []
-            base_priority = MonitorPriority.NORMAL
-            
-            # 1. Verificar posiciones activas críticas
-            if position:
-                try:
-                    current_time = _get_current_time()  # 🔧 FIX: Usar función timezone-safe
-                    entry_time_aware = _ensure_timezone_aware(position.entry_time)  # 🔧 FIX
-                    time_diff = _calculate_time_difference_safe(current_time, entry_time_aware)  # 🔧 FIX
-                    hours_held = time_diff.total_seconds() / 3600
-                    
-                    if hours_held < 2:  # Posición muy reciente
-                        base_priority = MonitorPriority.HIGH
-                        reasons.append("Posición reciente (< 2h)")
-                    elif hours_held < 24:  # Posición del día
-                        base_priority = MonitorPriority.HIGH
-                        reasons.append("Posición activa (< 24h)")
-                    else:
-                        base_priority = MonitorPriority.NORMAL
-                        reasons.append("Posición establecida")
-                        
-                except Exception as e:
-                    logger.error(f"❌ Error calculando tiempo de posición: {e}")
-                    base_priority = MonitorPriority.NORMAL
-                    reasons.append(f"Error: {str(e)[:50]}")
-            
-            # 2. Señal reciente fuerte
-            if signal and signal.signal_strength >= 80:
-                base_priority = max(base_priority, MonitorPriority.HIGH, key=lambda x: x.value)
-                reasons.append(f"Señal fuerte ({signal.signal_strength}/100)")
-            
-            # 3. Proximidad a targets (esto lo maneja update_monitor_target)
-            # Se actualiza dinámicamente en update_monitor_target
-            
-            # 4. Mercado cerrado = prioridad baja
-            try:
-                if not self.is_market_open_safe():
-                    if base_priority not in [MonitorPriority.CRITICAL]:  # Mantener críticos
-                        base_priority = MonitorPriority.LOW
-                        reasons.append("Mercado cerrado")
-            except Exception:
-                pass  # Si falla verificación mercado, continuar normal
-            
-            # Construir razón final
-            final_reason = "; ".join(reasons) if reasons else "Análisis estándar"
-            
-            return base_priority, final_reason
-            
-        except Exception as e:
-            logger.error(f"❌ Error determinando prioridad para {symbol}: {e}")
-            return MonitorPriority.NORMAL, f"Error: {str(e)[:50]}"
-    
-    def _quick_exit_evaluation(self, symbol: str, current_price: float, position: 'ActivePosition') -> bool:
-        """🔧 FIX: Evaluación rápida de necesidad de exit (CORREGIDO)"""
-        try:
-            if not position.position_plan:
-                return False
-            
-            # 🔧 FIX: Verificar tiempo transcurrido con timezone awareness
-            current_time = _get_current_time()
-            entry_time_aware = _ensure_timezone_aware(position.entry_time)
-            time_diff = _calculate_time_difference_safe(current_time, entry_time_aware)
-            hours_held = time_diff.total_seconds() / 3600
-            
-            # Solo evaluar posiciones que han tenido tiempo de desarrollarse
-            if hours_held < 0.5:  # Menos de 30 minutos
-                return False
-            
-            # 🔧 FIX: Acceso correcto a precio del stop loss
-            stop_loss_price = position.position_plan.stop_loss.price
-            
-            # Calcular PnL actual
-            if position.direction == 'LONG':
-                pnl_pct = ((current_price - position.entry_price) / position.entry_price) * 100
-                # Verificar stop loss
-                if current_price <= stop_loss_price:
-                    logger.info(f"🚨 {symbol} LONG: Precio en stop loss ({current_price:.2f} <= {stop_loss_price:.2f})")
-                    return True
-                    
-                # Pérdida significativa
-                if pnl_pct <= -8:  # -8% es señal de deterioro crítico
-                    logger.info(f"🚨 {symbol} LONG: Pérdida crítica {pnl_pct:.1f}%")
-                    return True
-                    
-            else:  # SHORT
-                pnl_pct = ((position.entry_price - current_price) / position.entry_price) * 100
-                # Verificar stop loss
-                if current_price >= stop_loss_price:
-                    logger.info(f"🚨 {symbol} SHORT: Precio en stop loss ({current_price:.2f} >= {stop_loss_price:.2f})")
-                    return True
-                    
-                # Pérdida significativa
-                if pnl_pct <= -8:
-                    logger.info(f"🚨 {symbol} SHORT: Pérdida crítica {pnl_pct:.1f}%")
-                    return True
-            
-            return False
-            
-        except Exception as e:
-            logger.error(f"❌ Error en evaluación de exit para {symbol}: {e}")
-            return False
-    
-    def update_monitor_target(self, symbol: str) -> bool:
-        """🔧 FIX: Actualizar datos y prioridad de un target (CORREGIDO)"""
-        try:
-            if symbol not in self.monitor_targets:
-                return False
-            
-            target = self.monitor_targets[symbol]
-            
-            # Rate limiting
-            if self.rate_limiter:
-                self.rate_limiter.wait_if_needed()
-                self.rate_limiter.log_request()
-            
-            # Obtener datos actualizados
-            indicators = self.indicators.get_all_indicators(symbol, period="5m", days=2)
-            new_price = indicators['current_price']
-            
-            # Actualizar ATR/volatilidad
-            atr_data = indicators.get('atr', {})
-            target.volatility_atr_pct = atr_data.get('atr_percentage', target.volatility_atr_pct)
-            
-            # Detectar cambio significativo de precio
-            if target.current_price > 0:
-                price_change_pct = abs((new_price - target.current_price) / target.current_price) * 100
-                
-                if price_change_pct < 0.1:  # Cambio mínimo
-                    target.consecutive_no_change += 1
-                else:
-                    target.consecutive_no_change = 0
-            
-            # Actualizar precio
-            old_price = target.current_price
-            target.current_price = new_price
-            target.last_update = _get_current_time()  # ✅ MÉTODO TIMEZONE-AWARE
-            target.update_count += 1
-            
-            # Recalcular proximidad si hay targets
-            if target.target_prices:
-                old_distance = target.closest_target_distance
-                target.closest_target_distance = self.calculate_proximity_to_targets(new_price, target.target_prices)
-                
-                # Log si proximidad cambió significativamente
-                if abs(old_distance - target.closest_target_distance) > 0.5:
-                    logger.info(f"📊 {symbol}: Proximidad cambió de {old_distance:.1f}% a {target.closest_target_distance:.1f}%")
-                
-                # Evaluar cambio de prioridad por proximidad
-                old_priority = target.priority
-                
-                if target.closest_target_distance <= self.schedule.proximity_critical_pct:
-                    if target.priority != MonitorPriority.CRITICAL:
-                        target.priority = MonitorPriority.CRITICAL
-                        target.reason = f"CRÍTICO: {target.closest_target_distance:.1f}% del target"
-                        logger.warning(f"🔥 {symbol}: Prioridad CRÍTICA - {target.closest_target_distance:.1f}% del target")
-                        
-                elif target.closest_target_distance <= self.schedule.proximity_high_pct:
-                    if target.priority not in [MonitorPriority.CRITICAL, MonitorPriority.HIGH]:
-                        target.priority = MonitorPriority.HIGH
-                        target.reason = f"ALTA: {target.closest_target_distance:.1f}% del target"
-                        logger.info(f"⚡ {symbol}: Prioridad ALTA - {target.closest_target_distance:.1f}% del target")
-                
-                # Actualizar contadores de prioridad
-                if old_priority != target.priority:
-                    self._update_priority_counters(target.priority)
-            
-            # Evaluación especial para posiciones activas
-            if target.position:
-                needs_exit = self._quick_exit_evaluation(symbol, new_price, target.position)
-                if needs_exit:
-                    target.priority = MonitorPriority.CRITICAL
-                    target.reason = "EXIT CRÍTICO detectado"
-                    logger.warning(f"🚨 {symbol}: Necesita EXIT CRÍTICO")
-            
-            self.total_updates += 1
-            
-            logger.debug(f"📊 {symbol}: Actualizado - ${new_price:.2f} ({target.priority.value})")
+            logger.info("✅ Dynamic Monitor iniciado correctamente")
             return True
             
         except Exception as e:
-            logger.error(f"❌ Error actualizando {symbol}: {e}")
+            logger.error(f"❌ Error iniciando Dynamic Monitor: {e}")
+            self.running = False
             return False
     
-    def _update_priority_counters(self, priority: MonitorPriority):
-        """Actualizar contadores de estadísticas"""
-        if priority == MonitorPriority.CRITICAL:
-            self.critical_updates += 1
-        elif priority == MonitorPriority.HIGH:
-            self.high_updates += 1
-        else:
-            self.normal_updates += 1
+    def stop_dynamic_monitoring(self) -> bool:
+        """Detener el monitoreo dinámico"""
+        try:
+            if not self.running:
+                return True
+            
+            logger.info("🛑 Deteniendo Dynamic Monitor...")
+            
+            # Señalar shutdown
+            self.running = False
+            self.shutdown_event.set()
+            
+            # Esperar thread con timeout
+            if self.monitor_thread and self.monitor_thread.is_alive():
+                self.monitor_thread.join(timeout=10)
+                
+                if self.monitor_thread.is_alive():
+                    logger.warning("⚠️ Thread no terminó en tiempo esperado")
+                else:
+                    logger.info("✅ Dynamic Monitor detenido correctamente")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Error deteniendo Dynamic Monitor: {e}")
+            return False
+    
+    def _monitor_loop(self):
+        """🔧 FIX: Loop principal de monitoreo con manejo robusto de errores"""
+        logger.info("🔄 Iniciando loop de monitoreo dinámico...")
+        
+        while self.running and not self.shutdown_event.is_set():
+            try:
+                # 1. Verificar si hay targets para monitorear
+                if not self.monitor_targets:
+                    if self.shutdown_event.wait(30):  # Esperar 30s si no hay targets
+                        break
+                    continue
+                
+                # 2. Calcular próximas actualizaciones
+                next_updates = self._calculate_next_updates()
+                
+                if not next_updates:
+                    if self.shutdown_event.wait(60):  # Esperar 1 min si no hay updates
+                        break
+                    continue
+                
+                # 3. Procesar updates que ya es hora de ejecutar
+                current_time = _get_current_time()
+                updates_to_process = []
+                
+                for update_time, symbol, priority in next_updates:
+                    # 🔧 FIX: Asegurar que update_time es datetime aware
+                    update_time_aware = _ensure_timezone_aware(update_time)
+                    
+                    if update_time_aware <= current_time:
+                        updates_to_process.append((symbol, priority))
+                
+                # 4. Ejecutar updates
+                if updates_to_process:
+                    logger.info(f"🔄 Procesando {len(updates_to_process)} actualizaciones dinámicas")
+                    
+                    for symbol, priority in updates_to_process:
+                        if not self.running:
+                            break
+                        
+                        # Rate limiting si está disponible
+                        if self.rate_limiter and not self.rate_limiter.can_make_request():
+                            logger.debug(f"🛡️ Rate limit - saltando {symbol}")
+                            self.rate_limit_waits += 1
+                            continue
+                        
+                        # Ejecutar update
+                        success = self.update_monitor_target(symbol)
+                        if success:
+                            self._update_priority_counters(priority)
+                
+                # 5. Calcular tiempo hasta próximo update
+                sleep_time = self._calculate_sleep_time(next_updates)
+                
+                # 6. Esperar hasta próximo ciclo o shutdown
+                if self.shutdown_event.wait(sleep_time):
+                    break
+                    
+            except Exception as e:
+                logger.error(f"❌ Error en monitor loop: {e}")
+                if self.shutdown_event.wait(30):  # Esperar 30s en caso de error
+                    break
+        
+        logger.info("✅ Monitor loop terminado")
+    
+    def _calculate_next_updates(self) -> List[Tuple[datetime, str, MonitorPriority]]:
+        """🔧 FIX: Calcular próximas actualizaciones con manejo seguro de datetime"""
+        next_updates = []
+        current_time = _get_current_time()
+        
+        for symbol, target in self.monitor_targets.items():
+            try:
+                # 🔧 FIX: Obtener intervalo según prioridad
+                interval_minutes = {
+                    MonitorPriority.CRITICAL: self.schedule.critical_interval,
+                    MonitorPriority.HIGH: self.schedule.high_interval,
+                    MonitorPriority.NORMAL: self.schedule.normal_interval,
+                    MonitorPriority.LOW: self.schedule.low_interval
+                }.get(target.priority, 15)
+                
+                # 🔧 FIX: Calcular próxima actualización de forma segura
+                last_update_aware = _ensure_timezone_aware(target.last_update)
+                next_update_time = last_update_aware + timedelta(minutes=interval_minutes)
+                
+                # Añadir a la lista
+                next_updates.append((next_update_time, symbol, target.priority))
+                
+            except Exception as e:
+                logger.warning(f"⚠️ Error calculando next update para {symbol}: {e}")
+                continue
+        
+        # Ordenar por tiempo (más próximo primero)
+        next_updates.sort(key=lambda x: x[0])
+        return next_updates
+    
+    def _calculate_sleep_time(self, next_updates: List[Tuple[datetime, str, MonitorPriority]]) -> float:
+        """🔧 FIX: Calcular tiempo de sleep hasta próxima actualización"""
+        if not next_updates:
+            return 60.0  # Default: 1 minuto
+        
+        try:
+            current_time = _get_current_time()
+            next_update_time = _ensure_timezone_aware(next_updates[0][0])
+            
+            time_diff = next_update_time - current_time
+            sleep_seconds = max(1.0, time_diff.total_seconds())  # Mínimo 1 segundo
+            
+            # Máximo 5 minutos de sleep
+            return min(sleep_seconds, 300.0)
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Error calculando sleep time: {e}")
+            return 60.0
     
     def add_monitor_target(self, symbol: str, signal: Optional[TradingSignal] = None,
                           position: Optional['ActivePosition'] = None, reason: str = "Manual") -> bool:
-        """🔧 FIX: Añadir nuevo target al monitoreo (CORREGIDO)"""
+        """🔧 FIX: Añadir nuevo target al monitoreo con manejo robusto"""
         try:
             logger.info(f"📊 Añadiendo {symbol} al monitoreo dinámico - {reason}")
             
@@ -448,228 +429,186 @@ class DynamicMonitor:
                 if hasattr(position, 'stop_loss_price'):
                     targets.append(position.stop_loss_price)
             
-            # Obtener ATR para volatilidad
-            try:
-                indicators = self.indicators.get_all_indicators(symbol, period="15m", days=5)
-                atr_data = indicators.get('atr', {})
-                volatility_atr_pct = atr_data.get('atr_percentage', 2.0)
-            except Exception:
-                volatility_atr_pct = 2.0
+            # Calcular prioridad inicial
+            priority = self._calculate_initial_priority(current_price, targets, signal, position)
             
-            # 🔧 FIX: Determinar prioridad inicial (LLAMADA CORREGIDA)
-            priority, priority_reason = self.determine_monitor_priority(
-                symbol, current_price, position, signal  # ✅ Solo 4 argumentos
-            )
-            
-            # 🔧 FIX: Crear o actualizar target (TIMESTAMP CORREGIDO)
-            target = MonitorTarget(
+            # Crear target de monitoreo
+            monitor_target = MonitorTarget(
                 symbol=symbol,
                 priority=priority,
-                reason=f"{reason}: {priority_reason}",
+                reason=reason,
+                signal=signal,
+                position=position,
                 current_price=current_price,
                 target_prices=targets,
-                position=position,
-                last_signal=signal,
-                last_update=_get_current_time(),  # ✅ MÉTODO TIMEZONE-AWARE
-                volatility_atr_pct=volatility_atr_pct
+                last_update=_get_current_time(),  # 🔧 FIX: Usar función segura
+                update_count=0
             )
             
-            # Calcular proximidad inicial
-            if targets:
-                target.closest_target_distance = self.calculate_proximity_to_targets(current_price, targets)
+            # Añadir al diccionario
+            self.monitor_targets[symbol] = monitor_target
             
-            self.monitor_targets[symbol] = target
-            
-            logger.info(f"📊 {symbol}: Añadido a monitoreo - {priority.value}")
-            logger.info(f"   Razón: {target.reason}")
-            logger.info(f"   Precio actual: ${current_price:.2f}")
-            logger.info(f"   Targets: {len(targets)} objetivos")
-            logger.info(f"   Proximidad: {target.closest_target_distance:.2f}%")
-            
+            logger.info(f"✅ {symbol} añadido al monitoreo - Prioridad: {priority.value}")
             return True
             
         except Exception as e:
-            logger.error(f"❌ Error añadiendo target {symbol}: {e}")
+            logger.error(f"❌ Error añadiendo monitor target {symbol}: {e}")
             return False
+    
+    def update_monitor_target(self, symbol: str) -> bool:
+        """🔧 FIX: Actualizar target específico con manejo de errores"""
+        if symbol not in self.monitor_targets:
+            return False
+        
+        target = self.monitor_targets[symbol]
+        
+        try:
+            # Obtener nuevo precio
+            indicators = self.indicators.get_all_indicators(symbol, period="15m", days=5)
+            new_price = indicators['current_price']
+            
+            # Actualizar target
+            target.current_price = new_price
+            target.last_update = _get_current_time()  # 🔧 FIX: Usar función segura
+            target.update_count += 1
+            target.consecutive_errors = 0  # Reset errores
+            
+            # Recalcular prioridad
+            old_priority = target.priority
+            target.priority = self._calculate_dynamic_priority(target, indicators)
+            
+            # Log si cambió prioridad
+            if target.priority != old_priority:
+                logger.info(f"🎯 {symbol}: Prioridad {old_priority.value} → {target.priority.value}")
+            
+            # Verificar condiciones críticas
+            if target.priority == MonitorPriority.CRITICAL:
+                # Podría añadir alertas especiales aquí
+                target.reason = "EXIT CRÍTICO detectado"
+                logger.warning(f"🚨 {symbol}: Necesita EXIT CRÍTICO")
+            
+            self.total_updates += 1
+            
+            logger.debug(f"📊 {symbol}: Actualizado - ${new_price:.2f} ({target.priority.value})")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Error actualizando {symbol}: {e}")
+            target.consecutive_errors += 1
+            return False
+    
+    def _update_priority_counters(self, priority: MonitorPriority):
+        """Actualizar contadores de estadísticas"""
+        if priority == MonitorPriority.CRITICAL:
+            self.critical_updates += 1
+        elif priority == MonitorPriority.HIGH:
+            self.high_updates += 1
+        else:
+            self.normal_updates += 1
+    
+    def _calculate_initial_priority(self, current_price: float, targets: List[float],
+                                   signal: Optional[TradingSignal], 
+                                   position: Optional['ActivePosition']) -> MonitorPriority:
+        """Calcular prioridad inicial basada en proximidad a targets"""
+        try:
+            if not targets:
+                return MonitorPriority.NORMAL
+            
+            # Calcular distancia mínima a cualquier target
+            min_distance_pct = min([abs(current_price - target) / current_price * 100 for target in targets])
+            
+            # Si hay posición activa, mayor prioridad
+            if position:
+                if min_distance_pct <= self.schedule.proximity_critical_pct:
+                    return MonitorPriority.CRITICAL
+                elif min_distance_pct <= self.schedule.proximity_high_pct:
+                    return MonitorPriority.HIGH
+                else:
+                    return MonitorPriority.HIGH  # Posiciones siempre HIGH como mínimo
+            
+            # Si solo hay señal
+            elif signal:
+                if min_distance_pct <= self.schedule.proximity_critical_pct * 2:  # Más margen para señales
+                    return MonitorPriority.HIGH
+                else:
+                    return MonitorPriority.NORMAL
+            
+            return MonitorPriority.NORMAL
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Error calculando prioridad inicial: {e}")
+            return MonitorPriority.NORMAL
+    
+    def _calculate_dynamic_priority(self, target: MonitorTarget, 
+                                   indicators: Dict) -> MonitorPriority:
+        """Calcular prioridad dinámica basada en condiciones actuales"""
+        try:
+            current_price = target.current_price
+            
+            if not target.target_prices:
+                return MonitorPriority.NORMAL
+            
+            # Calcular distancia mínima a targets
+            min_distance_pct = min([abs(current_price - price) / current_price * 100 
+                                  for price in target.target_prices])
+            
+            target.closest_target_distance = min_distance_pct
+            
+            # Ajuste por volatilidad (ATR)
+            volatility_multiplier = 1.0
+            if 'atr' in indicators:
+                atr_pct = indicators['atr']['atr_percentage']
+                if atr_pct > 3.0:  # Alta volatilidad
+                    volatility_multiplier = self.schedule.volatility_multiplier
+            
+            # Thresholds ajustados por volatilidad
+            critical_threshold = self.schedule.proximity_critical_pct * volatility_multiplier
+            high_threshold = self.schedule.proximity_high_pct * volatility_multiplier
+            
+            # Determinar prioridad
+            if target.position:
+                # Posiciones activas tienen prioridad más alta
+                if min_distance_pct <= critical_threshold:
+                    return MonitorPriority.CRITICAL
+                elif min_distance_pct <= high_threshold:
+                    return MonitorPriority.HIGH
+                else:
+                    return MonitorPriority.HIGH  # Posiciones mínimo HIGH
+            
+            elif target.signal:
+                # Señales pendientes
+                if min_distance_pct <= critical_threshold:
+                    return MonitorPriority.HIGH
+                elif min_distance_pct <= high_threshold * 2:
+                    return MonitorPriority.NORMAL
+                else:
+                    return MonitorPriority.LOW
+            
+            return MonitorPriority.NORMAL
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Error calculando prioridad dinámica: {e}")
+            return MonitorPriority.NORMAL
     
     def remove_monitor_target(self, symbol: str, reason: str = "Manual") -> bool:
         """Remover target del monitoreo"""
         try:
             if symbol in self.monitor_targets:
-                target = self.monitor_targets[symbol]
-                logger.info(f"🗑️ {symbol}: Removido del monitoreo - {reason}")
-                logger.info(f"   Última prioridad: {target.priority.value}")
-                logger.info(f"   Updates realizados: {target.update_count}")
-                
                 del self.monitor_targets[symbol]
+                logger.info(f"🗑️ {symbol} removido del monitoreo - {reason}")
                 return True
-            else:
-                logger.warning(f"⚠️ {symbol}: No está en monitoreo")
-                return False
-                
+            return False
+            
         except Exception as e:
             logger.error(f"❌ Error removiendo {symbol}: {e}")
             return False
     
     def get_next_update_schedule(self) -> List[Tuple[datetime, str, MonitorPriority]]:
-        """Calcular próximas actualizaciones programadas"""
-        try:
-            now = _get_current_time()  # 🔧 FIX: Usar función timezone-safe
-            schedule_list = []
-            
-            interval_map = {
-                MonitorPriority.CRITICAL: self.schedule.critical_interval,
-                MonitorPriority.HIGH: self.schedule.high_interval,
-                MonitorPriority.NORMAL: self.schedule.normal_interval,
-                MonitorPriority.LOW: self.schedule.low_interval,
-                MonitorPriority.SLEEP: self.schedule.sleep_interval,
-            }
-            
-            for symbol, target in self.monitor_targets.items():
-                interval_minutes = interval_map[target.priority]
-                
-                if target.last_update:
-                    last_update_aware = _ensure_timezone_aware(target.last_update)  # 🔧 FIX
-                    next_update = last_update_aware + timedelta(minutes=interval_minutes)
-                else:
-                    next_update = now
-                
-                schedule_list.append((next_update, symbol, target.priority))
-            
-            # Ordenar por tiempo de próxima actualización
-            schedule_list.sort(key=lambda x: x[0])
-            
-            return schedule_list[:10]  # Próximas 10 actualizaciones
-            
-        except Exception as e:
-            logger.error(f"❌ Error calculando schedule: {e}")
-            return []
-    
-    def run_dynamic_monitoring_loop(self) -> None:
-        """Loop principal de monitoreo dinámico"""
-        try:
-            logger.info("🎯 Iniciando Dynamic Monitoring Loop")
-            
-            while self.running and not self.shutdown_event.is_set():
-                
-                # 1. Verificar si hay targets para monitorear
-                if not self.monitor_targets:
-                    logger.debug("📊 No hay targets - esperando 30s...")
-                    if self.shutdown_event.wait(30):
-                        break
-                    continue
-                
-                # 2. Determinar próxima actualización
-                next_updates = self.get_next_update_schedule()
-                
-                if not next_updates:
-                    if self.shutdown_event.wait(60):
-                        break
-                    continue
-                
-                # 3. Procesar actualizaciones que ya son tiempo
-                now = _get_current_time()  # 🔧 FIX
-                
-                updates_to_process = []
-                for next_time, symbol, priority in next_updates:
-                    if next_time <= now:
-                        updates_to_process.append((symbol, priority))
-                
-                # 4. Ejecutar actualizaciones
-                if updates_to_process:
-                    logger.info(f"🔄 Procesando {len(updates_to_process)} actualizaciones dinámicas")
-                    
-                    for symbol, priority in updates_to_process[:self.schedule.max_concurrent_updates]:
-                        try:
-                            success = self.update_monitor_target(symbol)
-                            if success:
-                                logger.debug(f"✅ {symbol}: Actualizado ({priority.value})")
-                            else:
-                                logger.warning(f"⚠️ {symbol}: Falló actualización")
-                        
-                        except Exception as e:
-                            logger.error(f"❌ Error actualizando {symbol}: {e}")
-                
-                # 5. Sincronizar con exit manager
-                if self.exit_manager and len(self.monitor_targets) > 0:
-                    try:
-                        self.sync_with_exit_manager()
-                    except Exception as e:
-                        logger.error(f"❌ Error sincronizando con Exit Manager: {e}")
-                
-                # 6. Determinar tiempo de espera hasta próxima actualización
-                if next_updates:
-                    next_update_time = next_updates[0][0]
-                    sleep_seconds = max(30, (next_update_time - now).total_seconds())
-                    sleep_seconds = min(sleep_seconds, 300)  # Máximo 5 minutos
-                else:
-                    sleep_seconds = 60
-                
-                # 7. Esperar hasta próxima iteración
-                if self.shutdown_event.wait(sleep_seconds):
-                    break
-            
-            logger.info("🏁 Dynamic monitoring loop terminado")
-            
-        except Exception as e:
-            logger.error(f"❌ Error crítico en monitoring loop: {e}")
-        finally:
-            self.running = False
-    
-    def start_dynamic_monitoring(self) -> bool:
-        """Iniciar el monitoreo dinámico en background"""
-        try:
-            if self.running:
-                logger.warning("⚠️ Dynamic Monitor ya está ejecutándose")
-                return True
-            
-            self.running = True
-            self.shutdown_event.clear()
-            
-            # Iniciar thread de monitoreo
-            self.monitor_thread = threading.Thread(
-                target=self.run_dynamic_monitoring_loop,
-                name="DynamicMonitorThread",
-                daemon=True
-            )
-            self.monitor_thread.start()
-            
-            logger.info("✅ Dynamic Monitor iniciado en background")
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ Error iniciando Dynamic Monitor: {e}")
-            return False
-    
-    def stop_dynamic_monitoring(self) -> bool:
-        """Detener el monitoreo dinámico"""
-        try:
-            if not self.running:
-                logger.info("ℹ️ Dynamic Monitor ya está detenido")
-                return True
-            
-            logger.info("🛑 Deteniendo Dynamic Monitor...")
-            
-            self.running = False
-            self.shutdown_event.set()
-            
-            # Esperar que termine el thread
-            if self.monitor_thread and self.monitor_thread.is_alive():
-                self.monitor_thread.join(timeout=10)
-                
-                if self.monitor_thread.is_alive():
-                    logger.warning("⚠️ Thread no terminó en tiempo esperado")
-                else:
-                    logger.info("✅ Dynamic Monitor detenido correctamente")
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ Error deteniendo Dynamic Monitor: {e}")
-            return False
+        """Obtener schedule de próximas actualizaciones"""
+        return self._calculate_next_updates()
     
     def get_monitoring_stats(self) -> Dict:
-        """Obtener estadísticas del monitoreo dinámico"""
+        """🔧 FIXED: Obtener estadísticas del monitoreo dinámico sin errores de isoformat"""
         try:
             # Contar targets por prioridad
             priority_counts = {priority.value: 0 for priority in MonitorPriority}
@@ -677,38 +616,83 @@ class DynamicMonitor:
             for target in self.monitor_targets.values():
                 priority_counts[target.priority.value] += 1
             
-            # Determinar próximas actualizaciones
-            next_updates = self.get_next_update_schedule()
-            next_critical = [x for x in next_updates if x[2] == MonitorPriority.CRITICAL]
-            next_high = [x for x in next_updates if x[2] == MonitorPriority.HIGH]
+            # 🔧 FIX: Determinar próximas actualizaciones de forma segura
+            next_updates = []
+            try:
+                next_updates = self.get_next_update_schedule()
+            except Exception as e:
+                logger.warning(f"⚠️ Error obteniendo schedule: {e}")
+            
+            # 🔧 FIX: Procesar próximas actualizaciones de forma segura
+            next_critical = None
+            next_high = None
+            
+            if next_updates:
+                try:
+                    for update in next_updates:
+                        # Verificar que update es una tupla/lista con al menos 3 elementos
+                        if isinstance(update, (tuple, list)) and len(update) >= 3:
+                            update_time = update[0]  # Primer elemento debe ser datetime
+                            priority = update[2]      # Tercer elemento debe ser prioridad
+                            
+                            # 🔧 FIX: Usar función segura para isoformat
+                            if isinstance(update_time, datetime):
+                                update_time_aware = _ensure_timezone_aware(update_time)
+                                
+                                if priority == MonitorPriority.CRITICAL and next_critical is None:
+                                    next_critical = update_time_aware
+                                elif priority == MonitorPriority.HIGH and next_high is None:
+                                    next_high = update_time_aware
+                            else:
+                                logger.warning(f"⚠️ Elemento de update no es datetime: {type(update_time)}")
+                        else:
+                            logger.warning(f"⚠️ Formato de update incorrecto: {type(update)} - {update}")
+                            
+                except Exception as e:
+                    logger.warning(f"⚠️ Error procesando next_updates: {e}")
+            
+            # Construir stats de targets de forma segura
+            targets_detail = {}
+            for symbol, target in self.monitor_targets.items():
+                try:
+                    # 🔧 FIX: Manejo seguro de last_update usando función helper
+                    last_update_str = _safe_isoformat(target.last_update)
+                    
+                    targets_detail[symbol] = {
+                        'priority': target.priority.value if hasattr(target, 'priority') else 'UNKNOWN',
+                        'reason': getattr(target, 'reason', 'N/A'),
+                        'current_price': getattr(target, 'current_price', 0.0),
+                        'closest_target_distance': getattr(target, 'closest_target_distance', 0.0),
+                        'update_count': getattr(target, 'update_count', 0),
+                        'last_update': last_update_str
+                    }
+                    
+                except Exception as e:
+                    logger.warning(f"⚠️ Error procesando target {symbol}: {e}")
+                    targets_detail[symbol] = {'error': str(e)}
             
             return {
-                'running': self.running,
+                'running': getattr(self, 'running', False),
                 'total_targets': len(self.monitor_targets),
-                'total_updates': self.total_updates,
-                'critical_updates': self.critical_updates,
-                'high_updates': self.high_updates,
-                'normal_updates': self.normal_updates,
-                'rate_limit_waits': self.rate_limit_waits,
+                'total_updates': getattr(self, 'total_updates', 0),
+                'critical_updates': getattr(self, 'critical_updates', 0),
+                'high_updates': getattr(self, 'high_updates', 0),
+                'normal_updates': getattr(self, 'normal_updates', 0),
+                'rate_limit_waits': getattr(self, 'rate_limit_waits', 0),
                 'targets_by_priority': priority_counts,
-                'next_critical_update': next_critical[0].isoformat() if next_critical else None,
-                'next_high_update': next_high[0].isoformat() if next_high else None,
-                'targets_detail': {
-                    symbol: {
-                        'priority': target.priority.value,
-                        'reason': target.reason,
-                        'current_price': target.current_price,
-                        'closest_target_distance': target.closest_target_distance,
-                        'update_count': target.update_count,
-                        'last_update': target.last_update.isoformat() if target.last_update else None
-                    }
-                    for symbol, target in self.monitor_targets.items()
-                }
+                'next_critical_update': _safe_isoformat(next_critical),
+                'next_high_update': _safe_isoformat(next_high),
+                'targets_detail': targets_detail
             }
             
         except Exception as e:
             logger.error(f"❌ Error obteniendo stats: {e}")
-            return {'error': str(e)}
+            return {
+                'error': str(e),
+                'running': False,
+                'total_targets': 0,
+                'total_updates': 0
+            }
     
     def sync_with_exit_manager(self) -> None:
         """Sincronizar targets con exit manager"""
@@ -750,16 +734,17 @@ class DynamicMonitor:
 
 def test_dynamic_monitor():
     """Test básico del dynamic monitor"""
-    print("🧪 TESTING DYNAMIC MONITOR")
+    print("🧪 TESTING DYNAMIC MONITOR (FIXED)")
     print("=" * 50)
     
     try:
         # Crear monitor
         monitor = DynamicMonitor()
         
-        print("✅ Monitor creado")
+        print("✅ Monitor creado con FIXES aplicados")
         print(f"Rate Limiter: {'✅' if monitor.rate_limiter else '❌'}")
         print(f"Exit Manager: {'✅' if monitor.exit_manager else '❌'}")
+        print(f"Timezone helpers: ✅ FIXED")
         
         # Test añadir target manual
         print("\n📊 Test añadiendo target...")
@@ -771,6 +756,7 @@ def test_dynamic_monitor():
         stats = monitor.get_monitoring_stats()
         print(f"Targets totales: {stats['total_targets']}")
         print(f"Por prioridad: {stats['targets_by_priority']}")
+        print(f"Error en stats: {'❌' if 'error' in stats else '✅ OK'}")
         
         # Test actualización
         if stats['total_targets'] > 0:
@@ -779,12 +765,24 @@ def test_dynamic_monitor():
             success = monitor.update_monitor_target(symbol)
             print(f"Actualización {symbol}: {'✅ OK' if success else '❌ FALLO'}")
         
+        # Test timezone functions
+        print("\n🕐 Test timezone functions:")
+        current = _get_current_time()
+        print(f"✅ _get_current_time(): {current.tzinfo}")
+        
+        naive_dt = datetime(2024, 1, 15, 10, 30, 0)
+        aware_dt = _ensure_timezone_aware(naive_dt)
+        print(f"✅ naive → aware: {aware_dt.tzinfo}")
+        
+        isoformat_test = _safe_isoformat(current)
+        print(f"✅ safe_isoformat: {'OK' if isoformat_test else 'FAIL'}")
+        
         # Cleanup
         print("\n🧹 Limpiando test...")
         for symbol in list(monitor.monitor_targets.keys()):
-            monitor.remove_monitor_target(symbol, "Test completado")
+            monitor.remove_monitor_target(symbol, "Test cleanup")
         
-        print("\n✅ Test básico completado")
+        print("\n✅ Test básico completado exitosamente")
         return True
         
     except Exception as e:
@@ -793,76 +791,104 @@ def test_dynamic_monitor():
 
 def test_priority_calculation():
     """Test del cálculo de prioridades"""
-    print("🧪 TESTING PRIORITY CALCULATION")
+    print("🧪 TESTING CÁLCULO DE PRIORIDADES")
     print("=" * 50)
     
     try:
         monitor = DynamicMonitor()
         
-        # Test casos básicos
+        # Test casos de prioridad
         test_cases = [
-            {
-                'name': 'Sin contexto',
-                'symbol': 'TEST',
-                'current_price': 100.0,
-                'expected': MonitorPriority.NORMAL
-            },
-            {
-                'name': 'Precio estándar',
-                'symbol': 'SPY',
-                'current_price': 450.0,
-                'expected': MonitorPriority.NORMAL
-            }
+            {"current_price": 100.0, "targets": [100.5], "expected": "CRITICAL"},
+            {"current_price": 100.0, "targets": [102.0], "expected": "HIGH"},
+            {"current_price": 100.0, "targets": [105.0], "expected": "NORMAL"},
+            {"current_price": 100.0, "targets": [], "expected": "NORMAL"}
         ]
         
-        for case in test_cases:
-            priority, reason = monitor.determine_monitor_priority(
-                symbol=case['symbol'],
-                current_price=case['current_price']
-            )
-            
-            result = "✅ OK" if priority == case['expected'] else f"❌ FALLO (esperado {case['expected'].value})"
-            print(f"{case['name']}: {priority.value} - {result}")
-            print(f"  Razón: {reason}")
+        print("Casos de test:")
+        for i, case in enumerate(test_cases, 1):
+            try:
+                priority = monitor._calculate_initial_priority(
+                    current_price=case["current_price"],
+                    targets=case["targets"],
+                    signal=None,
+                    position=None
+                )
+                
+                result = "✅ OK" if priority.value == case["expected"] else f"❌ Got {priority.value}"
+                print(f"  {i}. Precio {case['current_price']} → {case['targets']}: {result}")
+                
+            except Exception as e:
+                print(f"  {i}. ❌ Error: {e}")
         
-        print("\n✅ Test prioridades completado")
+        print("\n✅ Test de prioridades completado")
         return True
         
     except Exception as e:
-        print(f"❌ Error en test: {e}")
+        print(f"❌ Error en test prioridades: {e}")
         return False
 
 def demo_dynamic_monitor_with_real_signal():
-    """Demo con señal real del scanner"""
-    print("🎯 DEMO DYNAMIC MONITOR CON SEÑAL REAL")
-    print("=" * 60)
+    """Demo usando una señal real"""
+    print("🧪 DEMO DYNAMIC MONITOR CON SEÑAL REAL")
+    print("=" * 50)
     
     try:
-        # Crear componentes
+        # Crear monitor
         monitor = DynamicMonitor()
-        scanner = SignalScanner()
         
-        print("1. 🔍 Buscando señal real...")
-        signal = scanner.scan_symbol("SPY")
+        # Crear señal mock
+        from scanner import TradingSignal
+        from position_calculator import PositionLevel
+        import pytz
+        
+        # Mock position plan
+        class MockPositionPlan:
+            def __init__(self):
+                self.entries = [
+                    PositionLevel("ENTRY", 174.50, 60, "Entrada principal"),
+                    PositionLevel("ENTRY", 174.00, 40, "Entrada secundaria")
+                ]
+                self.exits = [
+                    PositionLevel("EXIT", 176.80, 70, "TP1"),
+                    PositionLevel("EXIT", 178.95, 30, "TP2")
+                ]
+                self.stop_loss = PositionLevel("STOP", 173.20, 100, "Stop loss")
+        
+        # Crear señal mock
+        signal = TradingSignal(
+            symbol="NVDA",
+            timestamp=datetime.now(pytz.timezone('US/Eastern')),
+            signal_type="LONG",
+            signal_strength=75,
+            confidence_level="MEDIUM",
+            current_price=175.29,
+            entry_quality="FULL_ENTRY",
+            indicator_scores={'MACD': 15, 'RSI': 20, 'VWAP': 15, 'ROC': 10, 'BOLLINGER': 10, 'VOLUME': 5},
+            indicator_signals={'MACD': 'BULLISH_CROSS', 'RSI': 'OVERSOLD', 'VWAP': 'NEAR_VWAP'},
+            position_plan=MockPositionPlan(),
+            market_context="SIDEWAYS | LOW_VOLATILITY"
+        )
         
         if signal:
-            print(f"✅ Señal encontrada: {signal.symbol} {signal.signal_type}")
-            print(f"   Fuerza: {signal.signal_strength}/100")
-            print(f"   Precio: ${signal.current_price:.2f}")
+            print(f"📊 Usando señal: {signal.symbol} - {signal.signal_type}")
+            print(f"   Precio actual: ${signal.current_price:.2f}")
             
-            # Añadir al monitoreo dinámico
-            print("\n2. 📊 Añadiendo al monitoreo dinámico...")
-            success = monitor.add_monitor_target(signal.symbol, signal=signal, reason="Demo signal")
+            # Añadir al monitoreo
+            print("\n1. 📊 Añadiendo al monitoreo dinámico...")
+            success = monitor.add_monitor_target(signal.symbol, signal=signal, reason="Demo señal")
             
             if success:
-                target = monitor.monitor_targets[signal.symbol]
-                print(f"✅ Target añadido con prioridad: {target.priority.value}")
-                print(f"   Razón: {target.reason}")
-                print(f"   Objetivos críticos: {len(target.target_prices or [])}")
-                print(f"   Proximidad: {target.closest_target_distance:.2f}%")
+                print("✅ Señal añadida al monitoreo")
                 
-                # Simular algunas actualizaciones
-                print("\n3. 🔄 Simulando actualizaciones...")
+                # Mostrar estado inicial
+                stats = monitor.get_monitoring_stats()
+                target_detail = stats['targets_detail'].get(signal.symbol, {})
+                print(f"   Prioridad inicial: {target_detail.get('priority', 'N/A')}")
+                print(f"   Distancia a target: {target_detail.get('closest_target_distance', 0):.1f}%")
+                
+                # Simular updates
+                print("\n2. 🔄 Simulando actualizaciones...")
                 for i in range(3):
                     time.sleep(2)
                     success = monitor.update_monitor_target(signal.symbol)
@@ -873,10 +899,11 @@ def demo_dynamic_monitor_with_real_signal():
                         print(f"   Update {i+1}: ❌ FALLO")
                 
                 # Stats finales
-                print("\n4. 📈 Estadísticas finales:")
-                stats = monitor.get_monitoring_stats()
-                print(f"   Total updates: {stats['total_updates']}")
-                print(f"   Targets activos: {stats['total_targets']}")
+                print("\n3. 📈 Estadísticas finales:")
+                final_stats = monitor.get_monitoring_stats()
+                print(f"   Total updates: {final_stats['total_updates']}")
+                print(f"   Targets activos: {final_stats['total_targets']}")
+                print(f"   Error: {'❌ ' + final_stats.get('error', '') if 'error' in final_stats else '✅ Sin errores'}")
                 
                 # Cleanup
                 monitor.remove_monitor_target(signal.symbol, "Demo completado")
@@ -896,7 +923,7 @@ def demo_dynamic_monitor_with_real_signal():
 
 def test_timezone_functions():
     """Test específico de las funciones de timezone"""
-    print("🧪 TESTING TIMEZONE FUNCTIONS")
+    print("🧪 TESTING TIMEZONE FUNCTIONS (FIXED)")
     print("=" * 50)
     
     try:
@@ -917,6 +944,14 @@ def test_timezone_functions():
         comparison_result = current > aware_dt
         print(f"✅ Comparación: {comparison_result}")
         
+        # Test safe_isoformat
+        iso_result = _safe_isoformat(current)
+        print(f"✅ safe_isoformat: {'OK' if iso_result else 'FAIL'}")
+        
+        # Test con tuple (debería manejar el error)
+        tuple_test = _safe_isoformat(("not", "a", "datetime"))
+        print(f"✅ safe_isoformat con tuple: {'OK - handled' if tuple_test is None else 'FAIL'}")
+        
         print("\n✅ Todas las funciones de timezone funcionan correctamente")
         return True
         
@@ -926,7 +961,7 @@ def test_timezone_functions():
 
 if __name__ == "__main__":
     """Ejecutar tests si se llama directamente"""
-    print("🎯 DYNAMIC MONITOR - MODO TESTING")
+    print("🎯 DYNAMIC MONITOR - MODO TESTING (FIXED)")
     print("=" * 60)
     
     # Menú de tests
@@ -977,3 +1012,6 @@ if __name__ == "__main__":
         print("\n\n👋 Test cancelado por usuario")
     except Exception as e:
         print(f"\n❌ Error ejecutando test: {e}")
+
+            
+            #

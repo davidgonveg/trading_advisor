@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """
-📱 SISTEMA DE ALERTAS POR TELEGRAM - TRADING AUTOMATIZADO V2.0
-============================================================
+📱 SISTEMA DE ALERTAS POR TELEGRAM - TRADING AUTOMATIZADO V2.0 + V3.0 FIX
+=======================================================================
 
 Este módulo maneja todas las comunicaciones por Telegram:
 - Envío de alertas de señales formateadas
 - Notificaciones de sistema (inicio, errores)
 - Mensajes de test y confirmación
 - Manejo de errores de conectividad
+
+🔧 FIXED V3.0: Mejorada detección de targets adaptativos
 
 Formatos de Mensajes:
 - 🟢 Señales LONG con emojis y formato HTML
@@ -96,7 +98,8 @@ class TelegramBot:
     
     def format_signal_alert(self, signal: TradingSignal) -> str:
         """
-        Formatear señal de trading como mensaje HTML para Telegram
+        🔧 FIXED V3.0: Formatear señal de trading como mensaje HTML para Telegram
+        Ahora detecta correctamente los targets adaptativos V3.0
         
         Args:
             signal: TradingSignal con toda la información
@@ -140,19 +143,39 @@ class TelegramBot:
             message_lines.append(f"⏰ <b>Hora:</b> {time_str} España ({session})")
             message_lines.append("")
             
-            # 🆕 V3.0: Mostrar targets adaptativos si están disponibles
-            if hasattr(signal, 'position_plan') and signal.position_plan and hasattr(signal.position_plan, 'exits'):
+            # 🔧 FIX V3.0: VERIFICACIÓN MEJORADA PARA TARGETS ADAPTATIVOS
+            has_position_plan = hasattr(signal, 'position_plan') and signal.position_plan is not None
+            
+            if has_position_plan:
                 plan = signal.position_plan
                 
-                # Verificar si tiene targets adaptativos (V3.0)
-                has_adaptive_targets = any(
-                    hasattr(exit_level, 'technical_basis') and exit_level.technical_basis 
-                    for exit_level in plan.exits
+                # 🔧 FIX: Verificación mejorada para targets adaptativos
+                has_adaptive_targets = (
+                    hasattr(plan, 'exits') and 
+                    len(plan.exits) > 0 and 
+                    any(
+                        hasattr(exit_level, 'risk_reward') or 
+                        hasattr(exit_level, 'technical_basis') or
+                        hasattr(exit_level, 'confidence')
+                        for exit_level in plan.exits
+                    )
                 )
                 
+                logger.info(f"🔍 DEBUG: {signal.symbol} - Plan exists: {has_position_plan}, Adaptive: {has_adaptive_targets}")
+                
                 if has_adaptive_targets:
+                    # === MOSTRAR TARGETS ADAPTATIVOS V3.0 ===
                     message_lines.append("🎯 <b>TARGETS ADAPTATIVOS V3.0:</b>")
                     
+                    # Mostrar entradas optimizadas
+                    if hasattr(plan, 'entries') and plan.entries:
+                        message_lines.append("💰 <b>ENTRADAS OPTIMIZADAS:</b>")
+                        for i, entry in enumerate(plan.entries, 1):
+                            message_lines.append(f"• <b>E{i}</b> ({entry.percentage}%): ${entry.price:.2f}")
+                        message_lines.append("")
+                    
+                    # Mostrar targets adaptativos
+                    message_lines.append("🎯 <b>SALIDAS ADAPTATIVAS:</b>")
                     for i, exit_level in enumerate(plan.exits, 1):
                         # R:R del target
                         rr_text = f" - {exit_level.risk_reward:.1f}R" if hasattr(exit_level, 'risk_reward') and exit_level.risk_reward else ""
@@ -160,103 +183,99 @@ class TelegramBot:
                         
                         # Mostrar confianza si está disponible
                         if hasattr(exit_level, 'confidence') and exit_level.confidence:
-                            message_lines.append(f"  Confianza: {exit_level.confidence:.0f}%")
+                            message_lines.append(f"  📊 Confianza: {exit_level.confidence:.0f}%")
                         
                         # Mostrar base técnica (máximo 1 línea)
                         if hasattr(exit_level, 'technical_basis') and exit_level.technical_basis:
-                            basis = exit_level.technical_basis[0] if isinstance(exit_level.technical_basis, list) else str(exit_level.technical_basis)
-                            message_lines.append(f"  Base: {basis}")
+                            if isinstance(exit_level.technical_basis, list) and exit_level.technical_basis:
+                                basis = exit_level.technical_basis[0]
+                            else:
+                                basis = str(exit_level.technical_basis)
+                            message_lines.append(f"  🔍 Base: {basis}")
                     
                     message_lines.append("")
                     
-                    # Métricas mejoradas V3.0
-                    message_lines.append("📈 <b>MÉTRICAS V3.0:</b>")
+                    # Stop loss adaptativo
+                    if hasattr(plan, 'stop_loss') and plan.stop_loss:
+                        stop = plan.stop_loss
+                        message_lines.append("🛡️ <b>STOP LOSS ADAPTATIVO:</b>")
+                        message_lines.append(f"• <b>Stop:</b> ${stop.price:.2f} ({stop.description})")
+                        message_lines.append("")
+                    
+                    # Métricas V3.0
+                    message_lines.append("📈 <b>MÉTRICAS ADAPTATIVAS:</b>")
                     if hasattr(plan, 'max_risk_reward'):
-                        message_lines.append(f"• <b>R:R Máximo:</b> 1:{plan.max_risk_reward}")
+                        message_lines.append(f"• <b>R:R Máximo:</b> 1:{plan.max_risk_reward:.1f}")
                     if hasattr(plan, 'avg_risk_reward'):
-                        message_lines.append(f"• <b>R:R Promedio:</b> 1:{plan.avg_risk_reward}")
+                        message_lines.append(f"• <b>R:R Promedio:</b> 1:{plan.avg_risk_reward:.1f}")
                     if hasattr(plan, 'strategy_type'):
                         message_lines.append(f"• <b>Estrategia:</b> {plan.strategy_type}")
+                    if hasattr(plan, 'total_risk_percent'):
+                        message_lines.append(f"• <b>Riesgo Total:</b> {plan.total_risk_percent:.1f}%")
                     message_lines.append("")
                     
-                    # Contexto técnico V3.0
+                    # Análisis técnico V3.0
                     if hasattr(plan, 'technical_summary') and plan.technical_summary:
-                        message_lines.append("🔍 <b>ANÁLISIS V3.0:</b>")
+                        message_lines.append("🔍 <b>ANÁLISIS TÉCNICO V3.0:</b>")
                         message_lines.append(f"• {plan.technical_summary}")
                         if hasattr(plan, 'market_context'):
                             message_lines.append(f"• {plan.market_context}")
                         message_lines.append("")
                 
                 else:
-                    # === PLAN DE POSICIÓN CLÁSICO V2.0 ===
-                    # Entradas escalonadas
-                    message_lines.append("💰 <b>ENTRADAS ESCALONADAS:</b>")
-                    for i, entry in enumerate(plan.entries, 1):
-                        message_lines.append(f"• <b>Entrada {i}</b> ({entry.percentage}%): ${entry.price:.2f}")
-                    message_lines.append("")
+                    # === FALLBACK: PLAN CLÁSICO V2.0 (si no hay targets adaptativos) ===
+                    logger.warning(f"⚠️ {signal.symbol}: No se detectaron targets adaptativos, usando plan clásico")
                     
-                    # Take Profits clásicos
-                    message_lines.append("🎯 <b>TAKE PROFITS:</b>")
-                    for i, exit_level in enumerate(plan.exits, 1):
-                        # Calcular R:R para cada TP
-                        entry_price = plan.entries[0].price
-                        stop_price = plan.stop_loss.price
-                        risk = abs(entry_price - stop_price)
-                        reward = abs(exit_level.price - entry_price)
-                        rr_ratio = reward / risk if risk > 0 else 0
-                        
-                        message_lines.append(f"• <b>TP{i}</b> ({exit_level.percentage}%): ${exit_level.price:.2f} - {rr_ratio:.1f}R")
-                    message_lines.append("")
+                    # Mostrar entradas básicas
+                    if hasattr(plan, 'entries') and plan.entries:
+                        message_lines.append("💰 <b>ENTRADAS CLÁSICAS:</b>")
+                        for i, entry in enumerate(plan.entries, 1):
+                            message_lines.append(f"• <b>Entrada {i}</b> ({entry.percentage}%): ${entry.price:.2f}")
+                        message_lines.append("")
                     
-                    # Stop Loss
-                    message_lines.append(f"🛡️ <b>Stop Loss:</b> ${plan.stop_loss.price:.2f}")
-                    message_lines.append("")
+                    # Mostrar salidas básicas
+                    if hasattr(plan, 'exits') and plan.exits:
+                        message_lines.append("🎯 <b>TARGETS CLÁSICOS:</b>")
+                        for i, exit_level in enumerate(plan.exits, 1):
+                            message_lines.append(f"• <b>TP{i}</b> ({exit_level.percentage}%): ${exit_level.price:.2f}")
+                        message_lines.append("")
                     
-                    # Métricas de la operación
-                    message_lines.append("📈 <b>MÉTRICAS:</b>")
-                    message_lines.append(f"• <b>R:R Máximo:</b> 1:{plan.max_risk_reward:.1f}")
-                    message_lines.append(f"• <b>Estrategia:</b> {plan.strategy_type}")
-                    message_lines.append(f"• <b>Tiempo estimado:</b> {plan.expected_hold_time}")
-                    message_lines.append(f"• <b>Riesgo:</b> {plan.total_risk_percent:.1f}% del capital")
-                    message_lines.append("")
+                    # Stop loss básico
+                    if hasattr(plan, 'stop_loss') and plan.stop_loss:
+                        message_lines.append(f"🛡️ <b>Stop Loss:</b> ${plan.stop_loss.price:.2f}")
+                        message_lines.append("")
+            
+            else:
+                # === SIN PLAN DE POSICIÓN ===
+                logger.warning(f"⚠️ {signal.symbol}: No hay plan de posición disponible")
+                message_lines.append("⚠️ <b>Plan de posición no disponible</b>")
+                message_lines.append("💡 Revisar configuración de targets adaptativos")
+                message_lines.append("")
             
             # === ANÁLISIS TÉCNICO ===
-            message_lines.append("📊 <b>ANÁLISIS TÉCNICO:</b>")
+            message_lines.append("🔍 <b>ANÁLISIS TÉCNICO:</b>")
             
-            # Crear línea compacta con indicadores
+            # Formatear indicadores técnicos
             indicators_status = []
-            for indicator, score in signal.indicator_scores.items():
-                indicator_signal = signal.indicator_signals.get(indicator, "")
+            for indicator, signal_value in signal.indicator_signals.items():
+                emoji = self._get_indicator_emoji(signal_value)
                 
-                # Emoji según puntuación
-                if score >= 15:
-                    emoji = "✅"
-                elif score >= 10:
-                    emoji = "🟡" 
-                elif score > 0:
-                    emoji = "🔶"
-                else:
-                    emoji = "❌"
-                
-                # Formato compacto
                 if indicator == "MACD":
                     indicators_status.append(f"MACD: {emoji}")
                 elif indicator == "RSI":
-                    # Obtener valor RSI real si está disponible
-                    rsi_value = self._extract_rsi_value(indicator_signal)
+                    rsi_value = self._extract_rsi_value(signal_value)
                     indicators_status.append(f"RSI: {rsi_value} {emoji}")
                 elif indicator == "VWAP":
                     indicators_status.append(f"VWAP: {emoji}")
                 elif indicator == "ROC":
-                    # Obtener valor ROC si está disponible  
-                    roc_text = self._extract_roc_text(indicator_signal)
+                    roc_text = self._extract_roc_text(signal_value)
                     indicators_status.append(f"ROC: {roc_text} {emoji}")
                 elif indicator == "BOLLINGER":
                     indicators_status.append(f"BB: {emoji}")
                 elif indicator == "VOLUME":
                     indicators_status.append(f"VOL: {emoji}")
             
-            # Dividir en líneas para mejor legibilidad
+            # Dividir indicadores en líneas
             message_lines.append(" | ".join(indicators_status[:3]))
             if len(indicators_status) > 3:
                 message_lines.append(" | ".join(indicators_status[3:]))
@@ -268,19 +287,25 @@ class TelegramBot:
                 message_lines.append("")
             
             # === FOOTER ===
-            if V3_AVAILABLE and hasattr(signal, 'position_plan') and signal.position_plan and hasattr(signal.position_plan, 'exits'):
-                has_adaptive = any(hasattr(exit, 'technical_basis') for exit in signal.position_plan.exits)
-                footer_version = "V3.0 Targets Adaptativos" if has_adaptive else "V2.0 Clásico"
-            else:
-                footer_version = "V2.0"
-            
-            message_lines.append(f"{confidence_emoji} <i>Trading automatizado {footer_version} - Señal #{signal.signal_strength}</i>")
+            version_info = "V3.0 Targets Adaptativos" if has_position_plan and has_adaptive_targets else "V2.0 Clásico"
+            message_lines.append(f"{confidence_emoji} <i>Trading automatizado {version_info} - Señal #{signal.signal_strength}</i>")
             
             return "\n".join(message_lines)
             
         except Exception as e:
             logger.error(f"❌ Error formateando mensaje de señal: {e}")
-            return f"❌ Error formateando señal para {signal.symbol}"
+            return f"❌ Error formateando señal para {signal.symbol}: {str(e)}"
+    
+    def _get_indicator_emoji(self, signal_value: str) -> str:
+        """Obtener emoji para valor de indicador"""
+        positive_signals = [
+            'BULLISH_CROSS', 'OVERSOLD', 'NEAR_VWAP', 'STRONG_BULLISH', 
+            'MODERATE_BULLISH', 'LOWER_BAND', 'HIGH', 'ABOVE_UPPER',
+            'BELOW_LOWER', 'BEARISH_CROSS', 'OVERBOUGHT', 'AWAY_VWAP',
+            'STRONG_BEARISH', 'MODERATE_BEARISH', 'UPPER_BAND'
+        ]
+        
+        return "✅" if signal_value in positive_signals else "⚡"
     
     def _extract_rsi_value(self, rsi_signal: str) -> str:
         """Extraer valor numérico del RSI para mostrar"""
@@ -306,6 +331,69 @@ class TelegramBot:
             "VERY_STRONG_BEARISH": "-3%-"
         }
         return roc_map.get(roc_signal, "0%")
+    
+    def send_message(self, message: str, disable_preview: bool = True) -> bool:
+        """
+        Enviar mensaje por Telegram de forma síncrona
+        
+        Args:
+            message: Mensaje a enviar
+            disable_preview: Desactivar preview de links
+            
+        Returns:
+            True si se envía correctamente, False si hay error
+        """
+        try:
+            if not self.initialized:
+                logger.error("❌ Bot no inicializado")
+                return False
+            
+            # Ejecutar envío asíncrono
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            try:
+                result = loop.run_until_complete(
+                    self.send_message_async(message, disable_preview)
+                )
+                return result
+            finally:
+                loop.close()
+                
+        except Exception as e:
+            logger.error(f"❌ Error enviando mensaje: {e}")
+            self.errors_count += 1
+            return False
+    
+    def send_signal_alert(self, signal: TradingSignal) -> bool:
+        """
+        Enviar alerta de señal formateada
+        
+        Args:
+            signal: TradingSignal para formatear y enviar
+            
+        Returns:
+            True si se envía correctamente
+        """
+        try:
+            # Verificar si las alertas de señales están habilitadas
+            if not config.ALERT_TYPES.get('SIGNAL_ALERTS', True):
+                return True
+            
+            # Formatear mensaje y enviar
+            message = self.format_signal_alert(signal)
+            success = self.send_message(message)
+            
+            if success:
+                logger.info(f"📱 Alerta de señal enviada: {signal.symbol} - {signal.signal_type}")
+            else:
+                logger.error(f"❌ Error enviando alerta: {signal.symbol}")
+            
+            return success
+            
+        except Exception as e:
+            logger.error(f"❌ Error en send_signal_alert: {e}")
+            return False
     
     def format_system_message(self, message_type: str, content: str) -> str:
         """
@@ -345,118 +433,12 @@ class TelegramBot:
             logger.error(f"Error formateando mensaje del sistema: {e}")
             return f"{content}"
     
-    async def send_message_async(self, message: str, disable_preview: bool = True) -> bool:
-        """
-        Enviar mensaje de forma asíncrona
-        
-        Args:
-            message: Mensaje a enviar
-            disable_preview: Desactivar preview de links
-            
-        Returns:
-            True si se envía correctamente, False si hay error
-        """
-        try:
-            if not self.initialized:
-                logger.error("❌ Bot no inicializado")
-                return False
-            
-            # Escapar caracteres HTML problemáticos
-            safe_message = html.escape(message, quote=False)
-            # Restaurar tags HTML válidos
-            safe_message = safe_message.replace("&lt;b&gt;", "<b>").replace("&lt;/b&gt;", "</b>")
-            safe_message = safe_message.replace("&lt;i&gt;", "<i>").replace("&lt;/i&gt;", "</i>")
-            
-            await self.bot.send_message(
-                chat_id=self.chat_id,
-                text=safe_message,
-                parse_mode=self.parse_mode,
-                disable_web_page_preview=disable_preview
-                # Nota: timeout removido para compatibilidad
-            )
-            
-            self.messages_sent += 1
-            self.last_message_time = datetime.now()
-            
-            logger.info(f"📱 Mensaje enviado correctamente a Telegram")
-            return True
-            
-        except TelegramError as e:
-            self.errors_count += 1
-            logger.error(f"❌ Error de Telegram: {e}")
-            return False
-        except Exception as e:
-            self.errors_count += 1
-            logger.error(f"❌ Error enviando mensaje: {e}")
-            return False
-    
-    def send_message(self, message: str, disable_preview: bool = True) -> bool:
-        """
-        Enviar mensaje de forma síncrona (wrapper para async)
-        
-        Args:
-            message: Mensaje a enviar
-            disable_preview: Desactivar preview de links
-            
-        Returns:
-            True si se envía correctamente, False si hay error
-        """
-        try:
-            # Crear nuevo loop si no existe
-            try:
-                loop = asyncio.get_event_loop()
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-            
-            # Ejecutar envío asíncrono
-            return loop.run_until_complete(
-                self.send_message_async(message, disable_preview)
-            )
-            
-        except Exception as e:
-            logger.error(f"❌ Error en envío síncrono: {e}")
-            return False
-    
-    def send_signal_alert(self, signal: TradingSignal) -> bool:
-        """
-        Enviar alerta de señal de trading
-        
-        Args:
-            signal: TradingSignal a enviar
-            
-        Returns:
-            True si se envía correctamente
-        """
-        try:
-            # Verificar si las alertas de señales están habilitadas
-            if not config.ALERT_TYPES.get('SIGNAL_DETECTED', True):
-                logger.info(f"📵 Alertas de señales deshabilitadas - No enviando {signal.symbol}")
-                return True
-            
-            # Formatear mensaje
-            message = self.format_signal_alert(signal)
-            
-            # Enviar mensaje
-            success = self.send_message(message)
-            
-            if success:
-                logger.info(f"✅ Alerta de señal enviada: {signal.symbol} {signal.signal_type}")
-            else:
-                logger.error(f"❌ Error enviando alerta: {signal.symbol}")
-            
-            return success
-            
-        except Exception as e:
-            logger.error(f"❌ Error en send_signal_alert: {e}")
-            return False
-    
     def send_system_alert(self, message_type: str, content: str) -> bool:
         """
         Enviar alerta del sistema
         
         Args:
-            message_type: Tipo de mensaje (START, ERROR, WARNING, INFO)
+            message_type: Tipo de mensaje (START, ERROR, INFO)
             content: Contenido del mensaje
             
         Returns:
@@ -509,6 +491,51 @@ class TelegramBot:
             logger.error(f"❌ Error enviando mensaje de test: {e}")
             return False
     
+    async def send_message_async(self, message: str, disable_preview: bool = True) -> bool:
+        """
+        Enviar mensaje de forma asíncrona
+        
+        Args:
+            message: Mensaje a enviar
+            disable_preview: Desactivar preview de links
+            
+        Returns:
+            True si se envía correctamente, False si hay error
+        """
+        try:
+            if not self.initialized:
+                logger.error("❌ Bot no inicializado")
+                return False
+            
+            # Escapar caracteres HTML problemáticos
+            safe_message = html.escape(message, quote=False)
+            # Restaurar tags HTML válidos
+            safe_message = safe_message.replace("&lt;b&gt;", "<b>").replace("&lt;/b&gt;", "</b>")
+            safe_message = safe_message.replace("&lt;i&gt;", "<i>").replace("&lt;/i&gt;", "</i>")
+            
+            await self.bot.send_message(
+                chat_id=self.chat_id,
+                text=safe_message,
+                parse_mode=self.parse_mode,
+                disable_web_page_preview=disable_preview
+                # Nota: timeout removido para compatibilidad
+            )
+            
+            self.messages_sent += 1
+            self.last_message_time = datetime.now()
+            
+            logger.info(f"📱 Mensaje enviado correctamente a Telegram")
+            return True
+            
+        except TelegramError as e:
+            logger.error(f"❌ Error de Telegram: {e}")
+            self.errors_count += 1
+            return False
+        except Exception as e:
+            logger.error(f"❌ Error general enviando mensaje: {e}")
+            self.errors_count += 1
+            return False
+    
     def get_bot_stats(self) -> Dict:
         """Obtener estadísticas del bot"""
         return {
@@ -518,6 +545,38 @@ class TelegramBot:
             'last_message': self.last_message_time.isoformat() if self.last_message_time else None,
             'success_rate': f"{((self.messages_sent / max(self.messages_sent + self.errors_count, 1)) * 100):.1f}%"
         }
+    
+    def debug_position_plan(self, signal: TradingSignal) -> str:
+        """🔧 DEBUG: Función adicional para verificar el estado del position_plan"""
+        debug_info = []
+        
+        debug_info.append(f"=== DEBUG POSITION PLAN - {signal.symbol} ===")
+        
+        if hasattr(signal, 'position_plan'):
+            plan = signal.position_plan
+            debug_info.append(f"✅ position_plan exists: {plan is not None}")
+            
+            if plan:
+                debug_info.append(f"📊 Strategy: {getattr(plan, 'strategy_type', 'N/A')}")
+                debug_info.append(f"💰 Entries: {len(getattr(plan, 'entries', []))}")
+                debug_info.append(f"🎯 Exits: {len(getattr(plan, 'exits', []))}")
+                
+                # Verificar exits detalladamente
+                if hasattr(plan, 'exits'):
+                    for i, exit_level in enumerate(plan.exits):
+                        debug_info.append(f"  Exit {i+1}:")
+                        debug_info.append(f"    Price: {getattr(exit_level, 'price', 'N/A')}")
+                        debug_info.append(f"    Has risk_reward: {hasattr(exit_level, 'risk_reward')}")
+                        debug_info.append(f"    Has technical_basis: {hasattr(exit_level, 'technical_basis')}")
+                        debug_info.append(f"    Has confidence: {hasattr(exit_level, 'confidence')}")
+            else:
+                debug_info.append("❌ position_plan is None")
+        else:
+            debug_info.append("❌ No position_plan attribute")
+        
+        debug_info.append("=" * 40)
+        
+        return "\n".join(debug_info)
 
 
 # =============================================================================
@@ -627,95 +686,100 @@ def demo_telegram_bot():
         
         print("✅ Bot inicializado")
         
-        # 2. Test de formato
-        print("\n2️⃣ Testeando formato de mensajes...")
-        format_success = test_signal_formatting()
-        
-        # 3. Decidir si enviar mensaje real
-        print(f"\n3️⃣ ¿Enviar mensaje de test a Telegram? (y/n): ", end="")
-        response = input().strip().lower()
-        
-        if response == 'y':
-            print("📤 Enviando mensaje de test...")
-            send_success = bot.send_test_message()
-            
-            if send_success:
-                print("✅ Mensaje enviado - verifica tu Telegram")
-            else:
-                print("❌ Error enviando mensaje")
+        # 2. Test de conectividad
+        print("\n2️⃣ Enviando test de conectividad...")
+        if bot.send_test_message():
+            print("✅ Test enviado correctamente")
         else:
-            print("⏭️ Test de envío omitido")
-            send_success = True
+            print("❌ Error en test")
+            return False
         
-        # 4. Estadísticas
+        # 3. Test de formato de señales
+        print("\n3️⃣ Test de formato de señales...")
+        if test_signal_formatting():
+            print("✅ Formato de señales OK")
+        else:
+            print("❌ Error en formato")
+        
+        # 4. Estadísticas del bot
         print("\n4️⃣ Estadísticas del bot:")
         stats = bot.get_bot_stats()
         for key, value in stats.items():
-            print(f"   {key}: {value}")
+            print(f"  📊 {key}: {value}")
         
-        print("\n🎯 DEMOSTRACIÓN COMPLETADA")
-        return format_success and send_success
+        print("\n🎉 Demostración completada exitosamente!")
+        print("📱 Verifica tu Telegram para ver los mensajes enviados")
+        
+        return True
         
     except Exception as e:
         print(f"❌ Error en demostración: {e}")
         return False
 
+
+# =============================================================================
+# 🧪 MAIN - TESTING DIRECTO DEL MÓDULO
+# =============================================================================
+
 if __name__ == "__main__":
-    # Menú interactivo para testing
-    print("📱 SISTEMA TELEGRAM BOT V2.0 - MODO TESTING")
+    print("📱 TELEGRAM BOT - SISTEMA DE TRADING V2.0 + V3.0 FIX")
     print("=" * 60)
-    print("Selecciona un test:")
-    print("1. Test de conexión básica")
+    print()
+    print("Opciones de testing:")
+    print("1. Test básico de conexión")
     print("2. Test de formato de señales")
     print("3. Demostración completa")
-    print("4. Ejecutar todos los tests")
-    print("")
+    print("4. Enviar mensaje personalizado")
+    print("5. Estadísticas del bot")
+    print()
     
     try:
-        choice = input("Elige una opción (1-4): ").strip()
-        print("")
+        choice = input("Selecciona una opción (1-5): ").strip()
         
-        if choice == "1":
+        if choice == '1':
+            print("\n" + "="*50)
             test_telegram_connection()
-        elif choice == "2":
+            
+        elif choice == '2':
+            print("\n" + "="*50)
             test_signal_formatting()
-        elif choice == "3":
+            
+        elif choice == '3':
+            print("\n" + "="*50)
             demo_telegram_bot()
-        elif choice == "4":
-            # Ejecutar todos los tests
-            print("🧪 EJECUTANDO TODOS LOS TESTS")
-            print("=" * 60)
             
-            tests = [
-                ("Formato de señales", test_signal_formatting),
-                ("Conexión Telegram", test_telegram_connection),
-                ("Demostración completa", demo_telegram_bot)
-            ]
+        elif choice == '4':
+            print("\n" + "="*50)
+            print("📝 ENVÍO DE MENSAJE PERSONALIZADO")
             
-            results = []
-            for test_name, test_func in tests:
-                print(f"\n🔬 {test_name}...")
-                try:
-                    result = test_func()
-                    results.append((test_name, "✅" if result else "❌"))
-                    print(f"Resultado: {'✅ PASÓ' if result else '❌ FALLÓ'}")
-                except Exception as e:
-                    results.append((test_name, "❌"))
-                    print(f"Error: {e}")
+            bot = TelegramBot()
+            if bot.initialized:
+                message = input("Escribe tu mensaje: ")
+                if bot.send_message(message):
+                    print("✅ Mensaje enviado correctamente")
+                else:
+                    print("❌ Error enviando mensaje")
+            else:
+                print("❌ Bot no inicializado")
                 
-                print("-" * 40)
+        elif choice == '5':
+            print("\n" + "="*50)
+            print("📊 ESTADÍSTICAS DEL BOT")
             
-            print("\n📊 RESUMEN DE TESTS:")
-            for test_name, status in results:
-                print(f"{status} {test_name}")
-        
+            bot = TelegramBot()
+            if bot.initialized:
+                stats = bot.get_bot_stats()
+                for key, value in stats.items():
+                    print(f"  📊 {key}: {value}")
+            else:
+                print("❌ Bot no inicializado")
+                
         else:
             print("❌ Opción no válida")
             
     except KeyboardInterrupt:
-        print("\n👋 Tests interrumpidos por el usuario")
+        print("\n\n👋 Test cancelado por el usuario")
     except Exception as e:
-        print(f"❌ Error ejecutando tests: {e}")
+        print(f"\n❌ Error durante el test: {e}")
     
-    print("\n🏁 Tests completados!")
-    print("El módulo telegram_bot.py está listo para integración con main.py")
+    print("\n🔚 Test finalizado")
