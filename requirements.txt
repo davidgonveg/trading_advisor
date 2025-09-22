@@ -33,3 +33,6 @@ pytest-cov>=4.1.0           # Coverage de tests
 
 #Otras
 aiohttp
+tqdm
+matplotlib
+seaborn

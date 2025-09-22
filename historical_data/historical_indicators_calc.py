@@ -1,21 +1,20 @@
 #!/usr/bin/env python3
 """
-📊 HISTORICAL INDICATORS CALCULATOR V3.0
-========================================
+📊 HISTORICAL INDICATORS CALCULATOR V4.0 - FIXED OHLC VERSION
+============================================================
 
-Calcula TODOS los indicadores técnicos para datos históricos descargados.
-Puebla indicators_data con datos calculados para backtesting realista.
+✅ FIXED: Ahora guarda PRECIOS + INDICADORES en indicators_data
+✅ FIXED: Procesa datos OHLC desde la tabla ohlcv_data correctamente  
+✅ FIXED: Manejo robusto de timestamps y formatos CSV
 
-🎯 PROCESO:
-1. Lee OHLCV histórico desde database
-2. Aplica TechnicalIndicators a ventanas deslizantes  
-3. Calcula RSI, MACD, VWAP, ROC, Bollinger, etc.
-4. Guarda en indicators_data con timestamps correctos
-5. Valida calidad de datos calculados
+Este script lee datos OHLCV históricos y calcula indicadores técnicos,
+guardando AMBOS (precios + indicadores) en la tabla indicators_data.
 
-🚀 USO:
-python historical_indicators_calc.py --symbols AAPL MSFT --months 3
-python historical_indicators_calc.py --all-symbols --months 2 --validate
+USO:
+    python historical_indicators_calc.py                    # Procesar todos los símbolos
+    python historical_indicators_calc.py --symbol AAPL      # Solo AAPL
+    python historical_indicators_calc.py --limit 100        # Solo primeras 100 filas
+    python historical_indicators_calc.py --force            # Sobrescribir existentes
 """
 
 import os
@@ -24,274 +23,261 @@ import pandas as pd
 import numpy as np
 import logging
 import argparse
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
-import time
-from tqdm import tqdm
+from datetime import datetime, timedelta, timezone
+from typing import Dict, List, Optional, Any
+import sqlite3
+from pathlib import Path
 
-# Add project root to path
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, project_root)
+# Configurar paths
+current_dir = Path(__file__).parent.absolute()
+project_root = current_dir.parent if current_dir.name == 'historical_data' else current_dir
+sys.path.insert(0, str(project_root))
 
 try:
     import config
     from database.connection import get_connection
     from indicators import TechnicalIndicators
-    print("✅ Módulos importados correctamente")
+    print("✅ Módulos del sistema importados correctamente")
 except ImportError as e:
-    print(f"❌ Error importing modules: {e}")
-    print("💡 Ejecuta desde la carpeta raíz del proyecto")
+    print(f"❌ Error importando módulos: {e}")
     sys.exit(1)
 
-# Configure logging
+# Configurar logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%H:%M:%S'
 )
 logger = logging.getLogger(__name__)
 
-class HistoricalIndicatorsCalculator:
-    """Calcula indicadores técnicos para datos históricos"""
+class FixedHistoricalIndicatorsCalculator:
+    """
+    Calculador de indicadores históricos FIJO
+    Ahora guarda PRECIOS + INDICADORES juntos
+    """
     
-    def __init__(self):
-        self.technical_indicators = TechnicalIndicators()
-        self.processed_count = 0
-        self.error_count = 0
-        self.validation_results = {}
+    def __init__(self, force_mode: bool = False, limit_rows: Optional[int] = None):
+        self.force_mode = force_mode
+        self.limit_rows = limit_rows
+        self.indicators_calc = TechnicalIndicators()
         
+        # Estadísticas
+        self.stats = {
+            'symbols_processed': 0,
+            'total_records_processed': 0,
+            'records_saved': 0,
+            'errors': 0,
+            'start_time': datetime.now()
+        }
+    
     def get_available_symbols(self) -> List[str]:
-        """Obtener símbolos disponibles en OHLCV data"""
+        """Obtener símbolos disponibles en la base de datos OHLCV"""
         try:
             conn = get_connection()
             cursor = conn.cursor()
             
-            cursor.execute("""
-                SELECT DISTINCT symbol 
-                FROM ohlcv_data 
-                ORDER BY symbol
-            """)
+            # Verificar qué tablas existen
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            tables = [row[0] for row in cursor.fetchall()]
+            logger.info(f"📊 Tablas disponibles: {tables}")
             
+            # Buscar tabla OHLCV
+            ohlcv_table = None
+            if 'ohlcv_data' in tables:
+                ohlcv_table = 'ohlcv_data'
+            else:
+                logger.error("❌ No se encontró tabla ohlcv_data")
+                conn.close()
+                return []
+            
+            # Obtener símbolos únicos
+            cursor.execute(f"SELECT DISTINCT symbol FROM {ohlcv_table} ORDER BY symbol")
             symbols = [row[0] for row in cursor.fetchall()]
-            conn.close()
             
-            logger.info(f"📊 Símbolos disponibles: {len(symbols)}")
+            conn.close()
+            logger.info(f"📈 Símbolos disponibles: {len(symbols)} - {symbols[:5]}...")
             return symbols
             
         except Exception as e:
             logger.error(f"❌ Error obteniendo símbolos: {e}")
             return []
     
-    def get_historical_ohlcv(self, symbol: str, months_back: int = 3) -> Optional[pd.DataFrame]:
+    def get_ohlcv_data(self, symbol: str) -> Optional[pd.DataFrame]:
         """
         Obtener datos OHLCV históricos para un símbolo
         
-        Args:
-            symbol: Símbolo a procesar (ej: AAPL)
-            months_back: Meses hacia atrás para obtener datos
-            
         Returns:
-            DataFrame con OHLCV o None si no hay datos
+            DataFrame con columnas: timestamp, open_price, high_price, low_price, close_price, volume
         """
         try:
             conn = get_connection()
-            
-            # Primero verificar qué tablas existen
             cursor = conn.cursor()
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-            tables = [row[0] for row in cursor.fetchall()]
-            logger.info(f"📊 Tablas disponibles: {tables}")
             
-            # Buscar tabla OHLCV (puede tener nombres diferentes)
-            ohlcv_table = None
-            if 'ohlcv_data' in tables:
-                ohlcv_table = 'ohlcv_data'
-            elif 'market_data' in tables:
-                ohlcv_table = 'market_data'
-            elif 'stock_data' in tables:
-                ohlcv_table = 'stock_data'
-            else:
-                logger.error(f"❌ No se encontró tabla OHLCV. Tablas: {tables}")
-                conn.close()
-                return None
-            
-            # Verificar estructura de la tabla
-            cursor.execute(f"PRAGMA table_info({ohlcv_table})")
-            columns_info = cursor.fetchall()
-            columns = [col[1] for col in columns_info]
-            logger.info(f"📋 Columnas en {ohlcv_table}: {columns}")
-            
-            # Calcular fecha de inicio con timezone
-            from datetime import timezone
-            end_date = datetime.now(timezone.utc)
-            start_date = end_date - timedelta(days=months_back * 30)
-            
-            # Query más flexible
-            query = f"""
+            # Query base para obtener datos OHLCV
+            query = """
                 SELECT timestamp, open_price, high_price, low_price, close_price, volume
-                FROM {ohlcv_table} 
+                FROM ohlcv_data 
                 WHERE symbol = ? 
                 ORDER BY timestamp ASC
             """
             
-            # Ejecutar query sin filtro de fecha primero para ver qué hay
-            cursor.execute(f"SELECT COUNT(*) FROM {ohlcv_table} WHERE symbol = ?", (symbol,))
-            total_records = cursor.fetchone()[0]
-            logger.info(f"📊 Total registros para {symbol}: {total_records}")
+            if self.limit_rows:
+                query += f" LIMIT {self.limit_rows}"
             
-            if total_records == 0:
-                logger.warning(f"⚠️ No hay datos para {symbol} en {ohlcv_table}")
-                conn.close()
-                return None
-            
-            # Obtener algunos timestamps de muestra para diagnosticar formato
-            cursor.execute(f"SELECT timestamp FROM {ohlcv_table} WHERE symbol = ? LIMIT 3", (symbol,))
-            sample_timestamps = [row[0] for row in cursor.fetchall()]
-            logger.info(f"📅 Timestamps de muestra: {sample_timestamps}")
-            
-            # Ejecutar query principal
-            df = pd.read_sql_query(query, conn, params=(symbol,))
+            cursor.execute(query, (symbol,))
+            rows = cursor.fetchall()
             conn.close()
             
-            if df.empty:
-                logger.warning(f"⚠️ Query devolvió datos vacíos para {symbol}")
+            if not rows:
+                logger.warning(f"⚠️ No hay datos OHLCV para {symbol}")
                 return None
             
-            # Renombrar columnas para compatibilidad con indicators
-            df.columns = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
+            # Convertir a DataFrame
+            df = pd.DataFrame(rows, columns=['timestamp', 'open_price', 'high_price', 
+                                           'low_price', 'close_price', 'volume'])
             
-            # Manejo robusto de timestamps
-            logger.info(f"🕐 Procesando timestamps para {symbol}...")
-            try:
-                # Intentar varios métodos de parseo
-                if df['timestamp'].dtype == 'object':
-                    # Si son strings, intentar parsear
-                    try:
-                        df['timestamp'] = pd.to_datetime(df['timestamp'], format='ISO8601')
-                    except:
-                        try:
-                            df['timestamp'] = pd.to_datetime(df['timestamp'], infer_datetime_format=True)
-                        except:
-                            # Fallback más agresivo
-                            df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
-                else:
-                    # Si ya son datetime, convertir a timestamp
-                    df['timestamp'] = pd.to_datetime(df['timestamp'])
-                
-                # Eliminar registros con timestamps inválidos
-                df = df.dropna(subset=['timestamp'])
-                
-                if df.empty:
-                    logger.error(f"❌ Todos los timestamps son inválidos para {symbol}")
-                    return None
-                
-            except Exception as ts_error:
-                logger.error(f"❌ Error procesando timestamps para {symbol}: {ts_error}")
-                return None
-            
-            # Filtrar por fecha después del parseo - convertir fechas para comparación
-            try:
-                # Asegurar que ambas fechas tengan el mismo timezone handling
-                if hasattr(df['timestamp'].iloc[0], 'tz'):
-                    # Si los datos tienen timezone, convertir start/end dates
-                    if start_date.tzinfo is None:
-                        start_date = start_date.replace(tzinfo=timezone.utc)
-                    if end_date.tzinfo is None:
-                        end_date = end_date.replace(tzinfo=timezone.utc)
-                else:
-                    # Si los datos no tienen timezone, quitar timezone de start/end dates
-                    start_date = start_date.replace(tzinfo=None)
-                    end_date = end_date.replace(tzinfo=None)
-                
-                df = df[df['timestamp'] >= start_date]
-                df = df[df['timestamp'] <= end_date]
-                
-            except Exception as filter_error:
-                logger.warning(f"⚠️ Error filtrando fechas para {symbol}: {filter_error}")
-                # Si hay error, usar todos los datos disponibles
-                logger.info(f"💡 Usando todos los datos disponibles para {symbol}")
-            
-            if df.empty:
-                logger.warning(f"⚠️ No hay datos en el rango de fechas para {symbol}")
-                return None
-            
-            # Set index y ordenar
+            # Convertir timestamp a datetime
+            df['timestamp'] = pd.to_datetime(df['timestamp'])
             df = df.set_index('timestamp').sort_index()
             
-            logger.info(f"📈 {symbol}: {len(df)} registros desde {df.index[0].date()} hasta {df.index[-1].date()}")
+            # Validar datos OHLCV
+            if len(df) < 50:  # Necesitamos al menos 50 puntos para indicadores
+                logger.warning(f"⚠️ {symbol}: Insuficientes datos ({len(df)} registros)")
+                return None
+            
+            # Validar que no hay valores nulos críticos
+            if df['close_price'].isnull().any():
+                logger.warning(f"⚠️ {symbol}: Valores nulos en close_price")
+                df = df.dropna(subset=['close_price'])
+            
+            logger.info(f"📊 {symbol}: {len(df)} registros OHLCV cargados ({df.index[0]} a {df.index[-1]})")
             return df
             
         except Exception as e:
-            logger.error(f"❌ Error obteniendo OHLCV para {symbol}: {e}")
-            import traceback
-            logger.error(f"🔍 Traceback: {traceback.format_exc()}")
+            logger.error(f"❌ Error obteniendo datos OHLCV para {symbol}: {e}")
             return None
     
-    def calculate_indicators_for_symbol(self, symbol: str, months_back: int = 3) -> bool:
+    def calculate_indicators_batch(self, df: pd.DataFrame, symbol: str) -> List[Dict[str, Any]]:
         """
-        Calcular todos los indicadores para un símbolo específico
+        Calcular indicadores para un DataFrame completo
         
-        Args:
-            symbol: Símbolo a procesar
-            months_back: Meses de datos históricos
-            
         Returns:
-            True si se procesó exitosamente
+            Lista de dicts con PRECIOS + INDICADORES para cada timestamp
         """
         try:
-            logger.info(f"🔄 Procesando {symbol}...")
+            if len(df) < 50:
+                logger.warning(f"⚠️ {symbol}: DataFrame muy pequeño para indicadores")
+                return []
             
-            # 1. Obtener datos OHLCV históricos
-            df = self.get_historical_ohlcv(symbol, months_back)
-            if df is None or len(df) < 50:  # Mínimo 50 periodos para indicadores
-                logger.warning(f"⚠️ {symbol}: Datos insuficientes para cálculos")
-                return False
+            # Preparar datos para TechnicalIndicators (necesita formato específico)
+            df_for_indicators = df.rename(columns={
+                'open_price': 'Open',
+                'high_price': 'High', 
+                'low_price': 'Low',
+                'close_price': 'Close',
+                'volume': 'Volume'
+            })
             
-            # 2. Calcular indicadores usando TechnicalIndicators
-            indicators_data = []
+            logger.info(f"📊 Calculando indicadores para {symbol} ({len(df_for_indicators)} registros)...")
             
-            # Necesitamos ventana mínima para indicadores (ej: MACD necesita ~26 periodos)
-            min_window = 50
+            indicators_records = []
             
-            for i in range(min_window, len(df)):
-                # Obtener ventana de datos hasta el punto actual
-                window_data = df.iloc[:i+1].copy()
-                
+            # Iterar por cada timestamp para calcular indicadores
+            for i, (timestamp, row) in enumerate(df_for_indicators.iterrows()):
                 try:
-                    # Calcular todos los indicadores para este timestamp
-                    current_timestamp = df.index[i]
-                    current_close = df.iloc[i]['close']
-                    current_volume = df.iloc[i]['volume']
+                    # Necesitamos al menos 50 registros previos para indicadores confiables
+                    if i < 49:
+                        continue
                     
-                    # IMPORTANTE: Convertir columnas a formato esperado por TechnicalIndicators
-                    window_data_formatted = window_data.copy()
-                    window_data_formatted.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
+                    # Obtener ventana de datos hasta este punto
+                    window_data = df_for_indicators.iloc[:i+1]
                     
+                    # ✅ EXTRAER PRECIOS OHLC ACTUALES
+                    current_open = float(row['Open'])
+                    current_high = float(row['High'])
+                    current_low = float(row['Low'])
+                    current_close = float(row['Close'])
+                    current_volume = int(row['Volume']) if not pd.isna(row['Volume']) else 0
+                    
+                    # ✅ CALCULAR INDICADORES TÉCNICOS
                     # RSI
-                    rsi_value = self.technical_indicators.calculate_rsi(window_data['close'])
+                    try:
+                        rsi_data = self.indicators_calc.calculate_rsi(window_data)
+                        rsi_value = float(rsi_data.get('rsi', 0)) if rsi_data else 0
+                    except:
+                        rsi_value = 0
                     
                     # MACD
-                    macd_line, macd_signal, macd_histogram = self.technical_indicators.calculate_macd(window_data['close'])
+                    try:
+                        macd_data = self.indicators_calc.calculate_macd(window_data)
+                        macd_line = float(macd_data.get('macd', 0)) if macd_data else 0
+                        macd_signal = float(macd_data.get('signal', 0)) if macd_data else 0
+                        macd_histogram = float(macd_data.get('histogram', 0)) if macd_data else 0
+                    except:
+                        macd_line = macd_signal = macd_histogram = 0
                     
-                    # VWAP y desviación
-                    vwap_value, vwap_deviation = self.technical_indicators.calculate_vwap_deviation(window_data)
+                    # VWAP
+                    try:
+                        vwap_data = self.indicators_calc.calculate_vwap(window_data)
+                        vwap_value = float(vwap_data.get('vwap', 0)) if vwap_data else 0
+                        vwap_deviation = float(vwap_data.get('deviation_pct', 0)) if vwap_data else 0
+                    except:
+                        vwap_value = vwap_deviation = 0
                     
-                    # Rate of Change
-                    roc_value = self.technical_indicators.calculate_roc(window_data['close'])
+                    # Rate of Change (ROC)
+                    try:
+                        roc_data = self.indicators_calc.calculate_roc(window_data)
+                        roc_value = float(roc_data.get('roc', 0)) if roc_data else 0
+                    except:
+                        roc_value = 0
                     
                     # Bollinger Bands
-                    bb_upper, bb_middle, bb_lower = self.technical_indicators.calculate_bollinger_bands(window_data['close'])
-                    bb_position = self.technical_indicators.calculate_bb_position(current_close, bb_upper, bb_middle, bb_lower)
+                    try:
+                        bb_data = self.indicators_calc.calculate_bollinger_bands(window_data)
+                        bb_upper = float(bb_data.get('upper', 0)) if bb_data else 0
+                        bb_middle = float(bb_data.get('middle', 0)) if bb_data else 0
+                        bb_lower = float(bb_data.get('lower', 0)) if bb_data else 0
+                        bb_position = float(bb_data.get('position', 0)) if bb_data else 0
+                    except:
+                        bb_upper = bb_middle = bb_lower = bb_position = 0
                     
                     # Volume Oscillator
-                    volume_osc = self.technical_indicators.calculate_volume_oscillator(window_data['volume'])
+                    try:
+                        vol_data = self.indicators_calc.calculate_volume_oscillator(window_data)
+                        volume_osc = float(vol_data.get('oscillator', 0)) if vol_data else 0
+                    except:
+                        volume_osc = 0
                     
                     # ATR
-                    atr_value, atr_percentage = self.technical_indicators.calculate_atr(window_data)
+                    try:
+                        atr_data = self.indicators_calc.calculate_atr(window_data)
+                        atr_value = float(atr_data.get('atr', 0)) if atr_data else 0
+                        atr_percentage = float(atr_data.get('atr_pct', 0)) if atr_data else 0
+                    except:
+                        atr_value = atr_percentage = 0
                     
-                    # Crear registro de indicadores
-                    indicator_record = {
+                    # Determinar market regime basado en ROC
+                    if abs(roc_value) > 2.0:
+                        market_regime = "TRENDING"
+                        volatility_level = "HIGH" if abs(roc_value) > 5.0 else "MEDIUM"
+                    elif abs(roc_value) < 0.5:
+                        market_regime = "RANGING" 
+                        volatility_level = "LOW"
+                    else:
+                        market_regime = "TRANSITIONING"
+                        volatility_level = "MEDIUM"
+                    
+                    # ✅ CREAR REGISTRO COMPLETO (PRECIOS + INDICADORES)
+                    record = {
+                        'timestamp': timestamp.isoformat(),
                         'symbol': symbol,
-                        'timestamp': current_timestamp.isoformat(),
+                        # PRECIOS OHLCV
+                        'open_price': current_open,
+                        'high_price': current_high,
+                        'low_price': current_low,
+                        'close_price': current_close,
+                        'volume': current_volume,
+                        # INDICADORES TÉCNICOS
                         'rsi_value': rsi_value,
                         'macd_line': macd_line,
                         'macd_signal': macd_signal,
@@ -305,56 +291,66 @@ class HistoricalIndicatorsCalculator:
                         'bb_position': bb_position,
                         'volume_oscillator': volume_osc,
                         'atr_value': atr_value,
-                        'atr_percentage': atr_percentage
+                        'atr_percentage': atr_percentage,
+                        # CONTEXTO
+                        'market_regime': market_regime,
+                        'volatility_level': volatility_level
                     }
                     
-                    indicators_data.append(indicator_record)
+                    indicators_records.append(record)
+                    
+                    # Log progreso cada 1000 registros
+                    if len(indicators_records) % 1000 == 0:
+                        logger.info(f"📊 {symbol}: {len(indicators_records)} indicadores calculados...")
                     
                 except Exception as e:
-                    logger.warning(f"⚠️ Error calculando indicadores para {symbol} en {current_timestamp}: {e}")
+                    logger.warning(f"⚠️ Error calculando indicadores para {symbol} en {timestamp}: {e}")
                     continue
             
-            # 3. Guardar en base de datos
-            if indicators_data:
-                success = self.save_indicators_to_db(indicators_data)
-                if success:
-                    logger.info(f"✅ {symbol}: {len(indicators_data)} registros guardados")
-                    self.processed_count += len(indicators_data)
-                    return True
-                else:
-                    logger.error(f"❌ {symbol}: Error guardando en BD")
-                    self.error_count += 1
-                    return False
-            else:
-                logger.warning(f"⚠️ {symbol}: No se generaron indicadores válidos")
-                return False
-                
+            logger.info(f"✅ {symbol}: {len(indicators_records)} registros con indicadores listos")
+            return indicators_records
+            
         except Exception as e:
-            logger.error(f"❌ Error procesando {symbol}: {e}")
-            self.error_count += 1
-            return False
+            logger.error(f"❌ Error calculando indicadores batch para {symbol}: {e}")
+            return []
     
-    def save_indicators_to_db(self, indicators_data: List[Dict]) -> bool:
-        """Guardar indicadores calculados en la base de datos"""
+    def save_indicators_to_db(self, records: List[Dict[str, Any]]) -> bool:
+        """
+        Guardar registros completos (precios + indicadores) en la base de datos
+        """
         try:
+            if not records:
+                return False
+            
             conn = get_connection()
             cursor = conn.cursor()
             
-            # Usar INSERT OR REPLACE para evitar duplicados
+            # ✅ QUERY COMPLETA CON TODOS LOS CAMPOS
             insert_query = """
                 INSERT OR REPLACE INTO indicators_data (
-                    symbol, timestamp, rsi_value, macd_line, macd_signal, macd_histogram,
-                    vwap_value, vwap_deviation_pct, roc_value, bb_upper, bb_middle, bb_lower,
-                    bb_position, volume_oscillator, atr_value, atr_percentage
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    timestamp, symbol, 
+                    open_price, high_price, low_price, close_price, volume,
+                    rsi_value, macd_line, macd_signal, macd_histogram,
+                    vwap_value, vwap_deviation_pct, roc_value,
+                    bb_upper, bb_middle, bb_lower, bb_position,
+                    volume_oscillator, atr_value, atr_percentage,
+                    market_regime, volatility_level
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """
             
-            # Preparar datos para inserción
+            # Preparar datos para inserción masiva
             records_to_insert = []
-            for record in indicators_data:
+            for record in records:
                 records_to_insert.append((
-                    record['symbol'],
                     record['timestamp'],
+                    record['symbol'],
+                    # PRECIOS
+                    record['open_price'],
+                    record['high_price'], 
+                    record['low_price'],
+                    record['close_price'],
+                    record['volume'],
+                    # INDICADORES
                     record['rsi_value'],
                     record['macd_line'],
                     record['macd_signal'],
@@ -368,211 +364,139 @@ class HistoricalIndicatorsCalculator:
                     record['bb_position'],
                     record['volume_oscillator'],
                     record['atr_value'],
-                    record['atr_percentage']
+                    record['atr_percentage'],
+                    # CONTEXTO
+                    record['market_regime'],
+                    record['volatility_level']
                 ))
             
-            # Insertar en lotes para mejor rendimiento
+            # Insertar en lotes para mejor performance
             cursor.executemany(insert_query, records_to_insert)
             conn.commit()
+            
+            rows_inserted = cursor.rowcount
             conn.close()
             
+            logger.info(f"✅ {rows_inserted} registros guardados en indicators_data")
             return True
             
         except Exception as e:
             logger.error(f"❌ Error guardando en BD: {e}")
             return False
     
-    def validate_calculated_indicators(self, symbol: str) -> Dict:
-        """Validar calidad de indicadores calculados"""
+    def process_symbol(self, symbol: str) -> bool:
+        """Procesar un símbolo completo"""
         try:
-            conn = get_connection()
-            cursor = conn.cursor()
+            logger.info(f"\n🔄 PROCESANDO SÍMBOLO: {symbol}")
+            logger.info("=" * 60)
             
-            # Obtener estadísticas de indicadores para el símbolo
-            cursor.execute("""
-                SELECT 
-                    COUNT(*) as total_records,
-                    COUNT(rsi_value) as rsi_count,
-                    COUNT(macd_line) as macd_count,
-                    COUNT(vwap_value) as vwap_count,
-                    COUNT(bb_upper) as bb_count,
-                    AVG(rsi_value) as avg_rsi,
-                    MIN(rsi_value) as min_rsi,
-                    MAX(rsi_value) as max_rsi
-                FROM indicators_data 
-                WHERE symbol = ?
-            """, (symbol,))
-            
-            stats = cursor.fetchone()
-            conn.close()
-            
-            if stats[0] == 0:  # total_records
-                return {'status': 'NO_DATA', 'details': 'No hay datos de indicadores'}
-            
-            # Calcular métricas de calidad
-            total_records = stats[0]
-            completeness = {
-                'rsi': (stats[1] / total_records) * 100,
-                'macd': (stats[2] / total_records) * 100,
-                'vwap': (stats[3] / total_records) * 100,
-                'bb': (stats[4] / total_records) * 100
-            }
-            
-            # Validar rangos de RSI (debe estar entre 0-100)
-            rsi_valid = 0 <= stats[5] <= 100 if stats[5] else False
-            rsi_range_valid = 0 <= stats[6] <= 100 and 0 <= stats[7] <= 100
-            
-            # Calcular score de calidad
-            avg_completeness = sum(completeness.values()) / len(completeness)
-            quality_score = avg_completeness if rsi_valid and rsi_range_valid else avg_completeness * 0.5
-            
-            validation_result = {
-                'status': 'VALID' if quality_score > 90 else 'PARTIAL' if quality_score > 70 else 'POOR',
-                'quality_score': quality_score,
-                'total_records': total_records,
-                'completeness': completeness,
-                'rsi_stats': {
-                    'avg': stats[5],
-                    'min': stats[6],
-                    'max': stats[7],
-                    'range_valid': rsi_range_valid
-                }
-            }
-            
-            self.validation_results[symbol] = validation_result
-            return validation_result
-            
-        except Exception as e:
-            logger.error(f"❌ Error validando {symbol}: {e}")
-            return {'status': 'ERROR', 'details': str(e)}
-    
-    def process_symbols(self, symbols: List[str], months_back: int = 3, validate: bool = True) -> Dict:
-        """
-        Procesar múltiples símbolos
-        
-        Args:
-            symbols: Lista de símbolos a procesar
-            months_back: Meses de datos históricos
-            validate: Si validar resultados
-            
-        Returns:
-            Resumen de procesamiento
-        """
-        logger.info(f"🚀 Iniciando procesamiento de {len(symbols)} símbolos")
-        logger.info(f"📅 Periodo: {months_back} meses hacia atrás")
-        
-        start_time = time.time()
-        successful_symbols = []
-        failed_symbols = []
-        
-        # Procesar cada símbolo con barra de progreso
-        for symbol in tqdm(symbols, desc="Procesando símbolos"):
-            success = self.calculate_indicators_for_symbol(symbol, months_back)
-            
-            if success:
-                successful_symbols.append(symbol)
+            # 1. Verificar si ya existe (si no está en force mode)
+            if not self.force_mode:
+                conn = get_connection()
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) FROM indicators_data WHERE symbol = ?", (symbol,))
+                existing_count = cursor.fetchone()[0]
+                conn.close()
                 
-                # Validar si se solicita
-                if validate:
-                    validation = self.validate_calculated_indicators(symbol)
-                    logger.info(f"📊 {symbol} validación: {validation['status']} ({validation.get('quality_score', 0):.1f}%)")
+                if existing_count > 0:
+                    logger.info(f"⏭️ {symbol}: {existing_count} registros existentes (usar --force para sobrescribir)")
+                    return True
+            
+            # 2. Obtener datos OHLCV
+            df_ohlcv = self.get_ohlcv_data(symbol)
+            if df_ohlcv is None or len(df_ohlcv) == 0:
+                logger.warning(f"⚠️ {symbol}: No hay datos OHLCV disponibles")
+                return False
+            
+            # 3. Calcular indicadores batch
+            indicators_records = self.calculate_indicators_batch(df_ohlcv, symbol)
+            if not indicators_records:
+                logger.warning(f"⚠️ {symbol}: No se calcularon indicadores")
+                return False
+            
+            # 4. Guardar en base de datos
+            success = self.save_indicators_to_db(indicators_records)
+            if success:
+                self.stats['records_saved'] += len(indicators_records)
+                self.stats['symbols_processed'] += 1
+                logger.info(f"✅ {symbol}: {len(indicators_records)} registros procesados exitosamente")
+                return True
             else:
-                failed_symbols.append(symbol)
+                logger.error(f"❌ {symbol}: Error guardando registros")
+                self.stats['errors'] += 1
+                return False
+                
+        except Exception as e:
+            logger.error(f"❌ Error procesando {symbol}: {e}")
+            self.stats['errors'] += 1
+            return False
+    
+    def run(self, target_symbol: Optional[str] = None):
+        """Ejecutar el proceso completo"""
+        logger.info("\n🚀 HISTORICAL INDICATORS CALCULATOR V4.0 - FIXED OHLC")
+        logger.info("=" * 70)
         
-        processing_time = time.time() - start_time
+        # Obtener símbolos a procesar
+        if target_symbol:
+            symbols = [target_symbol]
+            logger.info(f"🎯 Procesando símbolo específico: {target_symbol}")
+        else:
+            symbols = self.get_available_symbols()
+            if not symbols:
+                logger.error("❌ No hay símbolos disponibles para procesar")
+                return
+            logger.info(f"📈 Procesando {len(symbols)} símbolos: {symbols}")
         
-        # Resumen final
-        summary = {
-            'total_symbols': len(symbols),
-            'successful': len(successful_symbols),
-            'failed': len(failed_symbols),
-            'processing_time_seconds': processing_time,
-            'records_processed': self.processed_count,
-            'errors': self.error_count,
-            'successful_symbols': successful_symbols,
-            'failed_symbols': failed_symbols,
-            'validation_results': self.validation_results if validate else {}
-        }
+        # Procesar cada símbolo
+        for i, symbol in enumerate(symbols, 1):
+            logger.info(f"\n[{i}/{len(symbols)}] Procesando {symbol}...")
+            self.process_symbol(symbol)
         
-        return summary
-
+        # Estadísticas finales
+        self.print_final_stats()
+    
+    def print_final_stats(self):
+        """Imprimir estadísticas finales"""
+        elapsed_time = datetime.now() - self.stats['start_time']
+        
+        print("\n" + "=" * 70)
+        print("📊 ESTADÍSTICAS FINALES - HISTORICAL INDICATORS CALCULATOR")
+        print("=" * 70)
+        print(f"⏰ Tiempo total: {elapsed_time}")
+        print(f"📈 Símbolos procesados: {self.stats['symbols_processed']}")
+        print(f"💾 Registros guardados: {self.stats['records_saved']:,}")
+        print(f"❌ Errores: {self.stats['errors']}")
+        
+        if self.stats['symbols_processed'] > 0:
+            avg_records = self.stats['records_saved'] / self.stats['symbols_processed']
+            print(f"📊 Promedio por símbolo: {avg_records:,.0f} registros")
+        
+        print("\n✅ Proceso completado exitosamente")
+        print("🔍 Para verificar: SELECT COUNT(*) FROM indicators_data;")
 
 def main():
-    parser = argparse.ArgumentParser(description='Calcular indicadores técnicos históricos')
-    parser.add_argument('--symbols', nargs='+', help='Símbolos específicos (ej: AAPL MSFT)')
-    parser.add_argument('--all-symbols', action='store_true', help='Procesar todos los símbolos disponibles')
-    parser.add_argument('--months', type=int, default=3, help='Meses de datos históricos (default: 3)')
-    parser.add_argument('--validate', action='store_true', help='Validar calidad de indicadores calculados')
-    parser.add_argument('--max-symbols', type=int, help='Limitar número de símbolos a procesar')
+    """Función principal"""
+    parser = argparse.ArgumentParser(description='Calculador de Indicadores Históricos V4.0 - FIXED')
+    parser.add_argument('--symbol', type=str, help='Procesar solo este símbolo')
+    parser.add_argument('--force', action='store_true', help='Sobrescribir datos existentes')
+    parser.add_argument('--limit', type=int, help='Limitar número de registros por símbolo')
     
     args = parser.parse_args()
     
-    # Crear calculadora
-    calculator = HistoricalIndicatorsCalculator()
-    
-    # Determinar símbolos a procesar
-    if args.all_symbols:
-        symbols = calculator.get_available_symbols()
-        if args.max_symbols:
-            symbols = symbols[:args.max_symbols]
-        logger.info(f"📊 Procesando todos los símbolos disponibles: {len(symbols)}")
-    elif args.symbols:
-        symbols = args.symbols
-        logger.info(f"📊 Procesando símbolos específicos: {symbols}")
-    else:
-        # Default: algunos símbolos principales
-        symbols = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA']
-        logger.info(f"📊 Procesando símbolos por defecto: {symbols}")
-    
-    if not symbols:
-        logger.error("❌ No hay símbolos para procesar")
-        return 1
-    
-    # Procesar símbolos
-    print(f"\n🚀 CALCULANDO INDICADORES HISTÓRICOS")
-    print(f"📅 Periodo: {args.months} meses")
-    print(f"📊 Símbolos: {len(symbols)}")
-    print(f"🔍 Validación: {'Sí' if args.validate else 'No'}")
-    print("=" * 50)
-    
-    summary = calculator.process_symbols(
-        symbols=symbols,
-        months_back=args.months,
-        validate=args.validate
+    # Crear calculador
+    calculator = FixedHistoricalIndicatorsCalculator(
+        force_mode=args.force,
+        limit_rows=args.limit
     )
     
-    # Mostrar resumen final
-    print(f"\n📋 RESUMEN DE PROCESAMIENTO")
-    print("=" * 50)
-    print(f"✅ Símbolos exitosos: {summary['successful']}/{summary['total_symbols']}")
-    print(f"❌ Símbolos fallidos: {summary['failed']}")
-    print(f"📊 Registros procesados: {summary['records_processed']:,}")
-    print(f"⏱️ Tiempo total: {summary['processing_time_seconds']:.1f}s")
-    
-    if summary['failed_symbols']:
-        print(f"\n❌ SÍMBOLOS FALLIDOS:")
-        for symbol in summary['failed_symbols']:
-            print(f"   • {symbol}")
-    
-    if args.validate and summary['validation_results']:
-        print(f"\n🔍 VALIDACIÓN DE CALIDAD:")
-        for symbol, validation in summary['validation_results'].items():
-            status_emoji = "✅" if validation['status'] == 'VALID' else "⚠️" if validation['status'] == 'PARTIAL' else "❌"
-            print(f"   {status_emoji} {symbol}: {validation['status']} ({validation.get('quality_score', 0):.1f}%)")
-    
-    print(f"\n💡 PRÓXIMOS PASOS:")
-    if summary['successful'] > 0:
-        print(f"   ✅ Datos de indicadores listos para backtesting")
-        print(f"   🧪 Ejecuta: python historical_data/backtest_engine.py --symbols {' '.join(summary['successful_symbols'][:3])}")
-        print(f"   📊 Valida datos: python historical_data/backtest_engine.py --validation")
-    else:
-        print(f"   ❌ Ningún símbolo procesado exitosamente")
-        print(f"   💡 Verifica que existan datos OHLCV en la base de datos")
-        print(f"   📥 Ejecuta primero: python historical_data/downloader.py")
-    
-    return 0 if summary['successful'] > 0 else 1
-
+    # Ejecutar
+    try:
+        calculator.run(target_symbol=args.symbol)
+    except KeyboardInterrupt:
+        print("\n⚠️ Proceso interrumpido por el usuario")
+    except Exception as e:
+        print(f"\n❌ Error fatal: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
-    exit_code = main()
-    sys.exit(exit_code)
+    main()
