@@ -524,6 +524,7 @@ class SignalScanner:
             logger.error(f"Error determinando contexto: {e}")
             return "UNKNOWN"
     
+
     def scan_symbol(self, symbol: str) -> Optional[TradingSignal]:
         """
         Escanear un símbolo individual y generar señal si aplica
@@ -573,25 +574,53 @@ class SignalScanner:
             # Obtener contexto de mercado
             market_context = self.get_market_context(indicators)
             
-            # Calcular plan de posición si la señal es tradeable
+            # 🔧 FIXED: Calcular plan de posición con market_data parameter
             position_plan = None
             risk_reward = 0.0
             hold_time = ""
             
             if entry_quality != "NO_TRADE":
                 try:
-                    position_plan = self.position_calc.calculate_position_plan_v3(
-                        symbol=symbol,
-                        direction=signal_type,
-                        current_price=current_price,
-                        signal_strength=final_score,
-                        indicators=indicators
-                    )
-                    risk_reward = position_plan.max_risk_reward
-                    hold_time = position_plan.expected_hold_time
+                    # ✅ STEP 1: Obtener market_data antes de llamar V3.0
+                    market_data = None
+                    try:
+                        # Obtener datos OHLCV para análisis técnico adaptativo
+                        market_data = self.indicators.get_market_data(symbol, period="15m", days=30)
+                        logger.debug(f"✅ Market data obtenido para {symbol}: {len(market_data)} registros")
+                    except Exception as data_error:
+                        logger.warning(f"⚠️ Error obteniendo market data para {symbol}: {data_error}")
+                        market_data = None
+                    
+                    # ✅ STEP 2: Llamar V3.0 con TODOS los parámetros necesarios
+                    if USE_V3:
+                        position_plan = self.position_calc.calculate_position_plan_v3(
+                            symbol=symbol,
+                            direction=signal_type,
+                            current_price=current_price,
+                            signal_strength=final_score,
+                            indicators=indicators,
+                            market_data=market_data,  # ✅ FIXED: Agregar market_data parameter
+                            account_balance=10000     # ✅ FIXED: Agregar account_balance también
+                        )
+                    else:
+                        # Fallback a método V2.0 si V3.0 no está disponible
+                        position_plan = self.position_calc.calculate_position_plan(
+                            symbol=symbol,
+                            direction=signal_type,
+                            current_price=current_price,
+                            signal_strength=final_score,
+                            indicators=indicators
+                        )
+                    
+                    if position_plan:
+                        risk_reward = position_plan.max_risk_reward
+                        hold_time = position_plan.expected_hold_time
+                        logger.debug(f"✅ Plan V3.0 calculado para {symbol}: {position_plan.strategy_type}")
                     
                 except Exception as e:
                     logger.error(f"⚠️ Error calculando plan de posición para {symbol}: {e}")
+                    # Continuar sin position_plan en caso de error
+                    position_plan = None
             
             # Crear señal completa
             signal = TradingSignal(
@@ -621,7 +650,6 @@ class SignalScanner:
                 logger.warning(f"⚠️ Error guardando señal en DB: {db_error}")
 
             return signal
-            
             
         except Exception as e:
             logger.error(f"❌ Error escaneando {symbol}: {e}")

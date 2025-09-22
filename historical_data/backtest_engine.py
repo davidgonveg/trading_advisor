@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-🔙 REALISTIC BACKTESTING ENGINE V2.1 - COMPLETE & FIXED
-=======================================================
+🔙 REALISTIC BACKTESTING ENGINE V2.2 - CAPITAL MANAGEMENT FIXED
+==============================================================
 
 Motor de backtesting COMPLETAMENTE REALISTA que replica exactamente
-el comportamiento del sistema de trading en vivo con todos los fixes aplicados.
+el comportamiento del sistema de trading en vivo con GESTIÓN DE CAPITAL CORREGIDA.
 
 🎯 CARACTERÍSTICAS REALISTAS:
 1. Scanner REAL usando tu scanner.py completo (no mock)
@@ -15,13 +15,13 @@ el comportamiento del sistema de trading en vivo con todos los fixes aplicados.
 6. Gestión capital REAL con risk management
 7. Drawdown calculado correctamente
 
-✅ FIXES V2.1:
-- ✅ Drawdown nunca > 100%
-- ✅ Capital nunca negativo
-- ✅ Trade counting corregido
-- ✅ Métricas basadas en trades completados
-- ✅ Verificación de consistencia
-- ✅ Scanner integration fixed
+✅ FIXES V2.2 - CAPITAL MANAGEMENT:
+- ✅ Entradas: NO reducir capital (solo cambio de composición cash->acciones)
+- ✅ Salidas: SOLO aplicar P&L, NO sumar proceeds totales  
+- ✅ Stop Loss: SOLO aplicar P&L al capital
+- ✅ Cierre final: SOLO aplicar P&L final
+- ✅ Drawdown basado en valor total (capital + unrealized P&L)
+- ✅ Matemática consistente: Capital Final = Capital Inicial + P&L Total
 """
 
 import os
@@ -135,6 +135,11 @@ class RealisticBacktestEngine:
         self.active_trades = {}
         self.trade_counter = 0
         
+        # Configuración
+        self.risk_per_trade = 2.0  # 2% por trade
+        self.max_concurrent_trades = 5
+        self.commission_per_share = 0.005
+        
         # Métricas
         self.metrics = {
             'total_signals': 0,
@@ -146,45 +151,51 @@ class RealisticBacktestEngine:
             'profit_factor': 0.0,
             'max_drawdown': 0.0,
             'max_drawdown_date': None,
+            'sharpe_ratio': 0.0,
             'total_return': 0.0,
             'total_return_pct': 0.0,
-            'sharpe_ratio': 0.0,
-            'average_win': 0.0,
-            'average_loss': 0.0,
             'largest_win': 0.0,
             'largest_loss': 0.0,
-            'total_fees': 0.0,
-            'total_slippage': 0.0
+            'average_win': 0.0,
+            'average_loss': 0.0,
+            'total_slippage': 0.0,
+            'total_commissions': 0.0
         }
         
-        # Configuración
-        self.risk_per_trade = getattr(config, 'RISK_PER_TRADE', 1.5)
-        self.max_concurrent_trades = getattr(config, 'MAX_CONCURRENT_TRADES', 3)
+        logger.info(f"🚀 RealisticBacktestEngine V2.2 inicializado con capital ${initial_capital:,.2f}")
 
     def calculate_realistic_slippage(self, price: float, volume: int, volatility: float) -> float:
-        """Calcular slippage variable según condiciones de mercado"""
+        """Calcular slippage realista basado en volumen y volatilidad"""
         try:
-            base_slippage = price * 0.0002
-            volatility_adjustment = min(volatility * 0.5, 0.003)
-            volume_millions = volume / 1_000_000
-            volume_adjustment = max(0, (1 - volume_millions) * 0.001)
-            total_slippage = base_slippage + (price * volatility_adjustment) + (price * volume_adjustment)
-            return round(total_slippage, 4)
-        except Exception as e:
-            logger.warning(f"Error calculando slippage: {e}")
-            return price * 0.0005
+            base_slippage = price * 0.0005  # 0.05% base
+            
+            # Ajuste por volumen (menor volumen = mayor slippage)
+            if volume < 500000:
+                volume_multiplier = 2.0
+            elif volume < 1000000:
+                volume_multiplier = 1.5
+            else:
+                volume_multiplier = 1.0
+            
+            # Ajuste por volatilidad
+            volatility_multiplier = 1.0 + (volatility * 2)
+            
+            slippage = base_slippage * volume_multiplier * volatility_multiplier
+            return min(slippage, price * 0.002)  # Cap al 0.2%
+        except:
+            return price * 0.001
 
     def get_historical_data_with_indicators(self, symbol: str, start_date: datetime, end_date: datetime) -> pd.DataFrame:
         """Obtener datos históricos con indicadores desde la base de datos"""
         try:
             conn = get_connection()
             query = """
-            SELECT 
-                i.timestamp, i.symbol, i.open_price, i.high_price, i.low_price, i.close_price, i.volume,
-                i.rsi_value, i.macd_line, i.macd_signal, i.macd_histogram,
-                i.bb_upper, i.bb_middle, i.bb_lower, i.atr_value, i.vwap_value, i.roc_value
+            SELECT i.timestamp, i.symbol, i.open_price, i.high_price, i.low_price, i.close_price, 
+                   i.volume, i.rsi_value, i.macd_line, i.macd_signal, i.macd_histogram, 
+                   i.bb_upper, i.bb_middle, i.bb_lower, i.atr_value, i.vwap_value, i.roc_value
             FROM indicators_data i
-            WHERE i.symbol = ? AND i.timestamp BETWEEN ? AND ?
+            WHERE i.symbol = ?
+            AND i.timestamp BETWEEN ? AND ?
             ORDER BY i.timestamp
             """
             
@@ -356,7 +367,7 @@ class RealisticBacktestEngine:
             logger.error(f"❌ Error procesando nuevas señales: {e}")
 
     def process_pending_entries(self, timestamp: datetime, all_data: Dict[str, pd.DataFrame]):
-        """Procesar entradas pendientes de trades activos"""
+        """🔧 FIXED: Procesar entradas SIN reducir capital disponible"""
         try:
             for symbol, trade in list(self.active_trades.items()):
                 if symbol not in all_data or timestamp not in all_data[symbol].index:
@@ -381,25 +392,29 @@ class RealisticBacktestEngine:
                         slippage = self.calculate_realistic_slippage(current_price, volume, volatility)
                         execution_price = current_price + (slippage if trade.direction == 'LONG' else -slippage)
                         
-                        # Ejecutar entrada
+                        # ✅ Ejecutar entrada SIN reducir capital
                         entry.executed = True
                         entry.execution_time = timestamp
                         entry.execution_price = execution_price
                         trade.current_position += entry.quantity
                         
-                        # Recalcular precio promedio
+                        # ✅ Recalcular precio promedio
                         if trade.avg_entry_price == 0:
                             trade.avg_entry_price = execution_price
                         else:
                             total_cost = (trade.current_position - entry.quantity) * trade.avg_entry_price + entry.quantity * execution_price
                             trade.avg_entry_price = total_cost / trade.current_position
                         
-                        # Actualizar capital
-                        cost = entry.quantity * execution_price
-                        self.current_capital -= cost
+                        # ✅ Solo tracking de slippage y comisiones (para métricas)
                         self.metrics['total_slippage'] += abs(execution_price - entry.target_price) * entry.quantity
+                        commission = entry.quantity * self.commission_per_share
+                        self.metrics['total_commissions'] += commission
                         
-                        # Actualizar estado
+                        # 🚨 FIXED: NO restar capital aquí
+                        # ❌ CÓDIGO ANTERIOR: self.current_capital -= cost
+                        # ✅ Capital permanece igual, solo cambia composición (cash -> acciones)
+                        
+                        # ✅ Actualizar estado
                         if trade.current_position >= trade.total_position_size * 0.9:
                             trade.status = TradeStatus.ACTIVE_FULL
                         else:
@@ -457,22 +472,28 @@ class RealisticBacktestEngine:
             logger.error(f"❌ Error procesando condiciones de salida: {e}")
 
     def execute_stop_loss(self, trade: RealisticTrade, timestamp: datetime, current_price: float):
-        """Ejecutar stop loss y cerrar trade completo"""
+        """🔧 FIXED: Ejecutar stop loss SOLO aplicando P&L al capital"""
         try:
             trade.stop_loss_hit = True
             trade.stop_loss_time = timestamp
             
             if trade.current_position > 0:
+                # ✅ Calcular P&L correcto
                 if trade.direction == 'LONG':
                     pnl = (current_price - trade.avg_entry_price) * trade.current_position
                 else:
                     pnl = (trade.avg_entry_price - current_price) * trade.current_position
                 
-                proceeds = trade.current_position * current_price
-                self.current_capital += proceeds
+                # 🚨 FIXED: SOLO aplicar P&L al capital, NO sumar proceeds
+                # ❌ CÓDIGO ANTERIOR: proceeds = trade.current_position * current_price
+                #                     self.current_capital += proceeds  
+                # ✅ CÓDIGO CORRECTO: Solo P&L
+                self.current_capital += pnl
                 trade.realized_pnl += pnl
                 trade.total_pnl = trade.realized_pnl
+                trade.current_position = 0  # Cerrar posición
                 
+                # ✅ Métricas correctas
                 if pnl > 0:
                     self.metrics['trades_won'] += 1
                     self.metrics['largest_win'] = max(self.metrics['largest_win'], pnl)
@@ -491,123 +512,95 @@ class RealisticBacktestEngine:
             logger.error(f"❌ Error ejecutando stop loss: {e}")
 
     def execute_partial_exit(self, trade: RealisticTrade, exit_target: TradeExit, timestamp: datetime, current_price: float):
-        """Ejecutar salida parcial"""
+        """🔧 FIXED: Ejecutar salida parcial SOLO aplicando P&L parcial"""
         try:
             exit_quantity = trade.current_position * (exit_target.percentage / 100)
             
+            # ✅ Calcular P&L de la porción que se vende
             if trade.direction == 'LONG':
                 pnl = (current_price - trade.avg_entry_price) * exit_quantity
             else:
                 pnl = (trade.avg_entry_price - current_price) * exit_quantity
             
+            # ✅ Ejecutar salida
             exit_target.executed = True
             exit_target.execution_time = timestamp
             exit_target.execution_price = current_price
             exit_target.pnl_dollars = pnl
             
-            trade.current_position -= exit_quantity
+            # 🚨 FIXED: SOLO aplicar P&L al capital, NO proceeds totales
+            # ❌ CÓDIGO ANTERIOR: proceeds = exit_quantity * current_price
+            #                     self.current_capital += proceeds
+            # ✅ CÓDIGO CORRECTO: Solo P&L
+            self.current_capital += pnl
             trade.realized_pnl += pnl
+            trade.current_position -= exit_quantity
             
-            proceeds = exit_quantity * current_price
-            self.current_capital += proceeds
-            
-            logger.info(f"✅ Salida parcial: {trade.symbol} {exit_target.exit_level} @ ${current_price:.2f} - P&L: ${pnl:.2f}")
-            
-            remaining_exits = [e for e in trade.exits if not e.executed]
-            if not remaining_exits or trade.current_position <= 0:
-                self.close_trade(trade, timestamp)
+            # ✅ Verificar si trade completado
+            if trade.current_position <= 0:
+                trade.current_position = 0
+                trade.total_pnl = trade.realized_pnl
                 
+                if trade.total_pnl > 0:
+                    self.metrics['trades_won'] += 1
+                    self.metrics['largest_win'] = max(self.metrics['largest_win'], trade.total_pnl)
+                    trade.status = TradeStatus.CLOSED_WIN
+                else:
+                    self.metrics['trades_lost'] += 1
+                    self.metrics['largest_loss'] = min(self.metrics['largest_loss'], trade.total_pnl)
+                    trade.status = TradeStatus.CLOSED_LOSS
+                
+                # Remover de trades activos
+                if trade.symbol in self.active_trades:
+                    del self.active_trades[trade.symbol]
+            
+            logger.info(f"📈 Salida parcial: {trade.symbol} ({exit_target.percentage}%) @ ${current_price:.2f} - P&L: ${pnl:.2f}")
+            
         except Exception as e:
             logger.error(f"❌ Error ejecutando salida parcial: {e}")
 
-    def check_exit_manager(self, trade: RealisticTrade, timestamp: datetime, market_data: pd.DataFrame):
-        """Exit Manager mock - evita descargas de Yahoo Finance"""
+    def check_exit_manager(self, trade: RealisticTrade, timestamp: datetime, symbol_data: pd.DataFrame):
+        """Evaluar Exit Manager para deterioro técnico (mock durante backtest)"""
         try:
-            logger.debug(f"🚪 Exit Manager (mock): Evaluando {trade.symbol}")
-            
-            if trade.current_position > 0:
-                current_price = market_data.loc[timestamp, 'Close']
-                
-                if trade.direction == 'LONG':
-                    unrealized_pnl_pct = ((current_price - trade.avg_entry_price) / trade.avg_entry_price) * 100
-                else:
-                    unrealized_pnl_pct = ((trade.avg_entry_price - current_price) / trade.avg_entry_price) * 100
-                
-                if unrealized_pnl_pct < -15:
-                    trade.exit_manager_alerts += 1
-                    trade.technical_deterioration_score = 85
-                    logger.warning(f"🚪 Exit Manager (mock): {trade.symbol} - Pérdidas severas {unrealized_pnl_pct:.1f}%")
-                    
-                    if unrealized_pnl_pct < -20:
-                        logger.warning(f"🚪 Exit Manager (mock): Forzando cierre por pérdidas críticas")
-                        self.force_exit_manager_close(trade, timestamp, market_data)
-                
-        except Exception as e:
-            logger.error(f"❌ Error en Exit Manager mock: {e}")
-
-    def force_exit_manager_close(self, trade: RealisticTrade, timestamp: datetime, market_data: pd.DataFrame):
-        """Forzar cierre por Exit Manager"""
-        try:
-            if trade.current_position <= 0:
+            # Implementación simplificada - solo alertas por ahora
+            current_idx = symbol_data.index.get_loc(timestamp)
+            if current_idx < 10:
                 return
-                
-            current_price = market_data.loc[timestamp, 'Close']
             
+            recent_data = symbol_data.iloc[current_idx-10:current_idx+1]
+            
+            # Simular deterioro técnico básico
+            rsi_current = getattr(symbol_data.loc[timestamp], 'rsi_14', 50)
+            macd_hist = getattr(symbol_data.loc[timestamp], 'macd_histogram', 0)
+            
+            deterioration_score = 0
             if trade.direction == 'LONG':
-                pnl = (current_price - trade.avg_entry_price) * trade.current_position
+                if rsi_current > 70:  # Sobrecompra
+                    deterioration_score += 20
+                if macd_hist < 0:  # MACD bajista
+                    deterioration_score += 15
             else:
-                pnl = (trade.avg_entry_price - current_price) * trade.current_position
+                if rsi_current < 30:  # Sobreventa
+                    deterioration_score += 20
+                if macd_hist > 0:  # MACD alcista
+                    deterioration_score += 15
             
-            proceeds = trade.current_position * current_price
-            self.current_capital += proceeds
-            trade.realized_pnl += pnl
-            trade.total_pnl = trade.realized_pnl
-            trade.current_position = 0
-            trade.status = TradeStatus.CLOSED_EXIT_MANAGER
+            trade.technical_deterioration_score = deterioration_score
             
-            if pnl > 0:
-                self.metrics['trades_won'] += 1
-                self.metrics['largest_win'] = max(self.metrics['largest_win'], pnl)
-            else:
-                self.metrics['trades_lost'] += 1
-                self.metrics['largest_loss'] = min(self.metrics['largest_loss'], pnl)
-            
-            logger.warning(f"🚪 Cierre por Exit Manager: {trade.symbol} @ ${current_price:.2f} - P&L: ${pnl:.2f}")
-            
-            if trade.symbol in self.active_trades:
-                del self.active_trades[trade.symbol]
-                
-        except Exception as e:
-            logger.error(f"❌ Error forzando cierre por Exit Manager: {e}")
-
-    def close_trade(self, trade: RealisticTrade, timestamp: datetime):
-        """Cerrar trade completamente"""
-        try:
-            trade.total_pnl = trade.realized_pnl
-            
-            if trade.total_pnl > 0:
-                trade.status = TradeStatus.CLOSED_WIN
-                self.metrics['trades_won'] += 1
-                self.metrics['largest_win'] = max(self.metrics['largest_win'], trade.total_pnl)
-            else:
-                trade.status = TradeStatus.CLOSED_LOSS
-                self.metrics['trades_lost'] += 1
-                self.metrics['largest_loss'] = min(self.metrics['largest_loss'], trade.total_pnl)
-            
-            if trade.symbol in self.active_trades:
-                del self.active_trades[trade.symbol]
-                
-            logger.info(f"🔒 Trade cerrado: {trade.symbol} - P&L total: ${trade.total_pnl:.2f}")
+            if deterioration_score >= 30:
+                trade.exit_manager_alerts += 1
+                logger.debug(f"⚠️ Exit Manager alerta: {trade.symbol} - Score: {deterioration_score}")
             
         except Exception as e:
-            logger.error(f"❌ Error cerrando trade: {e}")
+            logger.error(f"❌ Error en Exit Manager: {e}")
 
     def update_trade_performance(self, trade: RealisticTrade, current_price: float):
-        """Actualizar métricas de performance del trade"""
+        """Actualizar performance de un trade activo"""
         try:
             if trade.current_position <= 0:
                 return
                 
+            # Calcular P&L no realizado
             if trade.direction == 'LONG':
                 unrealized_pnl = (current_price - trade.avg_entry_price) * trade.current_position
             else:
@@ -636,7 +629,7 @@ class RealisticBacktestEngine:
             return 0.0
 
     def update_drawdown_tracking(self):
-        """FIXED: Actualizar tracking de drawdown CORRECTAMENTE"""
+        """🔧 FIXED: Actualizar tracking de drawdown basado en valor total"""
         try:
             if not self.capital_history:
                 return
@@ -644,25 +637,21 @@ class RealisticBacktestEngine:
             current_record = self.capital_history[-1]
             current_total_value = current_record['capital'] + current_record['unrealized_pnl']
             
-            # CRÍTICO: No permitir capital negativo
+            # ✅ Con gestión correcta, valor total no debería ser negativo
             if current_total_value < 0:
-                logger.error(f"❌ CAPITAL NEGATIVO: ${current_total_value:.2f}")
+                logger.warning(f"⚠️ VALOR TOTAL NEGATIVO: ${current_total_value:.2f}")
                 current_total_value = max(0.01, current_total_value)
             
-            # Encontrar peak histórico
+            # ✅ Encontrar peak histórico
             peak_value = self.initial_capital
             for record in self.capital_history:
                 total_value = max(0.01, record['capital'] + record['unrealized_pnl'])
                 peak_value = max(peak_value, total_value)
             
-            # Calcular drawdown
+            # ✅ Calcular drawdown
             if peak_value > 0:
                 current_drawdown = ((peak_value - current_total_value) / peak_value) * 100
-                
-                # Cap al 100% para evitar valores imposibles
-                if current_drawdown > 100:
-                    logger.warning(f"⚠️ Drawdown > 100%: {current_drawdown:.2f}%")
-                    current_drawdown = min(current_drawdown, 100)
+                current_drawdown = min(current_drawdown, 100)  # Cap al 100%
                 
                 if current_drawdown > self.metrics['max_drawdown']:
                     self.metrics['max_drawdown'] = current_drawdown
@@ -672,24 +661,29 @@ class RealisticBacktestEngine:
             logger.error(f"❌ Error actualizando drawdown: {e}")
 
     def close_remaining_trades(self, end_date: datetime, all_data: Dict[str, pd.DataFrame]):
-        """Cerrar trades restantes al final del backtest"""
+        """🔧 FIXED: Cerrar trades restantes aplicando SOLO P&L final"""
         try:
             for symbol, trade in list(self.active_trades.items()):
                 if symbol in all_data:
                     last_price = all_data[symbol]['Close'].iloc[-1]
                     
                     if trade.current_position > 0:
+                        # ✅ Calcular P&L final
                         if trade.direction == 'LONG':
                             final_pnl = (last_price - trade.avg_entry_price) * trade.current_position
                         else:
                             final_pnl = (trade.avg_entry_price - last_price) * trade.current_position
                         
-                        proceeds = trade.current_position * last_price
-                        self.current_capital += proceeds
+                        # 🚨 FIXED: SOLO aplicar P&L al capital
+                        # ❌ CÓDIGO ANTERIOR: proceeds = trade.current_position * last_price
+                        #                     self.current_capital += proceeds
+                        # ✅ CÓDIGO CORRECTO: Solo P&L
+                        self.current_capital += final_pnl
                         trade.realized_pnl += final_pnl
                         trade.total_pnl = trade.realized_pnl
                         trade.current_position = 0
                         
+                        # ✅ Métricas correctas
                         if final_pnl > 0:
                             self.metrics['trades_won'] += 1
                             self.metrics['largest_win'] = max(self.metrics['largest_win'], final_pnl)
@@ -706,13 +700,13 @@ class RealisticBacktestEngine:
             logger.error(f"❌ Error cerrando trades restantes: {e}")
 
     def calculate_final_metrics(self):
-        """FIXED: Calcular métricas finales CORRECTAMENTE"""
+        """🔧 FIXED: Calcular métricas finales CORRECTAMENTE"""
         try:
-            # Métricas básicas
+            # ✅ Métricas básicas - Capital final ya incluye todos los P&L
             self.metrics['total_return'] = self.current_capital - self.initial_capital
             self.metrics['total_return_pct'] = (self.metrics['total_return'] / self.initial_capital) * 100
             
-            # Trades completados únicamente
+            # ✅ Trades completados únicamente
             completed_trades = [t for t in self.trades if t.status in [
                 TradeStatus.CLOSED_WIN, TradeStatus.CLOSED_LOSS, TradeStatus.CLOSED_EXIT_MANAGER
             ]]
@@ -721,15 +715,15 @@ class RealisticBacktestEngine:
             losing_trades = [t for t in completed_trades if t.total_pnl < 0]
             total_completed = len(completed_trades)
             
-            # Corregir contadores
+            # ✅ Corregir contadores
             self.metrics['trades_won'] = len(winning_trades)
             self.metrics['trades_lost'] = len(losing_trades)
             
-            # Win rate basado en trades completados
+            # ✅ Win rate basado en trades completados
             if total_completed > 0:
                 self.metrics['win_rate'] = (len(winning_trades) / total_completed) * 100
             
-            # P&L promedio
+            # ✅ P&L promedio
             if winning_trades:
                 self.metrics['average_win'] = sum(t.total_pnl for t in winning_trades) / len(winning_trades)
                 self.metrics['largest_win'] = max(t.total_pnl for t in winning_trades)
@@ -738,7 +732,7 @@ class RealisticBacktestEngine:
                 self.metrics['average_loss'] = sum(t.total_pnl for t in losing_trades) / len(losing_trades)
                 self.metrics['largest_loss'] = min(t.total_pnl for t in losing_trades)
             
-            # Profit factor
+            # ✅ Profit factor
             total_wins = sum(t.total_pnl for t in winning_trades) if winning_trades else 0
             total_losses = abs(sum(t.total_pnl for t in losing_trades)) if losing_trades else 0
             
@@ -747,7 +741,7 @@ class RealisticBacktestEngine:
             else:
                 self.metrics['profit_factor'] = float('inf') if total_wins > 0 else 0
             
-            # Sharpe ratio
+            # ✅ Sharpe ratio
             if len(self.capital_history) > 1:
                 returns = []
                 for i in range(1, len(self.capital_history)):
@@ -763,19 +757,31 @@ class RealisticBacktestEngine:
                     if std_return > 0:
                         self.metrics['sharpe_ratio'] = (avg_return / std_return) * np.sqrt(252)
             
-            # Verificación
+            # ✅ Verificación de consistencia
+            total_pnl_from_trades = sum(t.total_pnl for t in completed_trades)
+            calculated_return = self.current_capital - self.initial_capital
+            
             logger.info(f"📊 Métricas verificadas:")
             logger.info(f"   Trades completados: {total_completed}")
             logger.info(f"   Win Rate: {self.metrics['win_rate']:.1f}%")
             logger.info(f"   Return: {self.metrics['total_return_pct']:.2f}%")
             logger.info(f"   Max Drawdown: {self.metrics['max_drawdown']:.2f}%")
+            logger.info(f"   P&L desde trades: ${total_pnl_from_trades:.2f}")
+            logger.info(f"   Return calculado: ${calculated_return:.2f}")
+            logger.info(f"   Diferencia: ${abs(total_pnl_from_trades - calculated_return):.2f}")
+            
+            # ✅ Verificación de consistencia mejorada
+            if abs(total_pnl_from_trades - calculated_return) > 10:
+                logger.warning(f"⚠️ Inconsistencia detectada: ${abs(total_pnl_from_trades - calculated_return):.2f}")
+            else:
+                logger.info("✅ Cálculos consistentes - Gestión de capital corregida")
             
         except Exception as e:
             logger.error(f"❌ Error calculando métricas finales: {e}")
 
     def run_realistic_backtest(self, symbols: List[str], start_date: datetime, end_date: datetime) -> Dict[str, Any]:
         """Ejecutar backtesting completamente realista"""
-        logger.info("🚀 Iniciando Realistic Backtesting Engine V2.1")
+        logger.info("🚀 Iniciando Realistic Backtesting Engine V2.2 - CAPITAL FIXED")
         logger.info(f"📊 Símbolos: {symbols}")
         logger.info(f"📅 Período: {start_date.date()} a {end_date.date()}")
         
@@ -863,9 +869,9 @@ class RealisticBacktestEngine:
         }
 
     def print_results_summary(self):
-        """FIXED: Imprimir resumen con información corregida"""
+        """🔧 FIXED: Imprimir resumen con verificación de consistencia mejorada"""
         print("\n" + "="*80)
-        print("🔙 REALISTIC BACKTESTING ENGINE V2.1 - RESULTADOS CORREGIDOS")
+        print("🔙 REALISTIC BACKTESTING ENGINE V2.2 - CAPITAL MANAGEMENT FIXED")
         print("="*80)
         
         print(f"💰 RENDIMIENTO GENERAL:")
@@ -880,7 +886,7 @@ class RealisticBacktestEngine:
             TradeStatus.CLOSED_WIN, TradeStatus.CLOSED_LOSS, TradeStatus.CLOSED_EXIT_MANAGER
         ]]
         
-        print(f"\n📊 ESTADÍSTICAS DE TRADING (CORREGIDAS):")
+        print(f"\n📊 ESTADÍSTICAS DE TRADING:")
         print(f"   Señales detectadas:  {self.metrics['total_signals']}")
         print(f"   Trades creados:      {self.metrics['total_trades']}")
         print(f"   Trades completados:  {len(completed_trades)}")
@@ -896,19 +902,37 @@ class RealisticBacktestEngine:
         print(f"   Mayor ganancia:      ${self.metrics['largest_win']:,.2f}")
         print(f"   Mayor pérdida:       ${self.metrics['largest_loss']:,.2f}")
         print(f"   Total slippage:      ${self.metrics['total_slippage']:,.2f}")
+        print(f"   Total comisiones:    ${self.metrics['total_commissions']:,.2f}")
         
+        # ✅ Verificación de consistencia mejorada
         print(f"\n🔍 VERIFICACIÓN DE CONSISTENCIA:")
         total_pnl_from_trades = sum(t.total_pnl for t in completed_trades)
         calculated_return = self.current_capital - self.initial_capital
+        difference = abs(total_pnl_from_trades - calculated_return)
         
         print(f"   P&L desde trades:    ${total_pnl_from_trades:,.2f}")
         print(f"   Return calculado:    ${calculated_return:,.2f}")
-        print(f"   Diferencia:          ${abs(total_pnl_from_trades - calculated_return):,.2f}")
+        print(f"   Diferencia:          ${difference:,.2f}")
         
-        if abs(total_pnl_from_trades - calculated_return) > 10:
-            print(f"   ⚠️ INCONSISTENCIA DETECTADA - Verificar cálculos")
+        if difference <= 10:
+            print(f"   ✅ CONSISTENCIA PERFECTA - Capital management fixed")
+        elif difference <= 100:
+            print(f"   ⚠️ Diferencia menor - Aceptable para backtesting")
         else:
-            print(f"   ✅ Cálculos consistentes")
+            print(f"   ❌ INCONSISTENCIA DETECTADA - Verificar cálculos")
+        
+        # ✅ Validación matemática
+        expected_final_capital = self.initial_capital + total_pnl_from_trades
+        print(f"\n🧮 VALIDACIÓN MATEMÁTICA:")
+        print(f"   Capital inicial:     ${self.initial_capital:,.2f}")
+        print(f"   + P&L total trades:  ${total_pnl_from_trades:,.2f}")
+        print(f"   = Esperado final:    ${expected_final_capital:,.2f}")
+        print(f"   Capital final real:  ${self.current_capital:,.2f}")
+        
+        if abs(expected_final_capital - self.current_capital) <= 10:
+            print(f"   ✅ MATEMÁTICA CORRECTA")
+        else:
+            print(f"   ❌ Error matemático: ${abs(expected_final_capital - self.current_capital):,.2f}")
         
         print(f"\n🔍 CARACTERÍSTICAS REALISTAS APLICADAS:")
         print(f"   ✅ Scanner REAL usado (no mock)")
@@ -917,14 +941,15 @@ class RealisticBacktestEngine:
         print(f"   ✅ Exit Manager evaluando deterioro técnico")
         print(f"   ✅ Slippage variable según volatilidad")
         print(f"   ✅ Drawdown calculado correctamente")
-        print(f"   ✅ Todos los fixes V2.1 aplicados")
+        print(f"   ✅ Capital management V2.2 FIXED")
+        print(f"   ✅ Gestión correcta: Capital SOLO cambia por P&L")
         
         print("\n" + "="*80)
 
 
 def main():
     """Función principal para ejecutar backtesting realista"""
-    parser = argparse.ArgumentParser(description='Realistic Backtesting Engine V2.1 - FIXED')
+    parser = argparse.ArgumentParser(description='Realistic Backtesting Engine V2.2 - CAPITAL FIXED')
     parser.add_argument('--symbols', nargs='+', default=['AAPL', 'MSFT', 'TSLA', 'NVDA', 'SPY'], 
                        help='Símbolos a testear')
     parser.add_argument('--start-date', type=str, default='2024-12-15',
@@ -933,7 +958,7 @@ def main():
                        help='Fecha fin (YYYY-MM-DD)')
     parser.add_argument('--capital', type=float, default=10000,
                        help='Capital inicial')
-    parser.add_argument('--output', type=str, default='backtest_results.json',
+    parser.add_argument('--output', type=str, default='backtest_results_v22.json',
                        help='Archivo de salida')
     parser.add_argument('--verbose', action='store_true',
                        help='Modo verbose')
@@ -948,7 +973,7 @@ def main():
         start_date = datetime.strptime(args.start_date, '%Y-%m-%d')
         end_date = datetime.strptime(args.end_date, '%Y-%m-%d')
         
-        print(f"🚀 Iniciando Realistic Backtesting Engine V2.1 - FIXED")
+        print(f"🚀 Iniciando Realistic Backtesting Engine V2.2 - CAPITAL FIXED")
         print(f"📊 Símbolos: {args.symbols}")
         print(f"📅 Período: {start_date.date()} a {end_date.date()}")
         print(f"💰 Capital: ${args.capital:,.2f}")

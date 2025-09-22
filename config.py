@@ -94,8 +94,8 @@ SCORING = {
 # Umbrales de señales
 SIGNAL_THRESHOLDS = {
     'NO_TRADE': 55,      # < 70 puntos: No operar
-    'PARTIAL_ENTRY': 70, # 70-79 puntos: Entrada parcial
-    'FULL_ENTRY': 85,   # ≥ 100 puntos: Entrada completa
+    'PARTIAL_ENTRY': 65, # 70-79 puntos: Entrada parcial
+    'FULL_ENTRY': 75,   # ≥ 100 puntos: Entrada completa
 }
 
 # =============================================================================
