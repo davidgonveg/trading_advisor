@@ -9,6 +9,7 @@ Modifica estos parámetros según tus necesidades.
 
 import os
 from dotenv import load_dotenv
+from pathlib import Path
 
 # Cargar variables de entorno desde .env
 load_dotenv()
@@ -92,9 +93,9 @@ SCORING = {
 
 # Umbrales de señales
 SIGNAL_THRESHOLDS = {
-    'NO_TRADE': 70,      # < 70 puntos: No operar
-    'PARTIAL_ENTRY': 80, # 70-79 puntos: Entrada parcial
-    'FULL_ENTRY': 100,   # ≥ 100 puntos: Entrada completa
+    'NO_TRADE': 55,      # < 70 puntos: No operar
+    'PARTIAL_ENTRY': 70, # 70-79 puntos: Entrada parcial
+    'FULL_ENTRY': 85,   # ≥ 100 puntos: Entrada completa
 }
 
 # =============================================================================
@@ -187,9 +188,26 @@ ALERT_TYPES = {
 # =============================================================================
 
 # Logging
+# Crear directorio de logs si no existe
+LOG_DIR = Path("logs")
+LOG_DIR.mkdir(exist_ok=True)
+
+# Logging con ruta completa
 LOG_LEVEL = "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
 LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-LOG_FILE = "trading_system.log"
+LOG_FILE = LOG_DIR / "trading_system.log"  # Ruta completa
+
+# También crear logs específicos si quieres
+SCANNER_LOG_FILE = LOG_DIR / "scanner.log"
+EXIT_MANAGER_LOG_FILE = LOG_DIR / "exit_manager.log"
+DATABASE_LOG_FILE = LOG_DIR / "database.log"
+
+# API Configuration (resto igual)
+API_CONFIG = {
+    'YFINANCE_TIMEOUT': 30,
+    'MAX_RETRIES': 3,
+    'RATE_LIMIT_DELAY': 0.1,
+}
 
 # API Configuration
 API_CONFIG = {

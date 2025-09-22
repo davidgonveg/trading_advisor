@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-🔗 DATABASE CONNECTION - SQLite Simple
-=====================================
+🔗 DATABASE CONNECTION - SQLite Simple - FIXED OHLC VERSION
+=========================================================
 
-Funciones para conectar y guardar datos en la base de datos SQLite.
+FIXED: save_indicators_data() ahora guarda TODOS los campos OHLC
 """
 
 import sqlite3
@@ -51,7 +51,13 @@ def save_indicators_data(indicators: Dict[str, Any]) -> bool:
         # Extraer datos básicos
         symbol = indicators.get('symbol', 'UNKNOWN')
         timestamp = indicators.get('timestamp', datetime.now()).isoformat()
-        current_price = indicators.get('current_price', 0)
+        
+        # ✅ FIXED: Extraer TODOS los precios OHLC
+        current_price = indicators.get('current_price', 0)  # Este será close_price
+        open_price = indicators.get('open_price', current_price)  # Si no está, usar close
+        high_price = indicators.get('high_price', current_price)  # Si no está, usar close
+        low_price = indicators.get('low_price', current_price)   # Si no está, usar close
+        close_price = current_price
         current_volume = indicators.get('current_volume', 0)
         
         # Extraer datos de indicadores
@@ -72,18 +78,18 @@ def save_indicators_data(indicators: Dict[str, Any]) -> bool:
         else:
             market_regime = "TRANSITIONING"
         
-        # Insertar en base de datos
+        # ✅ FIXED: INSERT con TODOS los campos OHLC
         cursor.execute('''
         INSERT OR REPLACE INTO indicators_data (
-            timestamp, symbol, close_price, volume,
+            timestamp, symbol, open_price, high_price, low_price, close_price, volume,
             rsi_value, macd_line, macd_signal, macd_histogram,
             vwap_value, vwap_deviation_pct, roc_value,
             bb_upper, bb_middle, bb_lower, bb_position,
             volume_oscillator, atr_value, atr_percentage,
             market_regime, volatility_level
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
-            timestamp, symbol, current_price, current_volume,
+            timestamp, symbol, open_price, high_price, low_price, close_price, current_volume,
             rsi_data.get('rsi', 0),
             macd_data.get('macd', 0),
             macd_data.get('signal', 0),

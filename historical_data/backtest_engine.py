@@ -800,78 +800,171 @@ class ValidatedBacktestEngine:
     
     def _evaluate_signal_at_timestamp(self, symbol: str, row: pd.Series, 
                                     indicators: Dict) -> Optional[TradingSignal]:
-        """Evaluar si hay señal válida en este timestamp"""
+        """Evaluar si hay señal válida usando el SCANNER REAL del sistema"""
         try:
-            # Usar parámetros más realistas y menos estrictos
-            rsi = indicators['rsi']['rsi']
-            macd_hist = indicators['macd']['histogram']
-            roc = indicators['roc']['roc']
+            # 🔧 FIX: Usar el scanner real en lugar de lógica hardcodeada
             
-            # Lógica de señales RELAJADA para generar más trades
-            signal_strength = 0
-            signal_type = 'NONE'
+            # Preparar datos en formato esperado por TechnicalIndicators
+            mock_data = pd.DataFrame({
+                'Open': [row['open']],
+                'High': [row['high']], 
+                'Low': [row['low']],
+                'Close': [row['close']],
+                'Volume': [row['volume']]
+            }, index=[row.name])
             
-            # LONG signals - condiciones más permisivas
-            long_score = 0
-            if macd_hist > 0:
-                long_score += 25
-            if rsi < 50:  # Más permisivo que 40
-                long_score += 20
-            if roc > 0.5:  # Más permisivo que 1.5
-                long_score += 20
+            # Obtener indicadores usando TechnicalIndicators real
+            try:
+                real_indicators = self.indicators.get_all_indicators_from_data(
+                    symbol=symbol, 
+                    data=mock_data
+                )
+            except:
+                # Fallback: usar los indicadores que ya tenemos
+                real_indicators = {
+                    'symbol': symbol,
+                    'current_price': row['close'],
+                    'timestamp': row.name,
+                    'macd': {
+                        'macd': indicators['macd'].get('macd', 0),
+                        'signal': indicators['macd'].get('signal', 0),
+                        'histogram': indicators['macd'].get('histogram', 0),
+                        'bullish_cross': indicators['macd'].get('histogram', 0) > 0,
+                        'bearish_cross': indicators['macd'].get('histogram', 0) < 0
+                    },
+                    'rsi': {
+                        'rsi': indicators['rsi'].get('rsi', 50),
+                        'oversold': indicators['rsi'].get('rsi', 50) < 40,
+                        'overbought': indicators['rsi'].get('rsi', 50) > 60
+                    },
+                    'vwap': {
+                        'vwap': indicators['vwap'].get('vwap', row['close']),
+                        'deviation_pct': ((row['close'] - indicators['vwap'].get('vwap', row['close'])) / indicators['vwap'].get('vwap', row['close'])) * 100 if indicators['vwap'].get('vwap', row['close']) > 0 else 0
+                    },
+                    'roc': {
+                        'roc': indicators['roc'].get('roc', 0),
+                        'bullish_momentum': indicators['roc'].get('roc', 0) > 1.5,
+                        'bearish_momentum': indicators['roc'].get('roc', 0) < -1.5
+                    },
+                    'bollinger': {
+                        'upper': indicators['bollinger'].get('upper_band', row['close']),
+                        'middle': indicators['bollinger'].get('middle_band', row['close']),
+                        'lower': indicators['bollinger'].get('lower_band', row['close']),
+                        'bb_position': 0.5  # Default middle
+                    },
+                    'volume_osc': {
+                        'volume_oscillator': indicators['volume_osc'].get('volume_oscillator', 0)
+                    },
+                    'atr': {
+                        'atr': indicators['atr'].get('atr', 0.01),
+                        'atr_percentage': (indicators['atr'].get('atr', 0.01) / row['close']) * 100 if row['close'] > 0 else 1.0
+                    }
+                }
             
-            # SHORT signals - condiciones más permisivas  
-            short_score = 0
-            if macd_hist < 0:
-                short_score += 25
-            if rsi > 50:  # Más permisivo que 60
-                short_score += 20
-            if roc < -0.5:  # Más permisivo que -1.5
-                short_score += 20
+            # 🎯 USAR SCANNER REAL para evaluar señal
+            long_score, long_scores, long_signals = self.scanner.evaluate_long_signal(real_indicators)
+            short_score, short_scores, short_signals = self.scanner.evaluate_short_signal(real_indicators)
             
-            # Determinar señal final
-            if long_score >= 45 and long_score > short_score:  # Umbral más bajo
-                signal_strength = long_score + 20  # Boost para alcanzar 65+
+            # 🔧 USAR THRESHOLDS REALES de config.py
+            import config
+            
+            signal_type = None
+            final_score = 0
+            final_scores = {}
+            final_signals = {}
+            
+            # Determinar señal basada en thresholds reales
+            if long_score >= config.SIGNAL_THRESHOLDS['NO_TRADE'] and long_score > short_score:
                 signal_type = 'LONG'
-            elif short_score >= 45 and short_score > long_score:
-                signal_strength = short_score + 20
+                final_score = long_score
+                final_scores = long_scores
+                final_signals = long_signals
+            elif short_score >= config.SIGNAL_THRESHOLDS['NO_TRADE'] and short_score > long_score:
                 signal_type = 'SHORT'
+                final_score = short_score
+                final_scores = short_scores
+                final_signals = short_signals
             
-            if signal_strength >= 60:  # Umbral más bajo que 65
-                # Crear señal mock
+            if signal_type and final_score >= config.SIGNAL_THRESHOLDS['NO_TRADE']:
+                # Determinar calidad usando scanner real
+                entry_quality, confidence_level = self.scanner.determine_signal_quality(final_score, signal_type)
+                
+                # Crear señal usando el mismo formato que el scanner real
                 signal = TradingSignal(
                     symbol=symbol,
                     timestamp=row.name,
                     signal_type=signal_type,
-                    signal_strength=signal_strength,
-                    confidence_level='MEDIUM',
+                    signal_strength=final_score,
+                    confidence_level=confidence_level,
                     current_price=row['close'],
-                    entry_quality='FULL_ENTRY',
-                    indicator_scores={
-                        'MACD': 25 if signal_type == 'LONG' and macd_hist > 0 else (25 if signal_type == 'SHORT' and macd_hist < 0 else 0),
-                        'RSI': 20 if (signal_type == 'LONG' and rsi < 50) or (signal_type == 'SHORT' and rsi > 50) else 0,
-                        'ROC': 20 if abs(roc) > 0.5 else 0,
-                        'VWAP': 10,
-                        'BOLLINGER': 10,
-                        'VOLUME': 10
-                    },
-                    indicator_signals={
-                        'MACD': f"Histogram: {macd_hist:.4f}",
-                        'RSI': f"RSI: {rsi:.1f}",
-                        'ROC': f"ROC: {roc:.2f}%",
-                        'VWAP': "Near VWAP",
-                        'BOLLINGER': "In range",
-                        'VOLUME': "Adequate"
-                    }
+                    entry_quality=entry_quality,
+                    indicator_scores=final_scores,
+                    indicator_signals=final_signals,
+                    market_context=self.scanner.get_market_context(real_indicators),
+                    risk_reward_ratio=3.0,  # Default R:R
+                    expected_hold_time="2-5 days"
                 )
                 
+                logger.info(f"📊 {symbol}: Señal {signal_type} detectada con {final_score} puntos")
                 return signal
             
             return None
             
         except Exception as e:
             logger.error(f"❌ Error evaluating signal for {symbol}: {e}")
+            import traceback
+            logger.debug(f"🔍 Traceback: {traceback.format_exc()}")
             return None
+
+
+    # 🆕 MÉTODO HELPER para TechnicalIndicators desde datos específicos
+    def get_all_indicators_from_data(self, symbol: str, data: pd.DataFrame) -> Dict:
+        """
+        Método helper para calcular indicadores desde datos específicos
+        (Para añadir a TechnicalIndicators class)
+        """
+        try:
+            if len(data) < 30:
+                # Si no hay suficientes datos, usar valores por defecto
+                return {
+                    'symbol': symbol,
+                    'current_price': data['Close'].iloc[-1] if len(data) > 0 else 0,
+                    'macd': {'macd': 0, 'signal': 0, 'histogram': 0, 'bullish_cross': False, 'bearish_cross': False},
+                    'rsi': {'rsi': 50, 'oversold': False, 'overbought': False},
+                    'vwap': {'vwap': data['Close'].iloc[-1] if len(data) > 0 else 0, 'deviation_pct': 0},
+                    'roc': {'roc': 0, 'bullish_momentum': False, 'bearish_momentum': False},
+                    'bollinger': {'upper': 0, 'middle': 0, 'lower': 0, 'bb_position': 0.5},
+                    'volume_osc': {'volume_oscillator': 0},
+                    'atr': {'atr': 0.01, 'atr_percentage': 1.0}
+                }
+            
+            # Calcular indicadores normalmente
+            return {
+                'symbol': symbol,
+                'current_price': float(data['Close'].iloc[-1]),
+                'macd': self.calculate_macd(data),
+                'rsi': self.calculate_rsi(data),
+                'vwap': self.calculate_vwap(data),
+                'roc': self.calculate_roc(data),
+                'bollinger': self.calculate_bollinger_bands(data),
+                'volume_osc': self.calculate_volume_oscillator(data),
+                'atr': self.calculate_atr(data)
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Error calculando indicadores para {symbol}: {e}")
+            # Return safe defaults
+            return {
+                'symbol': symbol,
+                'current_price': data['Close'].iloc[-1] if len(data) > 0 else 0,
+                'macd': {'macd': 0, 'signal': 0, 'histogram': 0, 'bullish_cross': False, 'bearish_cross': False},
+                'rsi': {'rsi': 50, 'oversold': False, 'overbought': False},
+                'vwap': {'vwap': data['Close'].iloc[-1] if len(data) > 0 else 0, 'deviation_pct': 0},
+                'roc': {'roc': 0, 'bullish_momentum': False, 'bearish_momentum': False},
+                'bollinger': {'upper': 0, 'middle': 0, 'lower': 0, 'bb_position': 0.5},
+                'volume_osc': {'volume_oscillator': 0},
+                'atr': {'atr': 0.01, 'atr_percentage': 1.0}
+        }
     
     def _open_position(self, signal: TradingSignal, row: pd.Series, timestamp) -> Dict:
         """Abrir nueva posición"""

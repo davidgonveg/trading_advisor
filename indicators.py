@@ -487,9 +487,10 @@ class TechnicalIndicators:
             logger.error(f"❌ Error calculando ATR: {str(e)}")
             return self._get_empty_atr()
     
+
     def get_all_indicators(self, symbol: str, period: str = "15m", days: int = 30) -> Dict:
         """
-        Calcular todos los indicadores para un símbolo
+        Calcular todos los indicadores para un símbolo - FIXED OHLC VERSION
         
         Args:
             symbol: Símbolo a analizar
@@ -497,7 +498,7 @@ class TechnicalIndicators:
             days: Días de historial (default: 30)
             
         Returns:
-            Dict con todos los indicadores
+            Dict con todos los indicadores + datos OHLC completos
         """
         try:
             logger.info(f"🔍 Calculando indicadores para {symbol}")
@@ -508,13 +509,27 @@ class TechnicalIndicators:
             if len(data) < 30:
                 raise ValueError(f"Datos insuficientes para {symbol}: {len(data)} barras")
             
+            # ✅ FIXED: Extraer datos OHLCV de la última vela
+            last_candle = data.iloc[-1]
+            current_open = float(last_candle['Open'])
+            current_high = float(last_candle['High'])
+            current_low = float(last_candle['Low'])
+            current_close = float(last_candle['Close'])
+            current_volume = int(last_candle['Volume'])
+            
             # Calcular todos los indicadores
             indicators = {
                 'symbol': symbol,
                 'timestamp': datetime.now(),
-                'current_price': float(data['Close'].iloc[-1]),
-                'current_volume': int(data['Volume'].iloc[-1]),
                 'data_points': len(data),
+                
+                # ✅ FIXED: Incluir TODOS los precios OHLC
+                'current_price': current_close,  # Este es el close_price
+                'open_price': current_open,      # ✅ NUEVO
+                'high_price': current_high,      # ✅ NUEVO
+                'low_price': current_low,        # ✅ NUEVO
+                'close_price': current_close,    # Explícito para claridad
+                'current_volume': current_volume,
                 
                 # Indicadores técnicos
                 'macd': self.calculate_macd(data),
@@ -531,7 +546,7 @@ class TechnicalIndicators:
             
             logger.info(f"✅ {symbol}: Indicadores calculados exitosamente")
             
-            # 🆕 GUARDAR EN BASE DE DATOS
+            # 🆕 GUARDAR EN BASE DE DATOS con OHLC completo
             try:
                 from database.connection import save_indicators_data
                 save_indicators_data(indicators)
