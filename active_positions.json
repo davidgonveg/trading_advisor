@@ -1,0 +1,58 @@
+{
+  "AAPL": {
+    "symbol": "AAPL",
+    "direction": "SHORT",
+    "entry_time": "2025-09-23T14:34:31.392544+00:00",
+    "entry_price": 256.360107421875,
+    "current_price": 254.1699981689453,
+    "unrealized_pnl_pct": 0.8543096954338408,
+    "deterioration_count": 0,
+    "exit_alerts_sent": 0,
+    "last_evaluation": "2025-09-23T18:00:59.002928+00:00",
+    "entry_signal_strength": 63,
+    "entry_confidence": "MEDIUM",
+    "strategy_type": "POSITION"
+  },
+  "^GSPC": {
+    "symbol": "^GSPC",
+    "direction": "SHORT",
+    "entry_time": "2025-09-23T14:19:05.849994+00:00",
+    "entry_price": 6693.64013671875,
+    "current_price": 6656.25,
+    "unrealized_pnl_pct": 0.5585919761900854,
+    "deterioration_count": 0,
+    "exit_alerts_sent": 0,
+    "last_evaluation": "2025-09-23T18:00:59.008498+00:00",
+    "entry_signal_strength": 58,
+    "entry_confidence": "MEDIUM",
+    "strategy_type": "POSITION"
+  },
+  "AMZN": {
+    "symbol": "AMZN",
+    "direction": "LONG",
+    "entry_time": "2025-09-23T18:16:15.294863+00:00",
+    "entry_price": 221.25999450683594,
+    "current_price": 221.25999450683594,
+    "unrealized_pnl_pct": 0.0,
+    "deterioration_count": 0,
+    "exit_alerts_sent": 0,
+    "last_evaluation": "2025-09-23T18:16:21.004557+00:00",
+    "entry_signal_strength": 60,
+    "entry_confidence": "MEDIUM",
+    "strategy_type": "POSITION"
+  },
+  "MSFT": {
+    "symbol": "MSFT",
+    "direction": "LONG",
+    "entry_time": "2025-09-23T18:16:05.263453+00:00",
+    "entry_price": 509.7925109863281,
+    "current_price": 509.7925109863281,
+    "unrealized_pnl_pct": 0.0,
+    "deterioration_count": 0,
+    "exit_alerts_sent": 0,
+    "last_evaluation": "2025-09-23T18:16:17.820528+00:00",
+    "entry_signal_strength": 68,
+    "entry_confidence": "HIGH",
+    "strategy_type": "SWING_MEDIUM"
+  }
+}

@@ -356,7 +356,7 @@ class SmartTradingSystemV23WithDynamicMonitoring:
             
             # 1. 🎯 NUEVO: Iniciar dynamic monitor si está disponible
             if self.dynamic_monitor:
-                success = self.dynamic_monitor.start_dynamic_monitoring()
+                success = self.dynamic_monitor.start_monitoring()
                 if success:
                     logger.info("✅ Dynamic Monitor iniciado en paralelo")
                 else:
@@ -990,10 +990,10 @@ def mode_interactive_v23():
                 sub_choice = input("Acción (a/b/c/enter para continuar): ").strip().lower()
                 
                 if sub_choice == 'a':
-                    success = system.dynamic_monitor.start_dynamic_monitoring()
+                    success = system.dynamic_monitor.start_monitoring()
                     print(f"Resultado: {'✅ OK' if success else '❌ FALLO'}")
                 elif sub_choice == 'b':
-                    success = system.dynamic_monitor.stop_dynamic_monitoring()
+                    success = system.dynamic_monitor.stop_monitoring()
                     print(f"Resultado: {'✅ OK' if success else '❌ FALLO'}")
                 elif sub_choice == 'c':
                     system.dynamic_monitor.sync_with_exit_manager()
@@ -1178,7 +1178,7 @@ def main_v23():
                 
                 # Iniciar monitoreo
                 print("🚀 Iniciando Dynamic Monitor...")
-                success = system.dynamic_monitor.start_dynamic_monitoring()
+                success = system.dynamic_monitor.start_monitoring()
                 
                 if success:
                     try:
