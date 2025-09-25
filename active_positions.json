@@ -1,0 +1,72 @@
+{
+  "MSFT": {
+    "symbol": "MSFT",
+    "direction": "LONG",
+    "entry_time": "2025-09-24T14:15:41.793342+00:00",
+    "entry_price": 508.8299865722656,
+    "current_price": 508.0799865722656,
+    "unrealized_pnl_pct": -0.14739697340802901,
+    "deterioration_count": 0,
+    "exit_alerts_sent": 0,
+    "last_evaluation": "2025-09-24T18:16:45.697003+00:00",
+    "entry_signal_strength": 56,
+    "entry_confidence": "MEDIUM",
+    "strategy_type": "POSITION"
+  },
+  "TSLA": {
+    "symbol": "TSLA",
+    "direction": "SHORT",
+    "entry_time": "2025-09-24T18:31:58.078731+00:00",
+    "entry_price": 439.30499267578125,
+    "current_price": 439.30499267578125,
+    "unrealized_pnl_pct": 0.0,
+    "deterioration_count": 0,
+    "exit_alerts_sent": 0,
+    "last_evaluation": "2025-09-24T18:32:10.758930+00:00",
+    "entry_signal_strength": 58,
+    "entry_confidence": "MEDIUM",
+    "strategy_type": "POSITION"
+  },
+  "META": {
+    "symbol": "META",
+    "direction": "LONG",
+    "entry_time": "2025-09-24T18:32:00.062193+00:00",
+    "entry_price": 755.8779296875,
+    "current_price": 755.8779296875,
+    "unrealized_pnl_pct": 0.0,
+    "deterioration_count": 0,
+    "exit_alerts_sent": 0,
+    "last_evaluation": "2025-09-24T18:32:13.912293+00:00",
+    "entry_signal_strength": 55,
+    "entry_confidence": "MEDIUM",
+    "strategy_type": "POSITION"
+  },
+  "^GSPC": {
+    "symbol": "^GSPC",
+    "direction": "LONG",
+    "entry_time": "2025-09-24T18:31:46.053620+00:00",
+    "entry_price": 6631.169921875,
+    "current_price": 6631.169921875,
+    "unrealized_pnl_pct": 0.0,
+    "deterioration_count": 0,
+    "exit_alerts_sent": 0,
+    "last_evaluation": "2025-09-24T18:32:04.282555+00:00",
+    "entry_signal_strength": 58,
+    "entry_confidence": "MEDIUM",
+    "strategy_type": "POSITION"
+  },
+  "NVDA": {
+    "symbol": "NVDA",
+    "direction": "LONG",
+    "entry_time": "2025-09-24T18:31:56.156969+00:00",
+    "entry_price": 176.75999450683594,
+    "current_price": 176.75999450683594,
+    "unrealized_pnl_pct": 0.0,
+    "deterioration_count": 0,
+    "exit_alerts_sent": 0,
+    "last_evaluation": "2025-09-24T18:32:07.466564+00:00",
+    "entry_signal_strength": 58,
+    "entry_confidence": "MEDIUM",
+    "strategy_type": "POSITION"
+  }
+}
