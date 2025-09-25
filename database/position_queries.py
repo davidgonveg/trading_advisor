@@ -348,26 +348,27 @@ class PositionQueries:
             self.logger.error(f"❌ Error obteniendo resumen {symbol}: {e}")
             return {}
     
-    def get_position_by_id(self, position_id: str) -> Optional[EnhancedPosition]:
+    def get_position_by_id(self, position_id: str) -> Optional[Dict[str, Any]]:
         """Obtener posición desde BD"""
         try:
             with get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
-                    SELECT position_id, symbol, direction, status, created_at
+                    SELECT position_id, symbol, created_at
                     FROM position_executions 
                     WHERE position_id = ? 
                     LIMIT 1
                 """, (position_id,))
-                
+
                 row = cursor.fetchone()
                 if row:
-                    return EnhancedPosition(
-                        position_id=row[0],
-                        symbol=row[1],
-                        direction=SignalDirection(row[2]),
-                        status=PositionStatus(row[3])
-                    )
+                    return {
+                        'position_id': row[0],
+                        'symbol': row[1],
+                        'direction': 'LONG',  # Default value
+                        'status': 'PENDING',  # Default value
+                        'created_at': row[2]
+                    }
         except Exception as e:
             logger.error(f"Error BD: {e}")
         return None

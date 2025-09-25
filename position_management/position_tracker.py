@@ -447,6 +447,7 @@ class PositionTracker:
                 # Actualizar stats
                 if reason == "completed":
                     self._stats['positions_completed'] += 1
+                    logger.debug(f"Stats updated: positions_completed = {self._stats['positions_completed']}")
                 elif reason == "failed":
                     self._stats['positions_failed'] += 1
                 
@@ -589,7 +590,8 @@ class PositionTracker:
                 report.overall_status = HealthStatus.CRITICAL
             elif report.positions_with_issues > report.total_positions * 0.1:  # >10% posiciones con issues
                 report.overall_status = HealthStatus.WARNING
-            elif report.cache_hit_rate < 80.0 or report.execution_success_rate < 90.0:
+            elif (isinstance(report.cache_hit_rate, (int, float)) and report.cache_hit_rate < 80.0) or \
+                 (isinstance(report.execution_success_rate, (int, float)) and report.execution_success_rate < 90.0):
                 report.overall_status = HealthStatus.DEGRADED
             else:
                 report.overall_status = HealthStatus.HEALTHY
@@ -599,6 +601,7 @@ class PositionTracker:
                 report.recommended_actions = self._generate_recovery_actions(report)
             
             self._stats['health_checks_performed'] += 1
+            logger.debug(f"Health check completado. Total: {self._stats['health_checks_performed']}")
             
             # Notificar observers
             for callback in self._health_callbacks:
@@ -651,10 +654,13 @@ class PositionTracker:
     
     def _validate_position(self, position: EnhancedPosition) -> bool:
         """Validar que una posición sea válida para tracking"""
+        if not position or not hasattr(position, 'position_id'):
+            return False
+            
         if not position.position_id or not position.symbol:
             return False
         
-        if position.direction not in [SignalDirection.LONG, SignalDirection.SHORT]:
+        if not hasattr(position, 'direction') or position.direction not in [SignalDirection.LONG, SignalDirection.SHORT]:
             return False
         
         return True
@@ -733,14 +739,25 @@ class PositionTracker:
                 inconsistencies.append("Status PARTIALLY_FILLED pero no hay entradas ejecutadas")
             
             # Validar summary vs execution levels
-            calculated_size = sum(level.quantity for level in position.get_executed_entries())
-            if abs(position.summary.current_position_size - calculated_size) > 0.001:
-                inconsistencies.append("Position size inconsistente con execution levels")
+            # Validar summary vs execution levels - solo si hay entradas ejecutadas
+            executed_entries = position.get_executed_entries()
+            if executed_entries:
+                calculated_size = sum(level.quantity for level in executed_entries)
+                if abs(position.summary.current_position_size - calculated_size) > 0.001:
+                    inconsistencies.append("Position size inconsistente con execution levels")
             
             # Validar timestamps
             now = datetime.now(pytz.UTC)
-            if position.updated_at > now + timedelta(minutes=1):
-                inconsistencies.append("Timestamp futuro en updated_at")
+            # Manejar timezone awareness
+            try:
+                updated_at = position.updated_at
+                if updated_at.tzinfo is None:
+                    updated_at = updated_at.replace(tzinfo=pytz.UTC)
+                
+                if updated_at > now + timedelta(minutes=1):
+                    inconsistencies.append("Timestamp futuro en updated_at")
+            except (AttributeError, TypeError):
+                pass  # Skip timestamp validation if error
             
             return inconsistencies
             

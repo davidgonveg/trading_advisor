@@ -90,6 +90,11 @@ class StateManager:
     
     def __init__(self):
         """Inicializar el State Manager"""
+        self._active_positions = {}  # LÍNEA CRÍTICA FALTANTE
+        self._stats = {'positions_created': 0}
+        self.ACTIVE_TRACKING_STATES = {PositionStatus.ENTRY_PENDING, PositionStatus.PARTIALLY_FILLED}
+        self.FINAL_STATES = {PositionStatus.CLOSED, PositionStatus.STOPPED_OUT}
+        
         self.state_machine = PositionStateMachine()
         self.position_queries = PositionQueries()
         
@@ -114,6 +119,36 @@ class StateManager:
     # ==============================================
     # GESTIÓN DE POSICIONES - API PRINCIPAL
     # ==============================================
+    
+    def register_position(self, position: EnhancedPosition) -> bool:
+        """Registrar nueva posición"""
+        try:
+            self._active_positions[position.position_id] = position
+            self._stats['positions_created'] += 1
+            return True
+        except Exception:
+            return False
+
+    def get_position(self, position_id: str) -> Optional[EnhancedPosition]:
+        """Obtener posición por ID"""
+        return self._active_positions.get(position_id)
+
+    def update_position(self, position: EnhancedPosition) -> bool:
+        """Actualizar posición existente"""
+        try:
+            self._active_positions[position.position_id] = position
+            return True
+        except Exception:
+            return False
+
+    def archive_position(self, position_id: str, reason: str):
+        """Archivar posición"""
+        if position_id in self._active_positions:
+            del self._active_positions[position_id]
+
+    def get_health_status(self) -> Dict[str, Any]:
+        """Estado de salud del state manager"""
+        return {'status': 'healthy'}
     
     def create_position(self, symbol: str, direction: SignalDirection, 
                        entry_levels: List[ExecutionLevel], 

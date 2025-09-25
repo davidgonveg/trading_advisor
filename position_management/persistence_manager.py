@@ -257,7 +257,7 @@ class PersistenceManager:
             # Detectar conflictos si ya existe
             existing_position = self._get_from_cache(cache_key)
             if existing_position and self._detect_conflict(position, existing_position):
-                conflict = self._handle_conflict(cache_key, position, existing_position)
+                conflict = self._handle_data_conflict(cache_key, position, existing_position)
                 if not conflict.resolved:
                     logger.warning(f"⚠️ Conflicto no resuelto para posición {position.position_id}")
                     return False
@@ -451,7 +451,7 @@ class PersistenceManager:
             logger.error(f"❌ Error detectando conflicto: {e}")
             return False
     
-    def _handle_conflict(self, key: str, local_data: Any, remote_data: Any) -> Any:
+    def _handle_data_conflict(self, key: str, local_data: Any, remote_data: Any) -> DataConflict:
         """Manejar conflicto de datos"""
         conflict_id = str(uuid.uuid4())
         
@@ -920,6 +920,49 @@ class PersistenceManager:
         
         logger.info(f"💾 Flush completado: {dirty_count} entradas sincronizadas")
         return dirty_count
+    
+    def restore_snapshot(self, snapshot_file: str) -> bool:
+        """Alias para restore_from_snapshot con manejo de directorios"""
+        import os
+        from pathlib import Path
+        
+        # Si es un directorio, buscar el archivo snapshot más reciente
+        if os.path.isdir(snapshot_file):
+            snapshot_dir = Path(snapshot_file)
+            snapshot_files = list(snapshot_dir.glob("persistence_snapshot_*.pkl"))
+            if snapshot_files:
+                # Usar el más reciente
+                snapshot_file = str(max(snapshot_files, key=lambda f: f.stat().st_mtime))
+            else:
+                return False
+        
+        return self.restore_from_snapshot(snapshot_file)
+    
+    def get_health_status(self) -> Dict[str, Any]:
+        """Obtener estado de salud como dict"""
+        return {
+            'status': 'healthy' if not self._shutdown else 'shutdown',
+            'cache_size': len(self._cache),
+            'active_transactions': len(self._active_transactions),
+            'unresolved_conflicts': len([c for c in self._conflicts.values() if not c.resolved]),
+            'background_threads_alive': {
+                'cleanup': self._cleanup_thread.is_alive(),
+                'sync': self._sync_thread.is_alive()
+            },
+            'statistics': self._stats.copy()
+        }
+    
+    def get_system_health(self) -> str:
+        """Obtener estado de salud como string para compatibilidad"""
+        cache_size = len(self._cache)
+        active_txns = len(self._active_transactions)
+        
+        if cache_size > 10000 or active_txns > 50:
+            return "UNHEALTHY"
+        elif cache_size > 5000 or active_txns > 20:
+            return "DEGRADED"
+        else:
+            return "HEALTHY"
     
     def shutdown(self):
         """Shutdown limpio del persistence manager"""
