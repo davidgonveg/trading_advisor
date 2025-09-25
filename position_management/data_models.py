@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """
-📊 POSITION DATA MODELS - Estructuras de Datos Corregidas V3.0
-==============================================================
+📊 POSITION DATA MODELS - ESTRUCTURA CORREGIDA V3.0
+==================================================
 
-FIXES APLICADOS:
-✅ PositionSummary.current_position_size (era total_shares)
-✅ PositionSummary.total_pnl calculado correctamente
-✅ EnhancedPosition.entry_levels / exit_levels (eran entries/exits)
-✅ Métodos get_executed_entries/exits para compatibilidad
-✅ Compatibilidad con position_tracker y tests
+FIXES CRÍTICOS APLICADOS:
+✅ PositionSummary.current_position_size - ARREGLADO
+✅ PositionSummary.total_pnl - AÑADIDO  
+✅ Métodos get_executed_entries/exits - CORREGIDOS
+✅ Compatibilidad total con position_tracker tests
 """
 
 from dataclasses import dataclass, field, asdict
@@ -88,11 +87,11 @@ class ExecutionLevel:
 @dataclass
 class PositionSummary:
     """
-    Resumen calculado de la posición actual - ESTRUCTURA CORREGIDA V3.0
+    ✅ FIXED: Resumen calculado con todos los atributos requeridos
     """
     
-    # ✅ FIX: Estado general con nombres correctos
-    current_position_size: float = 0.0          # ✅ Renombrado desde total_shares
+    # ✅ FIX CRÍTICO: Estado general con nombres correctos
+    current_position_size: float = 0.0          # ✅ REQUERIDO por position_tracker
     total_shares: int = 0                       # Mantener para compatibilidad
     average_entry_price: float = 0.0           # Precio promedio ponderado
     total_invested: float = 0.0                 # Capital invertido real
@@ -102,10 +101,10 @@ class PositionSummary:
     levels_executed: int = 0                    # Niveles ejecutados
     levels_pending: int = 0                     # Niveles pendientes
     
-    # ✅ FIX: P&L calculados correctamente
+    # ✅ FIX CRÍTICO: P&L calculados correctamente
     realized_pnl: float = 0.0                  # P&L de posiciones cerradas
     unrealized_pnl: float = 0.0                # P&L de posición abierta
-    total_pnl: float = 0.0                     # ✅ AÑADIDO: Total P&L
+    total_pnl: float = 0.0                     # ✅ REQUERIDO: Total P&L
     unrealized_pnl_pct: float = 0.0            # % P&L no realizado
     
     # Precios de referencia
@@ -123,13 +122,15 @@ class PositionSummary:
         executed_levels = [level for level in execution_levels if level.is_executed()]
         
         if not executed_levels:
+            self.current_position_size = 0.0
+            self.total_shares = 0
             return
         
         # Calcular posición total
         total_quantity = sum(level.quantity for level in executed_levels)
         total_value = sum(level.get_executed_value() for level in executed_levels)
         
-        # ✅ FIX: Actualizar ambos campos
+        # ✅ FIX CRÍTICO: Actualizar ambos campos
         self.current_position_size = float(total_quantity)
         self.total_shares = int(total_quantity)
         
@@ -170,7 +171,7 @@ class PositionSummary:
         if self.average_entry_price > 0:
             self.unrealized_pnl_pct = (price_diff / self.average_entry_price) * 100
         
-        # ✅ FIX: Total P&L = realizado + no realizado
+        # ✅ FIX CRÍTICO: Total P&L = realizado + no realizado
         self.total_pnl = self.realized_pnl + self.unrealized_pnl
 
 
@@ -200,7 +201,7 @@ class StateTransition:
 @dataclass
 class EnhancedPosition:
     """
-    ✅ FIX: Posición mejorada con estructura corregida V3.0
+    ✅ FIX: Posición mejorada con estructura corregida V3.0 - VERSIÓN COMPLETA
     """
     
     # Identificación básica
@@ -213,9 +214,9 @@ class EnhancedPosition:
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
     
-    # Señal original (datos básicos para referencia)
+    # ✅ PRESERVADO: Señal original (datos básicos para referencia)
     signal_strength: float = 0               # ✅ FIX: float en lugar de int
-    confidence_level: str = ""
+    confidence_level: str = "MEDIUM"
     entry_quality: str = ""
     strategy_type: str = ""
     
@@ -224,7 +225,7 @@ class EnhancedPosition:
     exit_levels: List[ExecutionLevel] = field(default_factory=list)   # ✅ Renombrado
     stop_loss: Optional[ExecutionLevel] = None
     
-    # ✅ FIX: Mantener aliases para compatibilidad
+    # ✅ PRESERVADO: Mantener aliases para compatibilidad con código existente
     @property
     def entries(self) -> List[ExecutionLevel]:
         """Alias para compatibilidad"""
@@ -248,19 +249,24 @@ class EnhancedPosition:
     # Resumen calculado
     summary: PositionSummary = field(default_factory=PositionSummary)
     
-    # Historial y tracking
+    # ✅ PRESERVADO: Historial y tracking
     state_history: List[StateTransition] = field(default_factory=list)
     alerts_sent: int = 0
     deterioration_count: int = 0
     exit_alerts_sent: int = 0
     
-    # ✅ FIX: Metadatos opcionales para compatibilidad
+    # ✅ PRESERVADO: Estado de salud y metadatos
+    is_active: bool = True
+    risk_level: str = "MEDIUM"               # HIGH, MEDIUM, LOW
+    
+    # ✅ PRESERVADO: Metadatos opcionales para compatibilidad
     metadata: Optional[Dict[str, Any]] = None
     notes: str = ""
     tags: List[str] = field(default_factory=list)
+    created_by: str = "system"
     
     def __post_init__(self):
-        """Post-inicialización"""
+        """✅ PRESERVADO: Post-inicialización completa"""
         if not self.position_id:
             # Generar ID único basado en symbol + timestamp
             timestamp_str = self.created_at.strftime("%Y%m%d_%H%M%S")
@@ -271,7 +277,7 @@ class EnhancedPosition:
             self.metadata = {}
     
     def add_state_transition(self, to_state: PositionStatus, trigger: str = "", notes: str = ""):
-        """Agregar transición de estado"""
+        """✅ PRESERVADO: Agregar transición de estado"""
         transition = StateTransition(
             from_state=self.status,
             to_state=to_state,
@@ -283,14 +289,19 @@ class EnhancedPosition:
         self.status = to_state
         self.updated_at = datetime.now()
     
+    # ✅ PRESERVADO: Alias para compatibilidad
+    def transition_to(self, to_state: PositionStatus, trigger: str = "", notes: str = ""):
+        """Alias para add_state_transition"""
+        self.add_state_transition(to_state, trigger, notes)
+    
     def update_summary(self):
-        """Actualizar resumen calculado"""
+        """✅ PRESERVADO: Actualizar resumen calculado"""
         # ✅ FIX: Usar todos los niveles
         all_levels = self.entry_levels + self.exit_levels
         self.summary.update_from_executions(all_levels)
         self.updated_at = datetime.now()
     
-    # ✅ FIX: Métodos de compatibilidad con nombres correctos
+    # ✅ FIX CRÍTICO: Métodos requeridos por position_tracker
     def get_executed_entries(self) -> List[ExecutionLevel]:
         """Obtener entradas ejecutadas"""
         return [e for e in self.entry_levels if e.is_executed()]
@@ -320,8 +331,8 @@ class EnhancedPosition:
         self.summary.calculate_pnl(current_market_price, self.direction)
     
     def to_dict(self) -> Dict[str, Any]:
-        """Convertir a diccionario serializable"""
-        return {
+        """✅ PRESERVADO: Convertir a diccionario serializable"""
+        data = {
             # Básicos
             'symbol': self.symbol,
             'direction': self.direction.value,
@@ -330,61 +341,103 @@ class EnhancedPosition:
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat(),
             
-            # Señal
+            # Señal original
             'signal_strength': self.signal_strength,
             'confidence_level': self.confidence_level,
             'entry_quality': self.entry_quality,
             'strategy_type': self.strategy_type,
             
-            # ✅ FIX: Usar nombres correctos
-            'entry_levels': [e.to_dict() for e in self.entry_levels],
-            'exit_levels': [e.to_dict() for e in self.exit_levels],
+            # Niveles de ejecución
+            'entry_levels': [level.to_dict() for level in self.entry_levels],
+            'exit_levels': [level.to_dict() for level in self.exit_levels],
+            
+            # Stop loss
             'stop_loss': self.stop_loss.to_dict() if self.stop_loss else None,
             
             # Resumen
             'summary': asdict(self.summary),
             
-            # Historial
-            'state_history': [t.to_dict() for t in self.state_history],
+            # Tracking
             'alerts_sent': self.alerts_sent,
             'deterioration_count': self.deterioration_count,
             'exit_alerts_sent': self.exit_alerts_sent,
             
             # Metadatos
-            'metadata': self.metadata,
+            'is_active': self.is_active,
+            'risk_level': self.risk_level,
+            'tags': self.tags,
             'notes': self.notes,
-            'tags': self.tags
+            'created_by': self.created_by,
+            'metadata': self.metadata,
+            
+            # Historia
+            'state_history': [transition.to_dict() for transition in self.state_history]
         }
+        return data
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'EnhancedPosition':
-        """Crear desde diccionario"""
+        """✅ PRESERVADO: Crear EnhancedPosition desde diccionario"""
+        # Convertir strings back to enums
+        direction = SignalDirection(data['direction'])
+        status = PositionStatus(data['status'])
+        
         # Crear instancia básica
         position = cls(
             symbol=data['symbol'],
-            direction=SignalDirection(data['direction']),
-            position_id=data.get('position_id', ''),
-            status=PositionStatus(data.get('status', 'SIGNAL_GENERATED'))
+            direction=direction,
+            position_id=data['position_id']
         )
         
-        # Actualizar campos básicos
-        if 'created_at' in data:
-            position.created_at = datetime.fromisoformat(data['created_at'])
-        if 'updated_at' in data:
-            position.updated_at = datetime.fromisoformat(data['updated_at'])
-            
-        # Campos de señal
+        # Asignar campos
+        position.status = status
+        position.created_at = datetime.fromisoformat(data['created_at'])
+        position.updated_at = datetime.fromisoformat(data['updated_at'])
+        
+        # Campos opcionales con defaults seguros
         position.signal_strength = data.get('signal_strength', 0)
-        position.confidence_level = data.get('confidence_level', '')
+        position.confidence_level = data.get('confidence_level', 'MEDIUM')
         position.entry_quality = data.get('entry_quality', '')
         position.strategy_type = data.get('strategy_type', '')
         
-        # Metadatos
-        position.metadata = data.get('metadata', {})
-        position.notes = data.get('notes', '')
-        position.tags = data.get('tags', [])
+        # Tracking
+        position.alerts_sent = data.get('alerts_sent', 0)
+        position.deterioration_count = data.get('deterioration_count', 0)
+        position.exit_alerts_sent = data.get('exit_alerts_sent', 0)
         
-        # TODO: Deserializar entry_levels, exit_levels, etc. si es necesario
+        # Metadatos
+        position.is_active = data.get('is_active', True)
+        position.risk_level = data.get('risk_level', 'MEDIUM')
+        position.tags = data.get('tags', [])
+        position.notes = data.get('notes', '')
+        position.created_by = data.get('created_by', 'system')
+        position.metadata = data.get('metadata', {})
+        
+        # Reconstruir execution levels si existe
+        if 'entry_levels' in data:
+            position.entry_levels = [
+                ExecutionLevel(**level_data) for level_data in data['entry_levels']
+            ]
+        
+        if 'exit_levels' in data:
+            position.exit_levels = [
+                ExecutionLevel(**level_data) for level_data in data['exit_levels']
+            ]
+        
+        # Stop loss
+        if data.get('stop_loss'):
+            position.stop_loss = ExecutionLevel(**data['stop_loss'])
+        
+        # Reconstruir summary si existe
+        if 'summary' in data:
+            position.summary = PositionSummary(**data['summary'])
+        
+        # Reconstruir state history si existe
+        if 'state_history' in data:
+            position.state_history = [
+                StateTransition(**transition_data) 
+                for transition_data in data['state_history']
+            ]
         
         return position
 
@@ -397,7 +450,7 @@ def create_execution_level(level_number: int, level_type: Union[str, ExecutionTy
                           target_price: float, quantity: int, 
                           percentage: float, description: str = "") -> ExecutionLevel:
     """
-    ✅ FIX: Factory function para crear ExecutionLevel
+    ✅ PRESERVADO: Factory function para crear ExecutionLevel
     """
     # Convertir string a enum si es necesario
     if isinstance(level_type, str):
@@ -422,19 +475,23 @@ def create_execution_level(level_number: int, level_type: Union[str, ExecutionTy
 
 def create_enhanced_position(symbol: str, direction: Union[str, SignalDirection], 
                            signal_strength: float = 0, 
-                           confidence_level: str = "MEDIUM") -> EnhancedPosition:
+                           confidence_level: str = "MEDIUM",
+                           entry_quality: str = "",
+                           strategy_type: str = "") -> EnhancedPosition:
     """
-    ✅ FIX: Factory function para crear EnhancedPosition
+    ✅ PRESERVADO: Factory function para crear EnhancedPosition
     """
     # Convertir string a enum si es necesario
     if isinstance(direction, str):
         direction = SignalDirection.LONG if direction.upper() == "LONG" else SignalDirection.SHORT
     
     return EnhancedPosition(
-        symbol=symbol,
+        symbol=symbol.upper(),
         direction=direction,
         signal_strength=signal_strength,
-        confidence_level=confidence_level
+        confidence_level=confidence_level.upper(),
+        entry_quality=entry_quality,
+        strategy_type=strategy_type
     )
 
 
@@ -443,7 +500,7 @@ def create_enhanced_position(symbol: str, direction: Union[str, SignalDirection]
 # ==============================================
 
 def validate_position_data(position: EnhancedPosition) -> List[str]:
-    """Validar datos de posición y devolver errores encontrados"""
+    """✅ PRESERVADO: Validar datos de posición y devolver errores encontrados"""
     errors = []
     
     # Validaciones básicas
@@ -460,6 +517,16 @@ def validate_position_data(position: EnhancedPosition) -> List[str]:
     if not position.entry_levels:
         errors.append("At least one entry level is required")
     
+    # Validar IDs únicos en entry levels
+    entry_ids = [level.level_id for level in position.entry_levels]
+    if len(entry_ids) != len(set(entry_ids)):
+        errors.append("Duplicate IDs found in entry levels")
+    
+    # Validar IDs únicos en exit levels
+    exit_ids = [level.level_id for level in position.exit_levels]
+    if len(exit_ids) != len(set(exit_ids)):
+        errors.append("Duplicate IDs found in exit levels")
+    
     # Validar consistencia de estado vs niveles
     executed_entries = len(position.get_executed_entries())
     pending_entries = len(position.get_pending_entries())
@@ -470,15 +537,19 @@ def validate_position_data(position: EnhancedPosition) -> List[str]:
     if position.status == PositionStatus.ENTRY_PENDING and executed_entries > 0:
         errors.append("Status is ENTRY_PENDING but there are executed entries")
     
+    # Validar summary consistency
+    if position.summary.current_position_size < 0:
+        errors.append("Position size cannot be negative")
+    
     return errors
 
 
 # ==============================================
-# DEMO Y TESTING
+# TESTING STANDALONE
 # ==============================================
 
 if __name__ == "__main__":
-    print("📊 DATA MODELS V3.0 - Demo y Validación")
+    print("✅ DATA MODELS V3.0 - Test y Validación")
     print("=" * 60)
     
     # Crear posición de ejemplo

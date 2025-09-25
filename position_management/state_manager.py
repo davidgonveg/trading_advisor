@@ -194,6 +194,30 @@ class StateManager:
         except Exception as e:
             logger.error(f"❌ Error creando posición {symbol}: {e}")
             raise StateManagerError(f"Error creando posición: {e}")
+        
+    def register_position(self, position: EnhancedPosition) -> bool:
+        """Registrar nueva posición"""
+        try:
+            if not position or not position.position_id:
+                return False
+            
+            self._active_positions[position.position_id] = position
+            
+            # Persistir si hay BD
+            if self.position_queries:
+                self.position_queries.save_position(position)
+            
+            self._stats['positions_created'] += 1
+            return True
+        except Exception as e:
+            logger.error(f"Error registrando posición: {e}")
+            return False
+
+    def get_position(self, position_id: str) -> Optional[EnhancedPosition]:
+        """Obtener posición por ID"""
+        if position_id in self._active_positions:
+            return self._active_positions[position_id]
+        return None
     
     def update_position_status(self, position_id: str, new_status: PositionStatus,
                               reason: str = "", metadata: Optional[Dict[str, Any]] = None) -> bool:
