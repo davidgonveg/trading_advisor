@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """
-📊 POSITION DATA MODELS - Estructuras de Datos Mejoradas
-=======================================================
+📊 POSITION DATA MODELS - Estructuras de Datos Corregidas V3.0
+==============================================================
 
-Define las estructuras de datos para el nuevo sistema de tracking
-de posiciones con entradas escalonadas y gestión granular de estado.
-
-Reemplaza la estructura JSON simple por modelos robustos con validación.
+FIXES APLICADOS:
+✅ PositionSummary.current_position_size (era total_shares)
+✅ PositionSummary.total_pnl calculado correctamente
+✅ EnhancedPosition.entry_levels / exit_levels (eran entries/exits)
+✅ Métodos get_executed_entries/exits para compatibilidad
+✅ Compatibilidad con position_tracker y tests
 """
 
 from dataclasses import dataclass, field, asdict
@@ -85,72 +87,76 @@ class ExecutionLevel:
 
 @dataclass
 class PositionSummary:
-    """Resumen calculado de la posición actual"""
+    """
+    Resumen calculado de la posición actual - ESTRUCTURA CORREGIDA V3.0
+    """
     
-    # Estado general
-    total_shares: int = 0                    # Acciones totales ejecutadas
-    average_entry_price: float = 0.0        # Precio promedio ponderado
-    total_invested: float = 0.0              # Capital invertido real
+    # ✅ FIX: Estado general con nombres correctos
+    current_position_size: float = 0.0          # ✅ Renombrado desde total_shares
+    total_shares: int = 0                       # Mantener para compatibilidad
+    average_entry_price: float = 0.0           # Precio promedio ponderado
+    total_invested: float = 0.0                 # Capital invertido real
     
     # Progreso de ejecución
-    percent_filled: float = 0.0              # % de posición ejecutado
-    levels_executed: int = 0                 # Niveles ejecutados
-    levels_pending: int = 0                  # Niveles pendientes
+    percent_filled: float = 0.0                 # % de posición ejecutado
+    levels_executed: int = 0                    # Niveles ejecutados
+    levels_pending: int = 0                     # Niveles pendientes
     
-    # Risk management
-    current_risk_dollars: float = 0.0        # Riesgo actual en $
-    max_risk_dollars: float = 0.0            # Riesgo máximo planeado
-    stop_loss_price: float = 0.0             # Precio stop actual
+    # ✅ FIX: P&L calculados correctamente
+    realized_pnl: float = 0.0                  # P&L de posiciones cerradas
+    unrealized_pnl: float = 0.0                # P&L de posición abierta
+    total_pnl: float = 0.0                     # ✅ AÑADIDO: Total P&L
+    unrealized_pnl_pct: float = 0.0            # % P&L no realizado
     
-    # Performance
-    current_price: float = 0.0               # Precio actual del mercado
-    unrealized_pnl: float = 0.0              # P&L no realizado ($)
-    unrealized_pnl_pct: float = 0.0          # P&L no realizado (%)
+    # Precios de referencia
+    current_price: float = 0.0                 # Precio actual del mercado
+    stop_loss_price: float = 0.0               # Precio de stop loss
     
     # Timing
-    time_in_position: int = 0                # Minutos en posición
+    first_entry_time: Optional[datetime] = None
     last_update: datetime = field(default_factory=datetime.now)
     
-    def update_from_executions(self, executions: List[ExecutionLevel]):
-        """Actualizar resumen basado en ejecuciones"""
-        entry_executions = [e for e in executions if e.level_type == ExecutionType.ENTRY and e.is_executed()]
+    def update_from_executions(self, execution_levels: List[ExecutionLevel]):
+        """
+        ✅ FIX: Actualizar resumen desde niveles de ejecución
+        """
+        executed_levels = [level for level in execution_levels if level.is_executed()]
         
-        if entry_executions:
-            # Calcular totales usando precio ponderado correcto
-            total_value = 0.0
-            total_shares = 0
-            
-            for e in entry_executions:
-                if e.executed_price and e.quantity:
-                    total_value += (e.executed_price * e.quantity)
-                    total_shares += e.quantity
-            
-            self.total_shares = total_shares
+        if not executed_levels:
+            return
+        
+        # Calcular posición total
+        total_quantity = sum(level.quantity for level in executed_levels)
+        total_value = sum(level.get_executed_value() for level in executed_levels)
+        
+        # ✅ FIX: Actualizar ambos campos
+        self.current_position_size = float(total_quantity)
+        self.total_shares = int(total_quantity)
+        
+        # Precio promedio ponderado
+        if total_quantity > 0:
+            self.average_entry_price = total_value / total_quantity
             self.total_invested = total_value
-            self.average_entry_price = total_value / total_shares if total_shares > 0 else 0.0
-            
-            # Calcular progreso
-            all_entries = [e for e in executions if e.level_type == ExecutionType.ENTRY]
-            self.levels_executed = len(entry_executions)
-            self.levels_pending = len([e for e in all_entries if e.is_pending()])
-            
-            # Calcular % ejecutado (por shares, no por niveles) - CONSISTENTE con BD
-            total_planned_shares = sum(e.quantity for e in all_entries)
-            self.percent_filled = (total_shares / total_planned_shares * 100) if total_planned_shares > 0 else 0.0
-        else:
-            # Si no hay entradas ejecutadas, resetear valores
-            self.total_shares = 0
-            self.total_invested = 0.0
-            self.average_entry_price = 0.0
-            self.percent_filled = 0.0
-            self.levels_executed = 0
-            self.levels_pending = len([e for e in executions if e.level_type == ExecutionType.ENTRY and e.is_pending()])
+        
+        # Progreso de ejecución
+        total_levels = len(execution_levels)
+        self.levels_executed = len(executed_levels)
+        self.levels_pending = total_levels - len(executed_levels)
+        
+        if total_levels > 0:
+            self.percent_filled = (len(executed_levels) / total_levels) * 100
+        
+        # Timing
+        executed_times = [level.executed_at for level in executed_levels if level.executed_at]
+        if executed_times:
+            self.first_entry_time = min(executed_times)
         
         self.last_update = datetime.now()
     
     def calculate_pnl(self, current_market_price: float, direction: SignalDirection):
-        """Calcular P&L actual"""
-        if self.total_shares <= 0 or self.average_entry_price <= 0:
+        """✅ FIX: Calcular P&L actual"""
+        if self.current_position_size <= 0 or self.average_entry_price <= 0:
+            self.total_pnl = self.realized_pnl  # Solo P&L realizado
             return
         
         self.current_price = current_market_price
@@ -160,8 +166,12 @@ class PositionSummary:
         else:  # SHORT
             price_diff = self.average_entry_price - current_market_price
         
-        self.unrealized_pnl = price_diff * self.total_shares
-        self.unrealized_pnl_pct = (price_diff / self.average_entry_price) * 100
+        self.unrealized_pnl = price_diff * self.current_position_size
+        if self.average_entry_price > 0:
+            self.unrealized_pnl_pct = (price_diff / self.average_entry_price) * 100
+        
+        # ✅ FIX: Total P&L = realizado + no realizado
+        self.total_pnl = self.realized_pnl + self.unrealized_pnl
 
 
 @dataclass  
@@ -189,7 +199,9 @@ class StateTransition:
 
 @dataclass
 class EnhancedPosition:
-    """Posición mejorada con tracking completo de estado"""
+    """
+    ✅ FIX: Posición mejorada con estructura corregida V3.0
+    """
     
     # Identificación básica
     symbol: str
@@ -202,15 +214,36 @@ class EnhancedPosition:
     updated_at: datetime = field(default_factory=datetime.now)
     
     # Señal original (datos básicos para referencia)
-    signal_strength: int = 0
+    signal_strength: float = 0               # ✅ FIX: float en lugar de int
     confidence_level: str = ""
     entry_quality: str = ""
     strategy_type: str = ""
     
-    # Niveles de ejecución
-    entries: List[ExecutionLevel] = field(default_factory=list)
-    exits: List[ExecutionLevel] = field(default_factory=list)
+    # ✅ FIX: Niveles de ejecución con nombres correctos
+    entry_levels: List[ExecutionLevel] = field(default_factory=list)  # ✅ Renombrado
+    exit_levels: List[ExecutionLevel] = field(default_factory=list)   # ✅ Renombrado
     stop_loss: Optional[ExecutionLevel] = None
+    
+    # ✅ FIX: Mantener aliases para compatibilidad
+    @property
+    def entries(self) -> List[ExecutionLevel]:
+        """Alias para compatibilidad"""
+        return self.entry_levels
+    
+    @entries.setter
+    def entries(self, value: List[ExecutionLevel]):
+        """Setter para compatibilidad"""
+        self.entry_levels = value
+    
+    @property
+    def exits(self) -> List[ExecutionLevel]:
+        """Alias para compatibilidad"""
+        return self.exit_levels
+    
+    @exits.setter
+    def exits(self, value: List[ExecutionLevel]):
+        """Setter para compatibilidad"""
+        self.exit_levels = value
     
     # Resumen calculado
     summary: PositionSummary = field(default_factory=PositionSummary)
@@ -221,7 +254,8 @@ class EnhancedPosition:
     deterioration_count: int = 0
     exit_alerts_sent: int = 0
     
-    # Metadatos adicionales
+    # ✅ FIX: Metadatos opcionales para compatibilidad
+    metadata: Optional[Dict[str, Any]] = None
     notes: str = ""
     tags: List[str] = field(default_factory=list)
     
@@ -231,6 +265,10 @@ class EnhancedPosition:
             # Generar ID único basado en symbol + timestamp
             timestamp_str = self.created_at.strftime("%Y%m%d_%H%M%S")
             self.position_id = f"{self.symbol}_{timestamp_str}"
+        
+        # Inicializar metadata si no existe
+        if self.metadata is None:
+            self.metadata = {}
     
     def add_state_transition(self, to_state: PositionStatus, trigger: str = "", notes: str = ""):
         """Agregar transición de estado"""
@@ -247,24 +285,27 @@ class EnhancedPosition:
     
     def update_summary(self):
         """Actualizar resumen calculado"""
-        self.summary.update_from_executions(self.entries + self.exits)
+        # ✅ FIX: Usar todos los niveles
+        all_levels = self.entry_levels + self.exit_levels
+        self.summary.update_from_executions(all_levels)
         self.updated_at = datetime.now()
     
+    # ✅ FIX: Métodos de compatibilidad con nombres correctos
     def get_executed_entries(self) -> List[ExecutionLevel]:
         """Obtener entradas ejecutadas"""
-        return [e for e in self.entries if e.is_executed()]
+        return [e for e in self.entry_levels if e.is_executed()]
     
     def get_pending_entries(self) -> List[ExecutionLevel]:
         """Obtener entradas pendientes"""
-        return [e for e in self.entries if e.is_pending()]
+        return [e for e in self.entry_levels if e.is_pending()]
     
     def get_executed_exits(self) -> List[ExecutionLevel]:
         """Obtener salidas ejecutadas"""
-        return [e for e in self.exits if e.is_executed()]
+        return [e for e in self.exit_levels if e.is_executed()]
     
     def get_pending_exits(self) -> List[ExecutionLevel]:
         """Obtener salidas pendientes"""
-        return [e for e in self.exits if e.is_pending()]
+        return [e for e in self.exit_levels if e.is_pending()]
     
     def is_fully_entered(self) -> bool:
         """Verificar si todas las entradas están ejecutadas"""
@@ -295,9 +336,9 @@ class EnhancedPosition:
             'entry_quality': self.entry_quality,
             'strategy_type': self.strategy_type,
             
-            # Ejecuciones
-            'entries': [e.to_dict() for e in self.entries],
-            'exits': [e.to_dict() for e in self.exits],
+            # ✅ FIX: Usar nombres correctos
+            'entry_levels': [e.to_dict() for e in self.entry_levels],
+            'exit_levels': [e.to_dict() for e in self.exit_levels],
             'stop_loss': self.stop_loss.to_dict() if self.stop_loss else None,
             
             # Resumen
@@ -310,6 +351,7 @@ class EnhancedPosition:
             'exit_alerts_sent': self.exit_alerts_sent,
             
             # Metadatos
+            'metadata': self.metadata,
             'notes': self.notes,
             'tags': self.tags
         }
@@ -337,71 +379,145 @@ class EnhancedPosition:
         position.entry_quality = data.get('entry_quality', '')
         position.strategy_type = data.get('strategy_type', '')
         
-        # TODO: Deserializar entries, exits, etc. (implementar según necesidad)
-        # Por ahora solo los básicos para compatibilidad
+        # Metadatos
+        position.metadata = data.get('metadata', {})
+        position.notes = data.get('notes', '')
+        position.tags = data.get('tags', [])
+        
+        # TODO: Deserializar entry_levels, exit_levels, etc. si es necesario
         
         return position
 
 
-def create_execution_level(level_id: int, 
-                         level_type: ExecutionType,
-                         target_price: float,
-                         quantity: int,
-                         percentage: float,
-                         description: str = "") -> ExecutionLevel:
-    """Factory function para crear niveles de ejecución"""
-    
-    status = EntryStatus.PENDING if level_type == ExecutionType.ENTRY else ExitStatus.PENDING
+# ==============================================
+# FACTORY FUNCTIONS - HELPERS PARA CREAR OBJETOS
+# ==============================================
+
+def create_execution_level(level_number: int, level_type: Union[str, ExecutionType], 
+                          target_price: float, quantity: int, 
+                          percentage: float, description: str = "") -> ExecutionLevel:
+    """
+    ✅ FIX: Factory function para crear ExecutionLevel
+    """
+    # Convertir string a enum si es necesario
+    if isinstance(level_type, str):
+        if level_type.upper() == "ENTRY":
+            level_type = ExecutionType.ENTRY
+        elif level_type.upper() == "EXIT":
+            level_type = ExecutionType.EXIT
+        elif level_type.upper() == "STOP_LOSS":
+            level_type = ExecutionType.STOP_LOSS
+        else:
+            level_type = ExecutionType.ENTRY  # Default
     
     return ExecutionLevel(
-        level_id=level_id,
+        level_id=level_number,
         level_type=level_type,
         target_price=target_price,
         quantity=quantity,
         percentage=percentage,
-        description=description,
-        status=status
+        description=description or f"{level_type.value.title()} level {level_number}"
     )
 
+
+def create_enhanced_position(symbol: str, direction: Union[str, SignalDirection], 
+                           signal_strength: float = 0, 
+                           confidence_level: str = "MEDIUM") -> EnhancedPosition:
+    """
+    ✅ FIX: Factory function para crear EnhancedPosition
+    """
+    # Convertir string a enum si es necesario
+    if isinstance(direction, str):
+        direction = SignalDirection.LONG if direction.upper() == "LONG" else SignalDirection.SHORT
+    
+    return EnhancedPosition(
+        symbol=symbol,
+        direction=direction,
+        signal_strength=signal_strength,
+        confidence_level=confidence_level
+    )
+
+
+# ==============================================
+# TESTING Y VALIDACIÓN
+# ==============================================
+
+def validate_position_data(position: EnhancedPosition) -> List[str]:
+    """Validar datos de posición y devolver errores encontrados"""
+    errors = []
+    
+    # Validaciones básicas
+    if not position.symbol:
+        errors.append("Symbol is required")
+    
+    if not position.position_id:
+        errors.append("Position ID is required")
+    
+    if position.signal_strength < 0 or position.signal_strength > 100:
+        errors.append("Signal strength must be between 0 and 100")
+    
+    # Validar niveles de ejecución
+    if not position.entry_levels:
+        errors.append("At least one entry level is required")
+    
+    # Validar consistencia de estado vs niveles
+    executed_entries = len(position.get_executed_entries())
+    pending_entries = len(position.get_pending_entries())
+    
+    if position.status == PositionStatus.FULLY_ENTERED and pending_entries > 0:
+        errors.append("Status is FULLY_ENTERED but there are pending entries")
+    
+    if position.status == PositionStatus.ENTRY_PENDING and executed_entries > 0:
+        errors.append("Status is ENTRY_PENDING but there are executed entries")
+    
+    return errors
+
+
+# ==============================================
+# DEMO Y TESTING
+# ==============================================
 
 if __name__ == "__main__":
-    # Demo básico
-    print("📊 POSITION DATA MODELS - Demo")
-    print("=" * 40)
+    print("📊 DATA MODELS V3.0 - Demo y Validación")
+    print("=" * 60)
     
     # Crear posición de ejemplo
-    position = EnhancedPosition(
-        symbol="AAPL",
-        direction=SignalDirection.LONG,
-        signal_strength=85,
-        confidence_level="HIGH"
-    )
+    position = create_enhanced_position("DEMO", "LONG", 85, "HIGH")
+    print(f"✅ Posición creada: {position.symbol} {position.direction.value}")
     
-    # Agregar niveles de entrada
-    entry1 = create_execution_level(1, ExecutionType.ENTRY, 150.0, 100, 40.0, "Entrada 1 - Breakout")
-    entry2 = create_execution_level(2, ExecutionType.ENTRY, 149.0, 75, 30.0, "Entrada 2 - Pullback") 
-    entry3 = create_execution_level(3, ExecutionType.ENTRY, 148.0, 75, 30.0, "Entrada 3 - Support")
+    # Añadir niveles de entrada
+    entry1 = create_execution_level(1, "ENTRY", 100.0, 50, 40.0, "Breakout entry")
+    entry2 = create_execution_level(2, "ENTRY", 99.0, 30, 30.0, "Pullback entry")
+    entry3 = create_execution_level(3, "ENTRY", 98.0, 30, 30.0, "Support entry")
     
-    position.entries = [entry1, entry2, entry3]
+    position.entry_levels = [entry1, entry2, entry3]
+    print(f"✅ {len(position.entry_levels)} niveles de entrada añadidos")
     
-    # Simular ejecución del primer nivel
+    # Simular ejecución parcial
     entry1.status = EntryStatus.FILLED
-    entry1.executed_price = 150.05
+    entry1.executed_price = 100.05
     entry1.executed_at = datetime.now()
     
     # Actualizar resumen
     position.update_summary()
-    position.add_state_transition(PositionStatus.PARTIALLY_FILLED, "entry_level_1_filled")
+    print(f"✅ Summary actualizado:")
+    print(f"   Current position size: {position.summary.current_position_size}")
+    print(f"   Average entry price: ${position.summary.average_entry_price:.2f}")
+    print(f"   Percent filled: {position.summary.percent_filled:.1f}%")
+    print(f"   Total P&L: ${position.summary.total_pnl:.2f}")
     
-    print(f"✅ Posición creada: {position.symbol} {position.direction.value}")
-    print(f"📈 Estado: {position.status.value}")
-    print(f"📊 Progreso: {position.summary.percent_filled:.1f}% ejecutado")
-    print(f"💰 Acciones: {position.summary.total_shares}")
-    print(f"💵 Precio promedio: ${position.summary.average_entry_price:.2f}")
-    print(f"🔄 Transiciones: {len(position.state_history)}")
+    # Validar datos
+    errors = validate_position_data(position)
+    if errors:
+        print(f"⚠️ Errores de validación: {errors}")
+    else:
+        print("✅ Validación exitosa - datos consistentes")
     
-    # Mostrar niveles
-    print(f"\n📋 Niveles de entrada:")
-    for entry in position.entries:
-        status_icon = "✅" if entry.is_executed() else "⏳"
-        print(f"  {status_icon} Nivel {entry.level_id}: ${entry.target_price:.2f} ({entry.percentage}%)")
+    # Test serialización
+    try:
+        position_dict = position.to_dict()
+        print(f"✅ Serialización exitosa - {len(position_dict)} campos")
+    except Exception as e:
+        print(f"❌ Error en serialización: {e}")
+    
+    print("\n🏁 Demo completado")
