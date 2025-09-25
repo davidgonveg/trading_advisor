@@ -36,6 +36,23 @@ class TransitionResult(Enum):
     ERROR = "ERROR"
 
 
+class StateTransitionError(Exception):
+    """Error específico para transiciones de estado inválidas"""
+    
+    def __init__(self, message: str, from_state: PositionStatus = None, to_state: PositionStatus = None, position_symbol: str = None):
+        self.from_state = from_state
+        self.to_state = to_state
+        self.position_symbol = position_symbol
+        
+        detailed_message = f"StateTransitionError: {message}"
+        if from_state and to_state:
+            detailed_message += f" ({from_state.value} → {to_state.value})"
+        if position_symbol:
+            detailed_message += f" for {position_symbol}"
+            
+        super().__init__(detailed_message)
+
+
 @dataclass
 class TransitionContext:
     """Contexto para una transición de estado"""

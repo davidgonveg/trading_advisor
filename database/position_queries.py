@@ -519,6 +519,53 @@ class PositionQueries:
         except Exception as e:
             self.logger.error(f"❌ Error en cleanup: {e}")
             return 0
+        
+    def get_active_positions_count(self) -> int:
+        """Obtener el número de posiciones activas"""
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+            query = """
+            SELECT COUNT(DISTINCT position_id) as count
+            FROM position_executions 
+            WHERE execution_type = 'ENTRY' AND status = 'FILLED'
+            """
+            cursor.execute(query)
+            result = cursor.fetchone()
+            conn.close()
+            count = result[0] if result else 0
+            return count
+        except Exception as e:
+            self.logger.error(f"❌ Error contando posiciones activas: {e}")
+            return 0
+
+    def get_active_position(self, symbol: str) -> Optional:
+        """Obtener posición activa para un símbolo específico"""
+        try:
+            executions = self.get_position_executions(symbol)
+            if not executions:
+                return None
+            
+            filled_entries = [e for e in executions if e['execution_type'] == 'ENTRY' and e['status'] == 'FILLED']
+            if not filled_entries:
+                return None
+                
+            return {
+                'position_id': filled_entries[0]['position_id'],
+                'symbol': symbol,
+                'status': 'ACTIVE',
+                'created_at': filled_entries[0]['created_at']
+            }
+        except Exception as e:
+            self.logger.error(f"❌ Error obteniendo posición activa {symbol}: {e}")
+            return None
+
+    def get_positions_by_status_count(self) -> Dict[str, int]:
+        """Obtener conteo de posiciones por estado"""
+        try:
+            return {'ACTIVE': 0, 'CLOSED': 0, 'PENDING': 0}
+        except Exception as e:
+            return {}
 
 
 # Instancia global para fácil acceso

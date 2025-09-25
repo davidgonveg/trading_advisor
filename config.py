@@ -267,6 +267,11 @@ TARGET_SCORING_WEIGHTS = {
     'ATR_EXTENSION': 60
 }
 
+# Position Management System V3.0 Configuration
+USE_POSITION_MANAGEMENT = False
+ENABLE_POSITION_CACHE = True
+POSITION_CACHE_TIMEOUT_MINUTES = 5
+
 # =============================================================================
 # 🔍 VALIDACIÓN DE CONFIGURACIÓN
 # =============================================================================

@@ -64,6 +64,7 @@ class ExecutionType(Enum):
     STOP_LOSS = "STOP_LOSS"       # Stop loss
     TRAILING_STOP = "TRAILING_STOP"  # Trailing stop
     EMERGENCY_EXIT = "EMERGENCY_EXIT"  # Salida de emergencia
+    MARKET = "MARKET"    # Ejecución a mercado
 
 
 class SignalDirection(Enum):
