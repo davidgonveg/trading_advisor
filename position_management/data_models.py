@@ -210,6 +210,7 @@ class EnhancedPosition:
     position_id: str = ""                    # UUID único
     
     # Estado y timing
+    entry_status: EntryStatus = EntryStatus.PENDING
     status: PositionStatus = PositionStatus.SIGNAL_GENERATED
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)

@@ -117,7 +117,8 @@ class TestPositionTracker(unittest.TestCase):
             self.test_position = EnhancedPosition(
                 symbol="TEST_TRACKER",
                 direction=SignalDirection.LONG,
-                position_id=f"TEST_TRACK_{uuid.uuid4().hex[:8]}"
+                position_id=f"TEST_TRACK_{uuid.uuid4().hex[:8]}",
+                entry_status=EntryStatus.PENDING  # AÑADIR ESTA LÍNEA
             )
     
     def tearDown(self):
@@ -221,7 +222,7 @@ class TestPositionTracker(unittest.TestCase):
         self.assertIn(self.test_position.position_id, self.tracker._active_positions)
         
         # Remover posición
-        success = self.tracker.remove_position(self.test_position.position_id, "test_completion")
+        success = self.tracker.remove_position(self.test_position.position_id, force=True)
         self.assertTrue(success)
         
         # Verificar remoción

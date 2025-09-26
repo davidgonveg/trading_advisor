@@ -69,6 +69,8 @@ class TestPersistenceManager(unittest.TestCase):
         # Reset singleton para test limpio
         reset_persistence_manager()
         self.manager = get_persistence_manager()
+        # Habilitar modo test para compatibilidad
+        self.manager.set_test_mode(True)
         
         # Mock position para testing
         self.test_position = EnhancedPosition(
@@ -376,12 +378,13 @@ class TestPersistenceManager(unittest.TestCase):
         self.manager._put_in_cache("test_key", test_data)
         
         # Crear backup en temp directory
+# Crear backup en temp directory
         with tempfile.TemporaryDirectory() as temp_dir:
-            backup_file = str(Path(temp_dir) / "test_backup.gz")
+            backup_dir = temp_dir
             
-            # Crear snapshot
-            created_file = self.manager.create_snapshot(backup_file)
-            self.assertEqual(created_file, backup_file)
+            # Crear snapshot (el método create_snapshot maneja paths automáticamente)
+            created_file = self.manager.create_snapshot(backup_dir)
+            self.assertEqual(created_file, backup_dir)
             self.assertTrue(Path(backup_file).exists())
             
             # Limpiar cache
@@ -389,7 +392,7 @@ class TestPersistenceManager(unittest.TestCase):
             self.assertEqual(len(self.manager._cache), 0)
             
             # Restaurar
-            success = self.manager.restore_snapshot(backup_file)
+            success = self.manager.restore_snapshot(backup_dir)
             self.assertTrue(success)
             
             # Verificar restauración

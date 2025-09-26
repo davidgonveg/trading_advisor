@@ -591,6 +591,158 @@ class PositionQueries:
             return {'ACTIVE': 0, 'CLOSED': 0, 'PENDING': 0}
         except Exception as e:
             return {}
+        
+    def save_position(self, position) -> bool:
+        """
+        Guardar o actualizar posición en base de datos
+        Requerido por integration test de PositionTracker
+        """
+        try:
+            # Convertir posición a dict para storage
+            position_data = {
+                'position_id': position.position_id,
+                'symbol': position.symbol,
+                'direction': position.direction.value if hasattr(position.direction, 'value') else str(position.direction),
+                'status': position.status.value if hasattr(position.status, 'value') else str(position.status),
+                'entry_status': position.entry_status.value if hasattr(position.entry_status, 'value') else str(position.entry_status),
+                'created_at': position.created_at.isoformat() if hasattr(position.created_at, 'isoformat') else str(position.created_at),
+                'updated_at': position.updated_at.isoformat() if hasattr(position.updated_at, 'isoformat') else str(position.updated_at),
+                'metadata': json.dumps(position.metadata) if hasattr(position, 'metadata') and position.metadata else '{}'
+            }
+            
+            # Agregar campos adicionales si existen
+            if hasattr(position, 'average_entry_price') and position.average_entry_price is not None:
+                position_data['average_entry_price'] = float(position.average_entry_price)
+            
+            if hasattr(position, 'current_quantity') and position.current_quantity is not None:
+                position_data['current_quantity'] = float(position.current_quantity)
+            
+            # Preparar query de upsert
+            columns = list(position_data.keys())
+            placeholders = ['?' for _ in columns]
+            
+            # Para SQLite, usar INSERT OR REPLACE
+            query = f'''
+            INSERT OR REPLACE INTO positions (
+                {', '.join(columns)}
+            ) VALUES ({', '.join(placeholders)})
+            '''
+            
+            # Ejecutar query
+            with get_connection() as conn:
+                conn.execute(query, list(position_data.values()))
+                conn.commit()
+            
+            logger.debug(f"Posición {position.position_id} guardada en DB exitosamente")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error guardando posición {getattr(position, 'position_id', 'UNKNOWN')}: {e}")
+            return False
+    
+    def update_position_status(self, position_id: str, status: str, entry_status: str = None) -> bool:
+        """
+        Actualizar solo el status de una posición
+        """
+        try:
+            from datetime import datetime
+            
+            # Preparar campos a actualizar
+            updates = ['status = ?', 'updated_at = ?']
+            values = [status, datetime.now().isoformat()]
+            
+            if entry_status:
+                updates.append('entry_status = ?')
+                values.append(entry_status)
+            
+            values.append(position_id)  # Para WHERE clause
+            
+            query = f'''
+            UPDATE positions 
+            SET {', '.join(updates)}
+            WHERE position_id = ?
+            '''
+            
+            with get_connection() as conn:
+                cursor = conn.execute(query, values)
+                conn.commit()
+                
+                if cursor.rowcount > 0:
+                    logger.debug(f"Status de posición {position_id} actualizado a {status}")
+                    return True
+                else:
+                    logger.warning(f"No se encontró posición {position_id} para actualizar")
+                    return False
+            
+        except Exception as e:
+            logger.error(f"Error actualizando status de posición {position_id}: {e}")
+            return False
+    
+    def get_all_positions(self) -> list:
+        """
+        Obtener todas las posiciones (para backup)
+        """
+        try:
+            query = '''
+            SELECT position_id, symbol, direction, status, entry_status,
+                   created_at, updated_at, metadata
+            FROM positions 
+            ORDER BY created_at DESC
+            '''
+            
+            with get_connection() as conn:
+                cursor = conn.execute(query)
+                rows = cursor.fetchall()
+            
+            positions = []
+            for row in rows:
+                try:
+                    # Crear objeto básico de posición para backup
+                    position_data = {
+                        'position_id': row[0],
+                        'symbol': row[1],
+                        'direction': row[2],
+                        'status': row[3],
+                        'entry_status': row[4],
+                        'created_at': row[5],
+                        'updated_at': row[6],
+                        'metadata': json.loads(row[7]) if row[7] else {},
+                    }
+                    
+                    positions.append(position_data)
+                    
+                except Exception as e:
+                    logger.warning(f"Error procesando row de posición: {e}")
+                    continue
+            
+            logger.debug(f"Obtenidas {len(positions)} posiciones de la DB")
+            return positions
+            
+        except Exception as e:
+            logger.error(f"Error obteniendo todas las posiciones: {e}")
+            return []
+    
+    def delete_position(self, position_id: str) -> bool:
+        """
+        Eliminar posición de base de datos
+        """
+        try:
+            query = 'DELETE FROM positions WHERE position_id = ?'
+            
+            with get_connection() as conn:
+                cursor = conn.execute(query, (position_id,))
+                conn.commit()
+                
+                if cursor.rowcount > 0:
+                    logger.debug(f"Posición {position_id} eliminada de DB")
+                    return True
+                else:
+                    logger.warning(f"No se encontró posición {position_id} para eliminar")
+                    return False
+            
+        except Exception as e:
+            logger.error(f"Error eliminando posición {position_id}: {e}")
+            return False        
 
 
 # Instancia global para fácil acceso
