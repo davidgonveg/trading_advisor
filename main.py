@@ -49,7 +49,7 @@ try:
     
     # Position Management V3.0 (si está disponible)
     try:
-        from position_management.dynamic_monitor import DynamicMonitor
+        from dynamic_monitor import DynamicMonitor
         DYNAMIC_MONITOR_AVAILABLE = True
     except ImportError:
         DYNAMIC_MONITOR_AVAILABLE = False
@@ -95,11 +95,7 @@ class TradingSystemV31:
         self.dynamic_monitor = None
         if DYNAMIC_MONITOR_AVAILABLE:
             try:
-                self.dynamic_monitor = DynamicMonitor(
-                    scanner=self.scanner,
-                    exit_manager=self.exit_manager,
-                    telegram_bot=self.telegram
-                )
+                self.dynamic_monitor = DynamicMonitor()
                 logger.info("✅ Dynamic Monitor V2.3 integrado")
             except Exception as e:
                 logger.warning(f"⚠️ No se pudo iniciar Dynamic Monitor: {e}")
@@ -473,7 +469,7 @@ class TradingSystemV31:
             # 🆕 V3.1: Iniciar Continuous Collector si está disponible
             if self.continuous_collector and config.is_extended_hours_enabled():
                 logger.info("🕐 Iniciando Continuous Data Collector...")
-                collector_success = self.continuous_collector.start_monitoring()
+                collector_success = self.continuous_collector.start_collection()  # ✅ MÉTODO CORRECTO
                 
                 if collector_success:
                     logger.info("✅ Continuous Collector operacional")
@@ -546,7 +542,7 @@ class TradingSystemV31:
             # 1. Detener Continuous Collector
             if self.continuous_collector:
                 logger.info("🕐 Deteniendo Continuous Collector...")
-                self.continuous_collector.stop_monitoring()
+                self.continuous_collector.stop_collection()  # ✅ MÉTODO CORRECTO
             
             # 2. Detener Dynamic Monitor
             if self.dynamic_monitor:
