@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """
-⚙️ CONFIGURACIÓN DEL SISTEMA DE TRADING AUTOMATIZADO V2.0
-========================================================
+⚙️ CONFIGURACIÓN DEL SISTEMA DE TRADING AUTOMATIZADO V3.1 - EXTENDED HOURS
+=========================================================================
 
 Este archivo contiene toda la configuración del sistema.
 Modifica estos parámetros según tus necesidades.
+
+🆕 V3.1: Añadido soporte para Extended Hours y datos continuos
 """
 
 import os
@@ -17,7 +19,6 @@ load_dotenv()
 # =============================================================================
 # 📊 CONFIGURACIÓN DE SÍMBOLOS Y MERCADO
 # =============================================================================
-
 
 # Símbolos a monitorear - S&P 500, NASDAQ 100 y las 7 Magníficas
 SYMBOLS = [
@@ -93,9 +94,9 @@ SCORING = {
 
 # Umbrales de señales
 SIGNAL_THRESHOLDS = {
-    'NO_TRADE': 55,      # < 70 puntos: No operar
-    'PARTIAL_ENTRY': 65, # 70-79 puntos: Entrada parcial
-    'FULL_ENTRY': 75,   # ≥ 100 puntos: Entrada completa
+    'NO_TRADE': 55,      # < 55 puntos: No operar
+    'PARTIAL_ENTRY': 65, # 65-74 puntos: Entrada parcial
+    'FULL_ENTRY': 75,    # ≥ 75 puntos: Entrada completa
 }
 
 # =============================================================================
@@ -143,7 +144,7 @@ ATR_MULTIPLIERS = {
 # Zona horaria del mercado (configuración flexible desde .env)
 MARKET_TIMEZONE = os.getenv('TIMEZONE', 'US/Eastern')
 
-# Horarios de trading permitidos (formato 24h)
+# Horarios de trading permitidos (formato 24h) - CONFIGURACIÓN ORIGINAL
 TRADING_SESSIONS = {
     'MORNING': {
         'START': "10:00",
@@ -155,8 +156,92 @@ TRADING_SESSIONS = {
     }
 }
 
+# 🆕 HORARIOS EXTENDIDOS COMPLETOS (24/5 coverage) - NUEVA FUNCIONALIDAD
+EXTENDED_TRADING_SESSIONS = {
+    'PRE_MARKET': {
+        'START': "04:00",
+        'END': "09:30",
+        'ENABLED': True,
+        'DATA_INTERVAL': 30,  # minutos entre recolecciones
+        'DESCRIPTION': "Pre-market trading hours"
+    },
+    'MORNING': {
+        'START': "10:00", 
+        'END': "12:00",
+        'ENABLED': True,
+        'DATA_INTERVAL': 15,  # tu configuración actual
+        'DESCRIPTION': "Morning active trading"
+    },
+    'AFTERNOON': {
+        'START': "13:30",
+        'END': "15:30", 
+        'ENABLED': True,
+        'DATA_INTERVAL': 15,  # tu configuración actual
+        'DESCRIPTION': "Afternoon active trading"
+    },
+    'POST_MARKET': {
+        'START': "16:00",
+        'END': "20:00",
+        'ENABLED': True,
+        'DATA_INTERVAL': 30,  # menos frecuente que regular hours
+        'DESCRIPTION': "Post-market trading hours"
+    },
+    'OVERNIGHT': {
+        'START': "20:00",
+        'END': "04:00",  # next day
+        'ENABLED': True,
+        'DATA_INTERVAL': 120,  # cada 2 horas para gaps
+        'DESCRIPTION': "Overnight gap monitoring"
+    }
+}
+
 # Días de la semana permitidos (0=Lunes, 6=Domingo)
 ALLOWED_WEEKDAYS = [0, 1, 2, 3, 4]  # Lunes a Viernes
+
+# =============================================================================
+# 🆕 CONFIGURACIÓN DE DATOS CONTINUOS V3.1
+# =============================================================================
+
+CONTINUOUS_DATA_CONFIG = {
+    'ENABLE_EXTENDED_HOURS': True,
+    'ENABLE_OVERNIGHT_MONITORING': True,
+    'AUTO_FILL_GAPS': True,
+    'MAX_GAP_HOURS': 4,  # gaps > 4h se consideran overnight
+    'FORWARD_FILL_OVERNIGHT': True,
+    'PRESERVE_WEEKEND_GAPS': True,  # no fill gaps de fin de semana
+    'QUALITY_CHECK_BEFORE_BACKTEST': True
+}
+
+# 🆕 CONFIGURACIÓN DE GAP DETECTION Y FILLING
+GAP_DETECTION_CONFIG = {
+    'MIN_GAP_MINUTES': 60,  # gaps menores a 1h = normales
+    'OVERNIGHT_GAP_HOURS': [20, 4],  # 8PM - 4AM considerado overnight
+    'WEEKEND_GAP_HOURS': 48,  # > 48h = gap de fin de semana
+    'HOLIDAY_GAP_HOURS': 24,  # > 24h en día laborable = posible festivo
+    
+    # Estrategias de filling
+    'FILL_STRATEGIES': {
+        'SMALL_GAP': 'INTERPOLATE',     # < 2h: interpolar
+        'OVERNIGHT_GAP': 'FORWARD_FILL', # 8PM-4AM: último precio
+        'WEEKEND_GAP': 'FORWARD_FILL',   # fin de semana: último precio
+        'HOLIDAY_GAP': 'FORWARD_FILL'    # festivos: último precio
+    },
+    
+    # Validación de calidad
+    'QUALITY_THRESHOLDS': {
+        'MIN_COMPLETENESS_PCT': 95,      # >= 95% datos disponibles
+        'MAX_CONSECUTIVE_GAPS': 5,       # máximo 5 gaps seguidos
+        'MAX_GAP_DURATION_HOURS': 72     # máximo 72h de gap continuo
+    }
+}
+
+# 🆕 CONFIGURACIÓN DE YFINANCE EXTENDIDA
+YFINANCE_EXTENDED_CONFIG = {
+    'INCLUDE_PREPOST': True,  # ✅ CRÍTICO: incluir extended hours
+    'EXTENDED_HOURS_ENABLED': True,
+    'OVERNIGHT_DATA_ENABLED': True,
+    'PREPOST_REQUIRED': True  # forzar prepost=True siempre
+}
 
 # =============================================================================
 # 📱 CONFIGURACIÓN DE TELEGRAM
@@ -181,6 +266,8 @@ ALERT_TYPES = {
     'SYSTEM_START': True,       # Enviar cuando inicia el sistema
     'SYSTEM_ERROR': True,       # Enviar cuando hay errores
     'DAILY_SUMMARY': False,     # Enviar resumen diario (desactivado por defecto)
+    'GAP_DETECTED': True,       # 🆕 alertas de gaps detectados
+    'DATA_QUALITY_ISSUE': True  # 🆕 alertas de calidad de datos
 }
 
 # =============================================================================
@@ -202,14 +289,19 @@ SCANNER_LOG_FILE = LOG_DIR / "scanner.log"
 EXIT_MANAGER_LOG_FILE = LOG_DIR / "exit_manager.log"
 DATABASE_LOG_FILE = LOG_DIR / "database.log"
 
-# API Configuration (resto igual)
+# 🆕 Logs específicos para nuevos módulos
+GAP_DETECTOR_LOG_FILE = LOG_DIR / "gap_detector.log"
+CONTINUOUS_COLLECTOR_LOG_FILE = LOG_DIR / "continuous_collector.log"
+DATA_VALIDATOR_LOG_FILE = LOG_DIR / "data_validator.log"
+
+# API Configuration
 API_CONFIG = {
     'YFINANCE_TIMEOUT': 30,
     'MAX_RETRIES': 3,
     'RATE_LIMIT_DELAY': 0.1,
 }
 
-# API Configuration
+# API Configuration (duplicado corregido)
 API_CONFIG = {
     'YFINANCE_TIMEOUT': 30,
     'MAX_RETRIES': 3,
@@ -234,7 +326,6 @@ TEST_MODE = os.getenv('TEST_MODE', 'False').lower() == 'true'
 
 # Símbolos para testing (más pequeño)
 TEST_SYMBOLS = ["SPY", "AAPL"]
-
 
 # Habilitar/deshabilitar sistema adaptativo
 USE_ADAPTIVE_TARGETS = True
@@ -271,6 +362,76 @@ TARGET_SCORING_WEIGHTS = {
 USE_POSITION_MANAGEMENT = False
 ENABLE_POSITION_CACHE = True
 POSITION_CACHE_TIMEOUT_MINUTES = 5
+
+# =============================================================================
+# 🆕 CONFIGURACIÓN ESPECÍFICA PARA BACKTESTING V3.1
+# =============================================================================
+
+BACKTEST_CONFIG = {
+    'REQUIRE_CONTINUOUS_DATA': True,    # exigir datos sin gaps
+    'AUTO_FILL_BEFORE_BACKTEST': True,  # rellenar gaps automáticamente
+    'VALIDATE_DATA_QUALITY': True,      # validar calidad antes de empezar
+    'MIN_DATA_COMPLETENESS': 95,        # % mínimo de datos requerido
+    'EXTENDED_HOURS_ANALYSIS': True,    # incluir extended hours en análisis
+    'OVERNIGHT_GAP_ANALYSIS': True      # analizar gaps overnight para stop-loss
+}
+
+# =============================================================================
+# 🔄 CONFIGURACIÓN DE MANTENIMIENTO Y LIMPIEZA V3.1
+# =============================================================================
+
+MAINTENANCE_CONFIG = {
+    'AUTO_CLEANUP_ENABLED': True,
+    'CLEANUP_INTERVAL_HOURS': 24,      # limpiar cada 24h
+    'KEEP_RAW_DATA_DAYS': 30,          # mantener datos raw 30 días
+    'KEEP_PROCESSED_DATA_DAYS': 90,    # mantener datos procesados 90 días
+    'AUTO_GAP_DETECTION_INTERVAL': 6,  # verificar gaps cada 6h
+    'DATA_QUALITY_CHECK_INTERVAL': 12  # verificar calidad cada 12h
+}
+
+# =============================================================================
+# 🆕 UTILIDADES PARA OTROS MÓDULOS V3.1
+# =============================================================================
+
+def get_current_trading_session():
+    """Determinar sesión de trading actual basada en hora"""
+    from datetime import datetime, time
+    import pytz
+    
+    now = datetime.now(pytz.timezone(MARKET_TIMEZONE))
+    current_time = now.time()
+    
+    for session_name, session_config in EXTENDED_TRADING_SESSIONS.items():
+        if not session_config['ENABLED']:
+            continue
+            
+        start_time = time.fromisoformat(session_config['START'])
+        end_time = time.fromisoformat(session_config['END'])
+        
+        # Handle overnight session (crosses midnight)
+        if session_name == 'OVERNIGHT':
+            if current_time >= start_time or current_time <= end_time:
+                return session_name, session_config
+        else:
+            if start_time <= current_time <= end_time:
+                return session_name, session_config
+    
+    return None, None
+
+def is_extended_hours_enabled():
+    """Verificar si extended hours está habilitado"""
+    return CONTINUOUS_DATA_CONFIG['ENABLE_EXTENDED_HOURS']
+
+def get_data_collection_interval():
+    """Obtener intervalo de recolección para sesión actual"""
+    session_name, session_config = get_current_trading_session()
+    if session_config:
+        return session_config['DATA_INTERVAL']
+    return 60  # default 1 hora si no hay sesión activa
+
+def should_use_extended_hours():
+    """Verificar si se debe usar extended hours en yfinance"""
+    return YFINANCE_EXTENDED_CONFIG['PREPOST_REQUIRED']
 
 # =============================================================================
 # 🔍 VALIDACIÓN DE CONFIGURACIÓN
@@ -314,7 +475,7 @@ def print_config_summary():
     """
     Imprimir resumen de configuración actual
     """
-    print("⚙️ CONFIGURACIÓN DEL SISTEMA")
+    print("⚙️ CONFIGURACIÓN DEL SISTEMA V3.1")
     print("=" * 50)
     print(f"📊 Símbolos: {', '.join(SYMBOLS)}")
     print(f"⏰ Intervalo: {SCAN_INTERVAL} minutos")
@@ -322,6 +483,13 @@ def print_config_summary():
     print(f"🎯 Umbral señal mínima: {SIGNAL_THRESHOLDS['NO_TRADE']} puntos")
     print(f"🤖 Modo desarrollo: {'Sí' if DEVELOPMENT_MODE else 'No'}")
     print(f"📱 Telegram configurado: {'Sí' if TELEGRAM_TOKEN and CHAT_ID else 'No'}")
+    print(f"🕐 Extended hours: {'Sí' if is_extended_hours_enabled() else 'No'}")
+    
+    current_session, config = get_current_trading_session()
+    if current_session:
+        print(f"🎯 Sesión actual: {current_session} (intervalo: {config['DATA_INTERVAL']} min)")
+    else:
+        print("💤 No hay sesión activa actualmente")
     print("=" * 50)
 
 # Ejecutar validación al importar
