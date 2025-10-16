@@ -1,507 +1,459 @@
 #!/usr/bin/env python3
 """
-🎯 MAIN.PY V2.3 - SISTEMA COMPLETO CON FIXES APLICADOS
-====================================================
+🚀 MAIN.PY V3.1 - SISTEMA DE TRADING CON EXTENDED HOURS + CONTINUOUS DATA
+=========================================================================
 
-🔧 FIXES APLICADOS V2.3:
-✅ 1. integrate_signals_with_dynamic_monitor() - PARÁMETRO 'priority' AÑADIDO
-✅ 2. _determine_monitor_priority() - NUEVO MÉTODO IMPLEMENTADO  
-✅ 3. process_signals_with_dynamic_integration() - FIXED
-✅ 4. sync_with_exit_manager() - LLAMADA ELIMINADA (método ahora existe)
-✅ 5. Integración completa con adaptive_targets V3.0
-✅ 6. Manejo robusto de errores en todas las integraciones
+🆕 V3.1 NUEVAS FUNCIONALIDADES:
+- Integración con ContinuousDataCollector para recolección 24/5
+- Soporte completo para Extended Hours (pre/post/overnight)
+- Gap detection y auto-filling en paralelo
+- Horarios ampliados según configuración
+- Dual mode: Collection + Scanning en paralelo
 
-NUEVAS CARACTERÍSTICAS V2.3 - MONITOREO DINÁMICO:
-1. 🎯 Frecuencias variables según proximidad a objetivos
-2. ⚡ Monitoreo intensivo de posiciones activas
-3. 🛡️ Rate limiting inteligente para no exceder APIs
-4. 📊 Priorización automática según volatilidad
-5. 🎯 Integración completa con adaptive_targets V3.0
+🎯 COMPONENTES INTEGRADOS:
+- Scanner: Detección de señales de trading
+- TelegramBot: Alertas en tiempo real
+- ExitManager: Gestión de salidas automática
+- DynamicMonitor: Monitoreo dinámico V2.3
+- ContinuousCollector: Recolección 24/5 (NUEVO)
+- GapDetector: Detección y análisis de gaps (NUEVO)
 
-FLUJO COMPLETO V2.3:
-- Detecta señales (V2.0 o V3.0 según configuración)
-- Añade automáticamente al monitoreo dinámico CON PRIORITY
-- Ajusta frecuencia según proximidad a entradas/exits
-- Reevalúa posiciones con frecuencia inteligente
-- Gestiona salidas y alertas optimizadas
+⏰ OPERACIÓN:
+- Horarios configurables por sesión (config.EXTENDED_TRADING_SESSIONS)
+- Collection continua según intervalos dinámicos
+- Scanning en horarios definidos (TRADING_SESSIONS)
+- Mantenimiento automático de gaps
+- Shutdown graceful con save de estado
 """
 
-import argparse
 import logging
 import signal
 import sys
 import time
-from datetime import datetime, timedelta
-from typing import Optional, Dict, List
-import pytz
 import threading
+from datetime import datetime, timedelta, time as dt_time
+from typing import Optional, List, Dict, Any
+import pytz
 
-# Importar módulos del sistema
-import config
-from scanner import SignalScanner, TradingSignal
-from telegram_bot import TelegramBot
+# Importaciones del sistema
+try:
+    import config
+    from scanner import SignalScanner, TradingSignal
+    from telegram_bot import TelegramBot
+    from exit_manager import ExitManager
+    
+    # 🆕 V3.1: Nuevos componentes para extended hours
+    from continuous_collector import ContinuousDataCollector, CollectionStatus
+    from gap_detector import GapDetector
+    from data_validator import DataValidator, ValidationLevel
+    
+    # Position Management V3.0 (si está disponible)
+    try:
+        from position_management.dynamic_monitor import DynamicMonitor
+        DYNAMIC_MONITOR_AVAILABLE = True
+    except ImportError:
+        DYNAMIC_MONITOR_AVAILABLE = False
+        logging.warning("⚠️ Dynamic Monitor no disponible")
+    
+except ImportError as e:
+    print(f"❌ Error importando módulos: {e}")
+    print("💡 Asegúrate de tener todos los archivos necesarios")
+    sys.exit(1)
 
 # Configurar logging
 logging.basicConfig(
     level=getattr(logging, config.LOG_LEVEL, 'INFO'),
     format=config.LOG_FORMAT,
     handlers=[
-        logging.FileHandler(config.LOG_FILE, encoding='utf-8'),
-        logging.StreamHandler(sys.stdout)
+        logging.FileHandler(config.LOG_FILE),
+        logging.StreamHandler()
     ]
 )
 logger = logging.getLogger(__name__)
 
-# Importar EXIT MANAGEMENT SYSTEM
-try:
-    from exit_manager import ExitManager, ExitSignal, ExitUrgency, ActivePosition
-    EXIT_MANAGER_AVAILABLE = True
-except ImportError:
-    EXIT_MANAGER_AVAILABLE = False
-    logger.warning("⚠️ Exit Manager no disponible")
-
-# 🔧 FIX: Importar sistema V3.0 con manejo robusto
-V3_SYSTEM_AVAILABLE = False
-try:
-    # Verificar si está habilitado en config
-    if getattr(config, 'USE_ADAPTIVE_TARGETS', False):
-        import adaptive_targets
-        import position_calculator
-        V3_SYSTEM_AVAILABLE = True
-        logger.info("✅ Sistema de targets adaptativos V3.0 disponible")
-    else:
-        logger.info("📊 Sistema V3.0 desactivado en config - usando V2.0")
-except ImportError as e:
-    logger.warning(f"⚠️ Sistema V3.0 no disponible: {e}")
-    logger.info("📊 Usando sistema clásico V2.0")
-
-# 🔧 FIX: Importar DYNAMIC MONITOR con manejo de errores
-try:
-    from dynamic_monitor import DynamicMonitor, MonitorPriority
-    DYNAMIC_MONITOR_AVAILABLE = True
-    logger.info("🎯 Dynamic Monitor detectado y cargado")
-except ImportError:
-    DYNAMIC_MONITOR_AVAILABLE = False
-    logger.warning("⚠️ dynamic_monitor.py no encontrado - ejecutando sin monitoreo dinámico")
-
-# Importar smart enhancements
-try:
-    from smart_enhancements import integrate_smart_features
-    SMART_FEATURES_AVAILABLE = True
-except ImportError:
-    SMART_FEATURES_AVAILABLE = False
-
-class SmartTradingSystemV23WithDynamicMonitoring:
+class TradingSystemV31:
     """
-    🔧 FIXED: Sistema de trading v2.3 con monitoreo dinámico integrado
+    Sistema principal de trading con Extended Hours y Continuous Collection
     """
     
     def __init__(self):
-        """Inicializar sistema completo v2.3 con monitoreo dinámico"""
-        logger.info("🚀 Inicializando Smart Trading System v2.3 con Dynamic Monitoring")
+        """Inicializar sistema completo V3.1"""
+        logger.info("🚀 Inicializando Trading System V3.1...")
         
-        # Componentes principales
+        # Componentes principales (existentes)
         self.scanner = SignalScanner()
         self.telegram = TelegramBot()
+        # 🔧 FIX: ExitManager no acepta telegram_bot en constructor
+        self.exit_manager = ExitManager()
         
-        # Exit Manager
-        if EXIT_MANAGER_AVAILABLE:
-            self.exit_manager = ExitManager()
-            logger.info("✅ Exit Manager activado")
-        else:
-            self.exit_manager = None
-            logger.warning("⚠️ Exit Manager no disponible")
+        # 🆕 V3.1: Componentes nuevos para extended hours
+        self.continuous_collector = None
+        self.gap_detector = None
+        self.data_validator = None
         
-        # 🎯 NUEVO: Dynamic Monitor
+        # Dynamic Monitor (si está disponible)
+        self.dynamic_monitor = None
         if DYNAMIC_MONITOR_AVAILABLE:
-            self.dynamic_monitor = DynamicMonitor()
-            logger.info("✅ Dynamic Monitor activado")
-        else:
-            self.dynamic_monitor = None
-            logger.warning("⚠️ Dynamic Monitor no disponible")
+            try:
+                self.dynamic_monitor = DynamicMonitor(
+                    scanner=self.scanner,
+                    exit_manager=self.exit_manager,
+                    telegram_bot=self.telegram
+                )
+                logger.info("✅ Dynamic Monitor V2.3 integrado")
+            except Exception as e:
+                logger.warning(f"⚠️ No se pudo iniciar Dynamic Monitor: {e}")
         
+        # Control de ejecución
         self.running = False
-        
-        # Configuración de timezone
+        self.shutdown_event = threading.Event()
         self.market_tz = pytz.timezone(config.MARKET_TIMEZONE)
         
-        # Estado del sistema
-        self.total_scans = 0
-        self.signals_sent = 0
-        self.exit_alerts_sent = 0
-        self.positions_tracked = 0
-        self.dynamic_updates = 0  # NUEVO contador
-        self.consecutive_errors = 0
-        self.max_consecutive_errors = 5
-        self.last_scan_time = None
-        
-        # Threading para control
+        # Threads
         self.scan_thread = None
-        self.shutdown_event = threading.Event()
+        self.collector_thread = None
         
-        # Smart features
-        self.smart_components = None
-        if SMART_FEATURES_AVAILABLE:
-            try:
-                self.smart_components = integrate_smart_features()
-                self._setup_enhanced_data_fetch()
-                logger.info("✅ Smart enhancements activados")
-            except Exception as e:
-                logger.warning(f"⚠️ Error cargando smart enhancements: {e}")
+        # Estadísticas
+        self.stats = {
+            'system_start': None,
+            'total_scans': 0,
+            'signals_generated': 0,
+            'data_collections': 0,
+            'gaps_detected': 0,
+            'gaps_filled': 0
+        }
         
-        logger.info("✅ Smart Trading System v2.3 inicializado correctamente")
+        # 🆕 V3.1: Inicializar componentes extended hours
+        self._initialize_extended_hours_components()
+        
+        # Signal handlers para shutdown graceful
+        signal.signal(signal.SIGINT, self._signal_handler)
+        signal.signal(signal.SIGTERM, self._signal_handler)
+        
+        logger.info("✅ Trading System V3.1 inicializado")
     
-    def _setup_enhanced_data_fetch(self):
-        """Reemplazar get_market_data con versión mejorada en TODOS los componentes"""
+    def _initialize_extended_hours_components(self):
+        """🆕 V3.1: Inicializar componentes de extended hours"""
         try:
-            if self.smart_components and 'enhanced_data_fetch' in self.smart_components:
-                enhanced_fetch = self.smart_components['enhanced_data_fetch']
-                
-                # Reemplazar en scanner
-                self.scanner.indicators.get_market_data = enhanced_fetch
-                
-                # Reemplazar en exit manager si está disponible
-                if self.exit_manager:
-                    self.exit_manager.indicators.get_market_data = enhanced_fetch
-                
-                # 🎯 NUEVO: Reemplazar en dynamic monitor
-                if self.dynamic_monitor:
-                    self.dynamic_monitor.indicators.get_market_data = enhanced_fetch
-                
-                logger.info("🔧 Enhanced data fetch configurado en todos los componentes")
-        except Exception as e:
-            logger.error(f"❌ Error configurando enhanced fetch: {e}")
-    
-    def is_market_open_now(self) -> bool:
-        """Verificar si mercado está abierto AHORA"""
-        return self.scanner.is_market_open()
-    
-    def _determine_monitor_priority(self, signal: TradingSignal) -> 'MonitorPriority':
-        """🔧 NUEVO MÉTODO: Determinar prioridad de monitoreo basada en la señal"""
-        try:
-            if not DYNAMIC_MONITOR_AVAILABLE:
-                return None
-                
-            from dynamic_monitor import MonitorPriority
-            
-            # Prioridades basadas en condiciones de la señal
-            if hasattr(signal, 'confidence') and signal.confidence > 0.8:
-                return MonitorPriority.CRITICAL
-            elif hasattr(signal, 'signal_strength') and signal.signal_strength > 80:
-                return MonitorPriority.HIGH
-            elif hasattr(signal, 'confidence_level') and signal.confidence_level in ['VERY_HIGH', 'HIGH']:
-                return MonitorPriority.HIGH
-            elif getattr(signal, 'strategy', '') in ['SWING_STRONG', 'MOMENTUM_BREAKOUT']:
-                return MonitorPriority.HIGH
-            else:
-                return MonitorPriority.NORMAL
-                
-        except Exception as e:
-            logger.warning(f"⚠️ Error determinando prioridad: {e}")
-            if DYNAMIC_MONITOR_AVAILABLE:
-                from dynamic_monitor import MonitorPriority
-                return MonitorPriority.NORMAL
-            return None
-    
-    def integrate_signals_with_dynamic_monitor(self, signals: List[TradingSignal]) -> None:
-        """🔧 FIXED: Integrar señales con dynamic monitor - PARÁMETRO PRIORITY AÑADIDO"""
-        try:
-            if not signals or not self.dynamic_monitor:
+            # Verificar si extended hours está habilitado
+            if not config.is_extended_hours_enabled():
+                logger.info("ℹ️ Extended hours deshabilitado en config")
                 return
             
-            logger.info(f"🎯 Integrando {len(signals)} señales con Dynamic Monitor...")
+            logger.info("🕐 Inicializando componentes Extended Hours...")
             
-            for signal in signals:
-                try:
-                    # 🔧 FIX 1: Añadir el parámetro 'priority' que faltaba
-                    priority = self._determine_monitor_priority(signal)
-                    if not priority:
-                        continue
-                        
-                    reason = f"Nueva señal {signal.signal_type} - {getattr(signal, 'strategy', 'Unknown')}"
-                    
-                    # 🔧 FIX: Usar signature correcto con priority
-                    success = self.dynamic_monitor.add_monitor_target(
-                        symbol=signal.symbol,
-                        priority=priority,  # 🔧 AÑADIDO: parámetro faltante
-                        reason=reason,
-                        signal=signal
-                    )
-                    
-                    if success:
-                        self.dynamic_updates += 1
-                        version_info = " (V3.0)" if V3_SYSTEM_AVAILABLE else " (V2.0)"
-                        logger.info(f"✅ {signal.symbol}: Añadido a Dynamic Monitor ({priority.value}){version_info}")
-                    else:
-                        logger.warning(f"⚠️ {signal.symbol}: No se pudo añadir a Dynamic Monitor")
-                        
-                except Exception as e:
-                    logger.error(f"❌ Error integrando {signal.symbol} con dynamic monitor: {e}")
-                    
+            # 1. Gap Detector
+            try:
+                self.gap_detector = GapDetector()
+                logger.info("✅ Gap Detector inicializado")
+            except Exception as e:
+                logger.warning(f"⚠️ Gap Detector no disponible: {e}")
+            
+            # 2. Data Validator
+            try:
+                self.data_validator = DataValidator()
+                logger.info("✅ Data Validator inicializado")
+            except Exception as e:
+                logger.warning(f"⚠️ Data Validator no disponible: {e}")
+            
+            # 3. Continuous Collector
+            try:
+                self.continuous_collector = ContinuousDataCollector()
+                logger.info("✅ Continuous Collector inicializado")
+                logger.info(f"   📊 Sesiones configuradas: {len(self.continuous_collector.sessions)}")
+                logger.info(f"   🎯 Símbolos a monitorear: {len(self.continuous_collector.symbols)}")
+            except Exception as e:
+                logger.error(f"❌ Error inicializando Continuous Collector: {e}")
+                self.continuous_collector = None
+            
+            if self.continuous_collector:
+                logger.info("✅ Sistema Extended Hours completo operacional")
+            else:
+                logger.warning("⚠️ Sistema funcionará sin continuous collection")
+                
         except Exception as e:
-            logger.error(f"❌ Error en integración con dynamic monitor: {e}")
+            logger.error(f"❌ Error inicializando extended hours: {e}")
     
-    def perform_scan_with_dynamic_integration(self) -> List[TradingSignal]:
-        """🔧 FIXED: Escaneo integrado con dynamic monitor y V3.0"""
+    def _signal_handler(self, signum, frame):
+        """Manejar señales del sistema para shutdown graceful"""
+        logger.info(f"📡 Señal {signum} recibida")
+        self.stop_system()
+    
+    def is_market_open_now(self) -> bool:
+        """
+        🆕 V3.1: Verificar horarios de mercado con soporte extended hours
+        
+        Si extended hours está habilitado, retorna True en más horarios.
+        Si no, usa lógica tradicional.
+        """
         try:
-            # 🆕 V3.0: Loggear si se están usando targets adaptativos
-            if V3_SYSTEM_AVAILABLE:
-                logger.info("🎯 Escaneo con targets adaptativos V3.0 activado")
-            else:
-                logger.info("📊 Escaneo con sistema clásico V2.0")
+            # En modo desarrollo, siempre abierto
+            if getattr(config, 'DEVELOPMENT_MODE', False):
+                return True
             
-            logger.info(f"🔍 Iniciando escaneo #{self.total_scans + 1} con integración dinámica")
+            now = datetime.now(self.market_tz)
+            current_time = now.time()
+            weekday = now.weekday()
             
-            # 1. Realizar escaneo normal
-            signals = self.scanner.scan_multiple_symbols(config.SYMBOLS)
+            # Verificar día de semana (0=Lunes, 4=Viernes)
+            if weekday not in config.ALLOWED_WEEKDAYS:
+                return False
             
-            # Actualizar contadores
-            self.total_scans += 1
-            self.last_scan_time = datetime.now(self.market_tz)
+            # 🆕 V3.1: Si extended hours habilitado, verificar sesiones extendidas
+            if config.is_extended_hours_enabled():
+                # Obtener sesión actual
+                session_name, session_config = config.get_current_trading_session()
+                
+                if session_name and session_config and session_config.get('ENABLED', False):
+                    logger.debug(f"🕐 En sesión: {session_name}")
+                    return True
+                
+                # Si no hay sesión activa pero es día laborable, considerar abierto
+                # (para permitir collection en horarios intermedios)
+                return True
             
-            # 2. 🔧 FIXED: Integración con dynamic monitor usando método corregido
-            if self.dynamic_monitor and signals:
-                self.integrate_signals_with_dynamic_monitor(signals)
+            # Lógica tradicional (solo TRADING_SESSIONS regulares)
+            sessions = config.TRADING_SESSIONS
             
-            # 3. 🔧 FIX: Eliminar llamada a método inexistente y usar método existente
-            # ANTES: self.dynamic_monitor.sync_with_exit_manager()  # ❌ Causaba error
-            # DESPUÉS: El método ahora existe y se llama correctamente
-            if self.dynamic_monitor and self.exit_manager:
-                try:
-                    self.dynamic_monitor.sync_with_exit_manager(self.exit_manager)
-                    logger.debug("✅ Dynamic Monitor sincronizado con Exit Manager")
-                except Exception as e:
-                    logger.warning(f"⚠️ Error en sincronización: {e}")
+            morning_start = dt_time.fromisoformat(sessions['MORNING']['START'])
+            morning_end = dt_time.fromisoformat(sessions['MORNING']['END'])
+            afternoon_start = dt_time.fromisoformat(sessions['AFTERNOON']['START'])
+            afternoon_end = dt_time.fromisoformat(sessions['AFTERNOON']['END'])
             
-            # Log resultado final
+            in_morning = morning_start <= current_time <= morning_end
+            in_afternoon = afternoon_start <= current_time <= afternoon_end
+            
+            return in_morning or in_afternoon
+            
+        except Exception as e:
+            logger.error(f"❌ Error verificando horarios: {e}")
+            return True  # Default a True para no bloquear
+    
+    def should_run_scanner_now(self) -> bool:
+        """
+        🆕 V3.1: Determinar si debe ejecutar scanner ahora
+        
+        Scanner solo se ejecuta en horarios TRADING_SESSIONS (no extended)
+        """
+        try:
+            if getattr(config, 'DEVELOPMENT_MODE', False):
+                return True
+            
+            now = datetime.now(self.market_tz)
+            current_time = now.time()
+            weekday = now.weekday()
+            
+            if weekday not in config.ALLOWED_WEEKDAYS:
+                return False
+            
+            # Usar TRADING_SESSIONS tradicionales para scanner
+            sessions = config.TRADING_SESSIONS
+            
+            morning_start = dt_time.fromisoformat(sessions['MORNING']['START'])
+            morning_end = dt_time.fromisoformat(sessions['MORNING']['END'])
+            afternoon_start = dt_time.fromisoformat(sessions['AFTERNOON']['START'])
+            afternoon_end = dt_time.fromisoformat(sessions['AFTERNOON']['END'])
+            
+            in_morning = morning_start <= current_time <= morning_end
+            in_afternoon = afternoon_start <= current_time <= afternoon_end
+            
+            return in_morning or in_afternoon
+            
+        except Exception as e:
+            logger.error(f"❌ Error verificando horarios scanner: {e}")
+            return False
+    
+    def perform_scan(self) -> List[TradingSignal]:
+        """Ejecutar escaneo de señales (lógica existente)"""
+        try:
+            logger.info("🔍 Ejecutando escaneo de mercado...")
+            
+            # Escanear símbolos configurados
+            symbols = config.TEST_SYMBOLS if config.TEST_MODE else config.SYMBOLS
+            signals = self.scanner.scan_multiple_symbols(symbols)
+            
+            self.stats['total_scans'] += 1
+            self.stats['signals_generated'] += len(signals)
+            
             if signals:
-                version_msg = "con targets adaptativos V3.0" if V3_SYSTEM_AVAILABLE else "con sistema clásico V2.0"
-                logger.info(f"✅ Escaneo completado: {len(signals)} señales detectadas e integradas {version_msg}")
+                logger.info(f"✅ {len(signals)} señales detectadas")
             else:
-                logger.info("📊 Escaneo completado: Sin señales válidas")
-            
-            # Reset contador de errores
-            self.consecutive_errors = 0
+                logger.debug("ℹ️ No hay señales en este momento")
             
             return signals
             
         except Exception as e:
-            self.consecutive_errors += 1
-            logger.error(f"❌ Error escaneo #{self.consecutive_errors}: {e}")
-            
-            if self.consecutive_errors >= self.max_consecutive_errors:
-                logger.critical(f"💥 Máximo errores alcanzado ({self.max_consecutive_errors})")
-                self.running = False
-            
+            logger.error(f"❌ Error en escaneo: {e}")
             return []
     
-    def process_signals_with_dynamic_integration(self, signals: List[TradingSignal]) -> None:
-        """🔧 FIXED: Procesar señales con integración dinámica - FIXED VERSION"""
+    def process_signals(self, signals: List[TradingSignal]) -> None:
+        """Procesar y enviar señales (lógica existente mejorada)"""
         try:
             if not signals:
                 return
             
-            logger.info(f"📱 Procesando {len(signals)} señales con integración dinámica...")
-            
             for signal in signals:
                 try:
-                    # 1. Enviar señal por Telegram (como antes)
-                    if self.telegram:
-                        success = self.telegram.send_trading_signal(signal)  # Usar método correcto
-                        
-                        if success:
-                            self.signals_sent += 1
-                            logger.info(f"✅ Alerta enviada: {signal.symbol} {signal.signal_type}")
-                        else:
-                            logger.error(f"❌ Error enviando alerta: {signal.symbol}")
+                    # Enviar alerta por Telegram
+                    success = self.telegram.send_signal_alert(signal)
                     
-                    # 2. Añadir al exit manager (como antes)
+                    if success:
+                        logger.info(f"📱 Señal {signal.symbol} enviada por Telegram")
+                    else:
+                        logger.warning(f"⚠️ No se pudo enviar señal {signal.symbol}")
+                    
+                    # Si exit manager está disponible, registrar posición
                     if self.exit_manager:
-                        entry_price = signal.current_price
-                        added = self.exit_manager.add_position(signal, entry_price)
-                        
-                        if added:
-                            self.positions_tracked += 1
-                            logger.info(f"💼 {signal.symbol}: Añadido al seguimiento de posiciones")
+                        try:
+                            self.exit_manager.add_position_from_signal(signal)
+                            logger.info(f"📊 Posición {signal.symbol} registrada en Exit Manager")
+                        except Exception as e:
+                            logger.error(f"❌ Error registrando posición {signal.symbol}: {e}")
                     
-                    # 3. 🔧 FIX: Verificar integración con dynamic monitor CON priority
-                    if self.dynamic_monitor:
-                        if signal.symbol not in self.dynamic_monitor.monitor_targets:
-                            # Añadir al monitoreo dinámico si no está
-                            priority = self._determine_monitor_priority(signal)
-                            if priority:
-                                success = self.dynamic_monitor.add_monitor_target(
-                                    symbol=signal.symbol,
-                                    priority=priority,  # 🔧 AÑADIDO: parámetro que faltaba
-                                    reason=f"Señal procesada {signal.signal_type}",
-                                    signal=signal
-                                )
-                                
-                                if success:
-                                    logger.info(f"🎯 {signal.symbol}: Añadido a Dynamic Monitor")
-                        else:
-                            # Actualizar datos si ya está
-                            target = self.dynamic_monitor.monitor_targets[signal.symbol]
-                            target.signal = signal
-                            target.reason = f"Señal actualizada {signal.signal_type}"
-                            logger.debug(f"🎯 {signal.symbol}: Dynamic Monitor actualizado")
-                    
-                    # Delay entre señales
-                    time.sleep(1)
+                    time.sleep(1)  # Delay entre envíos
                     
                 except Exception as e:
-                    logger.error(f"❌ Error procesando {signal.symbol}: {e}")
-                    
+                    logger.error(f"❌ Error procesando señal {signal.symbol}: {e}")
+            
         except Exception as e:
-            logger.error(f"❌ Error en procesamiento de señales: {e}")
+            logger.error(f"❌ Error procesando señales: {e}")
     
-    def perform_exit_evaluation_enhanced(self) -> List[ExitSignal]:
-        """🎯 Evaluación de exits mejorada con dynamic monitor"""
+    def evaluate_exits(self) -> None:
+        """Evaluar salidas de posiciones abiertas (lógica existente)"""
         try:
             if not self.exit_manager:
-                return []
+                return
             
-            logger.info("🚪 Evaluando posiciones activas con integración dinámica...")
-            
-            # Verificar si hay posiciones
-            positions_summary = self.exit_manager.get_positions_summary()
-            total_positions = positions_summary.get('total_positions', 0)
-            
-            if total_positions == 0:
-                logger.debug("📊 No hay posiciones activas para evaluar")
-                return []
-            
-            # 1. Evaluar exits normalmente
+            logger.debug("🎯 Evaluando salidas...")
             exit_signals = self.exit_manager.evaluate_all_positions()
-            
-            # 2. 🎯 NUEVO: Actualizar prioridades en dynamic monitor
-            if self.dynamic_monitor and exit_signals:
-                logger.info(f"🎯 Actualizando prioridades en Dynamic Monitor...")
-                
-                # Usar el método que existe en dynamic_monitor
-                updated_count = self.dynamic_monitor.update_priorities_from_exit_signals(exit_signals)
-                if updated_count > 0:
-                    logger.info(f"📊 {updated_count} prioridades actualizadas en Dynamic Monitor")
             
             if exit_signals:
                 logger.info(f"🚨 {len(exit_signals)} alertas de exit generadas")
                 
-                # Log resumen por urgencia
-                if EXIT_MANAGER_AVAILABLE:
-                    urgent = sum(1 for s in exit_signals if s.urgency == ExitUrgency.EXIT_URGENT)
-                    recommended = sum(1 for s in exit_signals if s.urgency == ExitUrgency.EXIT_RECOMMENDED)
-                    watch = sum(1 for s in exit_signals if s.urgency == ExitUrgency.EXIT_WATCH)
-                    
-                    logger.info(f"   🚨 Urgente: {urgent} | ⚠️ Recomendado: {recommended} | 👀 Vigilar: {watch}")
-                
-                for signal in exit_signals:
-                    logger.info(f"   {signal.symbol}: {getattr(signal.urgency, 'value', 'UNKNOWN')} ({signal.exit_score} pts)")
-            else:
-                logger.info("✅ No hay alertas de exit necesarias")
-            
-            return exit_signals
-            
-        except Exception as e:
-            logger.error(f"❌ Error en evaluación de exits mejorada: {e}")
-            return []
-    
-    def process_exit_signals(self, exit_signals: List[ExitSignal]) -> None:
-        """Procesar alertas de exit"""
-        try:
-            for exit_signal in exit_signals:
-                try:
-                    # Enviar alerta por telegram
-                    if self.telegram:
-                        success = self.telegram.send_exit_alert(exit_signal)
+                for exit_signal in exit_signals:
+                    try:
+                        # Enviar alerta
+                        self.telegram.send_exit_alert(
+                            exit_signal['symbol'],
+                            exit_signal
+                        )
                         
-                        if success:
-                            self.exit_alerts_sent += 1
-                            logger.info(f"🚨 Alerta de exit enviada: {exit_signal.symbol}")
-                        else:
-                            logger.error(f"❌ Error enviando alerta de exit: {exit_signal.symbol}")
-                    
-                    # Pequeño delay entre alertas
-                    time.sleep(0.5)
-                    
-                except Exception as e:
-                    logger.error(f"❌ Error procesando exit signal {exit_signal.symbol}: {e}")
-                    
+                        time.sleep(1)
+                        
+                    except Exception as e:
+                        logger.error(f"❌ Error enviando exit alert: {e}")
+            
         except Exception as e:
-            logger.error(f"❌ Error procesando exit signals: {e}")
+            logger.error(f"❌ Error evaluando exits: {e}")
     
-    def run_integrated_loop_v23(self) -> None:
-        """🎯 Loop principal v2.3 con monitoreo dinámico integrado"""
+    def run_scanner_loop(self) -> None:
+        """
+        🆕 V3.1: Loop principal del scanner (separado de collection)
+        
+        Se ejecuta solo en horarios TRADING_SESSIONS
+        """
         try:
-            logger.info("🚀 Iniciando Integrated Loop v2.3 con Dynamic Monitoring")
+            logger.info("🔍 Scanner loop iniciado")
             
-            # 1. 🎯 NUEVO: Iniciar dynamic monitor si está disponible
-            if self.dynamic_monitor:
-                success = self.dynamic_monitor.start_monitoring()
-                if success:
-                    logger.info("✅ Dynamic Monitor iniciado en paralelo")
-                else:
-                    logger.error("❌ Error iniciando Dynamic Monitor")
-            
-            # 2. Loop principal (similar pero integrado)
-            last_full_scan = datetime.now()
+            last_scan = datetime.now()
             scan_interval = timedelta(minutes=config.SCAN_INTERVAL)
             
             while self.running and not self.shutdown_event.is_set():
                 
-                # 3. ¿Mercado abierto?
-                if not self.is_market_open_now():
-                    if not getattr(config, 'DEVELOPMENT_MODE', False):
-                        logger.info("🏛️ Mercado cerrado - Modo sleep")
-                        if self.shutdown_event.wait(300):  # 5 min
-                            break
-                        continue
-                    else:
-                        logger.info("💻 Modo desarrollo - Continuando fuera de horario")
+                # 1. Verificar si debe ejecutar scanner
+                if not self.should_run_scanner_now():
+                    logger.debug("💤 Fuera de horarios de scanner, esperando...")
+                    if self.shutdown_event.wait(60):  # Check cada minuto
+                        break
+                    continue
                 
-                # 4. ¿Toca escaneo completo?
+                # 2. ¿Toca escaneo?
                 now = datetime.now()
-                if now - last_full_scan >= scan_interval:
+                if now - last_scan >= scan_interval:
                     
-                    # Escanear nuevas señales con integración dinámica
-                    signals = self.perform_scan_with_dynamic_integration()
+                    # Escanear señales
+                    signals = self.perform_scan()
                     
                     if not self.running:
                         break
                     
-                    # Procesar señales con integración
+                    # Procesar señales
                     if signals:
-                        self.process_signals_with_dynamic_integration(signals)
+                        self.process_signals(signals)
                     
-                    # Evaluar exits con integración
-                    if self.exit_manager:
-                        exit_signals = self.perform_exit_evaluation_enhanced()
-                        
-                        if not self.running:
-                            break
-                        
-                        # Procesar alertas de exit
-                        if exit_signals:
-                            self.process_exit_signals(exit_signals)
+                    # Evaluar exits
+                    self.evaluate_exits()
                     
-                    last_full_scan = now
+                    last_scan = now
                 
-                # 5. Sleep con verificación de shutdown
-                if self.shutdown_event.wait(timeout=30):
+                # 3. Sleep con verificación de shutdown
+                if self.shutdown_event.wait(30):  # Check cada 30s
                     break
-                    
+            
         except Exception as e:
-            logger.error(f"❌ Error crítico en integrated loop: {e}")
+            logger.error(f"❌ Error en scanner loop: {e}")
         finally:
-            logger.info("🏁 Integrated loop finalizado")
+            logger.info("🏁 Scanner loop finalizado")
+    
+    def run_maintenance_tasks(self) -> None:
+        """
+        🆕 V3.1: Tareas de mantenimiento periódicas
+        
+        - Limpieza de BD
+        - Análisis de gaps
+        - Validación de datos
+        """
+        try:
+            logger.info("🔧 Ejecutando tareas de mantenimiento...")
+            
+            # 1. Gap maintenance
+            if self.continuous_collector:
+                try:
+                    maintenance_result = self.continuous_collector.perform_gap_maintenance()
+                    
+                    if maintenance_result.get('success'):
+                        logger.info(f"✅ Gap maintenance: {maintenance_result['gaps_filled']} gaps rellenados")
+                        self.stats['gaps_detected'] += maintenance_result.get('total_gaps_found', 0)
+                        self.stats['gaps_filled'] += maintenance_result.get('gaps_filled', 0)
+                    
+                except Exception as e:
+                    logger.error(f"❌ Error en gap maintenance: {e}")
+            
+            # 2. Validación de datos (si está disponible)
+            if self.data_validator:
+                try:
+                    # Validar símbolos principales
+                    for symbol in config.SYMBOLS[:3]:  # Top 3
+                        report = self.data_validator.validate_symbol_data(
+                            symbol,
+                            validation_level=ValidationLevel.BASIC,
+                            days_back=7
+                        )
+                        
+                        if report.needs_attention:
+                            logger.warning(f"⚠️ {symbol}: Requiere atención - Score {report.overall_score:.1f}")
+                        
+                except Exception as e:
+                    logger.error(f"❌ Error en validación de datos: {e}")
+            
+            # 3. Limpiar logs antiguos si es necesario
+            # (implementar según necesidad)
+            
+            logger.info("✅ Mantenimiento completado")
+            
+        except Exception as e:
+            logger.error(f"❌ Error en maintenance tasks: {e}")
     
     def start_system(self) -> bool:
-        """Iniciar sistema completo v2.3"""
+        """Iniciar sistema completo V3.1"""
         try:
             if self.running:
                 logger.warning("⚠️ Sistema ya está ejecutándose")
                 return False
             
-            logger.info("🚀 Iniciando Smart Trading System v2.3...")
+            logger.info("=" * 70)
+            logger.info("🚀 INICIANDO SMART TRADING SYSTEM V3.1")
+            logger.info("=" * 70)
             
             # Verificar componentes críticos
             if not self.telegram.initialized:
@@ -509,23 +461,49 @@ class SmartTradingSystemV23WithDynamicMonitoring:
                 return False
             
             # Enviar mensaje de inicio
-            self._send_startup_message_v23()
+            self._send_startup_message()
             
             # Mostrar configuración
-            self._log_system_configuration_v23()
+            self._log_system_configuration()
             
             # Iniciar sistema
             self.running = True
+            self.stats['system_start'] = datetime.now()
             
-            # Iniciar thread principal
+            # 🆕 V3.1: Iniciar Continuous Collector si está disponible
+            if self.continuous_collector and config.is_extended_hours_enabled():
+                logger.info("🕐 Iniciando Continuous Data Collector...")
+                collector_success = self.continuous_collector.start_monitoring()
+                
+                if collector_success:
+                    logger.info("✅ Continuous Collector operacional")
+                else:
+                    logger.warning("⚠️ Continuous Collector falló, continuando sin él")
+            
+            # Iniciar Dynamic Monitor si está disponible
+            if self.dynamic_monitor:
+                logger.info("🎯 Iniciando Dynamic Monitor...")
+                monitor_success = self.dynamic_monitor.start_monitoring()
+                
+                if monitor_success:
+                    logger.info("✅ Dynamic Monitor operacional")
+                else:
+                    logger.warning("⚠️ Dynamic Monitor falló")
+            
+            # Iniciar thread del scanner
             self.scan_thread = threading.Thread(
-                target=self.run_integrated_loop_v23,
+                target=self.run_scanner_loop,
                 daemon=True,
-                name="MainScanThread"
+                name="ScannerLoop"
             )
             self.scan_thread.start()
             
-            logger.info("✅ Smart Trading System v2.3 iniciado correctamente")
+            # Programar maintenance tasks periódicas (cada 6 horas)
+            self._schedule_maintenance_tasks()
+            
+            logger.info("✅ Smart Trading System V3.1 iniciado correctamente")
+            logger.info("🎯 Monitoreo activo - Presiona Ctrl+C para detener")
+            
             return True
             
         except Exception as e:
@@ -533,28 +511,54 @@ class SmartTradingSystemV23WithDynamicMonitoring:
             self.running = False
             return False
     
+    def _schedule_maintenance_tasks(self) -> None:
+        """Programar tareas de mantenimiento periódicas"""
+        def maintenance_worker():
+            last_maintenance = datetime.now()
+            maintenance_interval = timedelta(hours=6)  # Cada 6 horas
+            
+            while self.running and not self.shutdown_event.is_set():
+                now = datetime.now()
+                
+                if now - last_maintenance >= maintenance_interval:
+                    self.run_maintenance_tasks()
+                    last_maintenance = now
+                
+                # Check cada 30 minutos
+                if self.shutdown_event.wait(1800):
+                    break
+        
+        maintenance_thread = threading.Thread(
+            target=maintenance_worker,
+            daemon=True,
+            name="MaintenanceWorker"
+        )
+        maintenance_thread.start()
+    
     def stop_system(self) -> None:
-        """Detener sistema completo v2.3"""
+        """Detener sistema completo V3.1"""
         try:
-            logger.info("🛑 Deteniendo Smart Trading System v2.3...")
+            logger.info("🛑 Deteniendo Smart Trading System V3.1...")
             
             self.running = False
             self.shutdown_event.set()
             
-            # 1. Detener dynamic monitor primero
+            # 1. Detener Continuous Collector
+            if self.continuous_collector:
+                logger.info("🕐 Deteniendo Continuous Collector...")
+                self.continuous_collector.stop_monitoring()
+            
+            # 2. Detener Dynamic Monitor
             if self.dynamic_monitor:
                 logger.info("🎯 Deteniendo Dynamic Monitor...")
                 self.dynamic_monitor.stop_monitoring()
             
-            # 2. Esperar thread principal
+            # 3. Esperar thread del scanner
             if self.scan_thread and self.scan_thread.is_alive():
-                logger.info("⏳ Esperando thread principal...")
+                logger.info("⏳ Esperando scanner thread...")
                 self.scan_thread.join(timeout=15)
-                
-                if self.scan_thread.is_alive():
-                    logger.warning("⚠️ Thread no terminó en tiempo esperado")
             
-            # 3. Guardar posiciones antes de cerrar
+            # 4. Guardar posiciones
             try:
                 if self.exit_manager:
                     self.exit_manager.save_positions()
@@ -562,724 +566,621 @@ class SmartTradingSystemV23WithDynamicMonitoring:
             except Exception as e:
                 logger.error(f"❌ Error guardando posiciones: {e}")
             
-            # 4. Stats finales v2.3
-            self._send_shutdown_stats_v23()
+            # 5. Mostrar estadísticas finales
+            self._log_final_statistics()
             
-            logger.info("✅ Smart Trading System v2.3 detenido correctamente")
+            # 6. Enviar mensaje de cierre
+            try:
+                uptime = datetime.now() - self.stats['system_start']
+                self.telegram.send_message(
+                    f"🛑 <b>Sistema Detenido</b>\n\n"
+                    f"⏱️ Uptime: {uptime}\n"
+                    f"🔍 Escaneos: {self.stats['total_scans']}\n"
+                    f"📊 Señales: {self.stats['signals_generated']}\n"
+                    f"🕐 Collections: {self.stats['data_collections']}\n"
+                    f"🔧 Gaps rellenados: {self.stats['gaps_filled']}"
+                )
+            except:
+                pass
+            
+            logger.info("✅ Sistema detenido correctamente")
             
         except Exception as e:
             logger.error(f"❌ Error deteniendo sistema: {e}")
     
-    def _send_startup_message_v23(self):
-        """Enviar mensaje de inicio v2.3"""
+    def _send_startup_message(self) -> None:
+        """Enviar mensaje de inicio por Telegram"""
         try:
-            market_status = "🟢 ABIERTO" if self.is_market_open_now() else "🔴 CERRADO"
+            now = datetime.now(self.market_tz)
             
-            message_parts = [
-                "🚀 <b>Smart Trading System v2.3</b>",
-                "🎯 <b>CON DYNAMIC MONITORING</b>",
-                "",
-                f"🏛️ <b>Mercado:</b> {market_status}",
-                f"📊 <b>Símbolos:</b> {len(config.SYMBOLS)}",
-                f"⏰ <b>Intervalo base:</b> {config.SCAN_INTERVAL} min"
-            ]
+            # Determinar sesión actual
+            session_info = "N/A"
+            if config.is_extended_hours_enabled():
+                session_name, session_config = config.get_current_trading_session()
+                if session_name:
+                    session_info = f"{session_name} ({session_config.get('DESCRIPTION', 'N/A')})"
             
-            # Información de componentes
-            message_parts.extend([
-                "",
-                "<b>🔧 COMPONENTES ACTIVOS:</b>",
-                f"• Exit Manager: {'✅' if self.exit_manager else '❌'}",
-                f"• Dynamic Monitor: {'✅' if self.dynamic_monitor else '❌'}",
-                f"• Smart Features: {'✅' if self.smart_components else '❌'}",
-                f"• Adaptive Targets: {'✅ V3.0' if V3_SYSTEM_AVAILABLE else '📊 V2.0'}"
-            ])
+            message = (
+                f"🚀 <b>Trading System V3.1 Iniciado</b>\n\n"
+                f"⏰ Hora: {now.strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
+                f"🕐 Extended Hours: {'✅ Activo' if config.is_extended_hours_enabled() else '❌ Desactivado'}\n"
+                f"📊 Sesión actual: {session_info}\n"
+                f"🎯 Símbolos: {len(config.SYMBOLS)}\n"
+                f"🔍 Intervalo scan: {config.SCAN_INTERVAL} min\n\n"
+                f"💰 Riesgo/trade: {config.RISK_PER_TRADE}%\n"
+                f"🤖 Modo: {'🧪 Desarrollo' if config.DEVELOPMENT_MODE else '🚀 Producción'}"
+            )
             
-            # Información específica de Dynamic Monitor
-            if self.dynamic_monitor:
-                message_parts.extend([
-                    "",
-                    "<b>🎯 DYNAMIC MONITOR:</b>",
-                    "• CRITICAL: Updates cada 2 min",
-                    "• HIGH: Updates cada 5 min", 
-                    "• NORMAL: Updates cada 15 min",
-                    "• Priorización automática según volatilidad"
-                ])
-            
-            # Footer
-            message_parts.extend([
-                "",
-                "🔥 <b>FIXES APLICADOS:</b>",
-                "• add_monitor_target priority: ✅ FIXED",
-                "• sync_with_exit_manager: ✅ IMPLEMENTED", 
-                "• TradingSignal indicators: ✅ FIXED",
-                "• Timezone handling: ✅ ROBUST",
-                "",
-                "<i>Sistema listo para detectar oportunidades...</i>"
-            ])
-            
-            full_message = "\n".join(message_parts)
-            self.telegram.send_message(full_message)
+            self.telegram.send_message(message)
             
         except Exception as e:
             logger.error(f"❌ Error enviando mensaje de inicio: {e}")
     
-    def _log_system_configuration_v23(self):
-        """Mostrar configuración completa del sistema v2.3"""
+    def _log_system_configuration(self) -> None:
+        """Mostrar configuración del sistema"""
         logger.info("=" * 70)
-        logger.info("🔧 CONFIGURACIÓN SMART TRADING SYSTEM V2.3")
+        logger.info("⚙️ CONFIGURACIÓN DEL SISTEMA V3.1")
         logger.info("=" * 70)
+        logger.info(f"📊 Símbolos monitoreados: {len(config.SYMBOLS)}")
+        logger.info(f"⏰ Intervalo de escaneo: {config.SCAN_INTERVAL} minutos")
+        logger.info(f"💰 Riesgo por operación: {config.RISK_PER_TRADE}%")
+        logger.info(f"🕐 Extended Hours: {'✅ Habilitado' if config.is_extended_hours_enabled() else '❌ Deshabilitado'}")
+        logger.info(f"🤖 Modo desarrollo: {'✅ Sí' if config.DEVELOPMENT_MODE else '❌ No'}")
+        logger.info(f"📱 Telegram: {'✅ OK' if self.telegram.initialized else '❌ Error'}")
+        logger.info(f"🎯 Dynamic Monitor: {'✅ Disponible' if self.dynamic_monitor else '❌ No disponible'}")
+        logger.info(f"🕐 Continuous Collector: {'✅ Disponible' if self.continuous_collector else '❌ No disponible'}")
         
-        # Configuración básica
-        logger.info(f"📊 SÍMBOLOS MONITOREADOS ({len(config.SYMBOLS)}):")
-        logger.info(f"   {', '.join(config.SYMBOLS)}")
-        
-        # Información V3.0
-        if V3_SYSTEM_AVAILABLE:
-            logger.info("🎯 CONFIGURACIÓN V3.0:")
-            logger.info("   • Targets basados en análisis técnico real")
-            logger.info("   • R:R máximo realista: 6.0 (no más 10R)")
-            logger.info("   • Fibonacci, VWAP, Bollinger como targets")
-            logger.info("   • Fallback automático a V2.0 si falla")
-        
-        # Posiciones activas
-        if self.exit_manager:
-            positions_summary = self.exit_manager.get_positions_summary()
-            total_positions = positions_summary.get('total_positions', 0)
-            logger.info(f"💼 POSICIONES ACTIVAS: {total_positions}")
-            
-            if total_positions > 0:
-                long_pos = positions_summary.get('long_positions', 0)
-                short_pos = positions_summary.get('short_positions', 0)
-                total_pnl = positions_summary.get('total_unrealized_pnl', 0)
-                
-                logger.info(f"   🟢 LONG: {long_pos} | 🔴 SHORT: {short_pos}")
-                logger.info(f"   📈 PnL total: {total_pnl:+.1f}%")
-        
-        # Dynamic Monitor info
-        if self.dynamic_monitor:
-            monitor_stats = self.dynamic_monitor.get_monitoring_stats()
-            logger.info(f"🎯 DYNAMIC MONITOR:")
-            logger.info(f"   Targets activos: {monitor_stats['total_targets']}")
-            logger.info(f"   CRITICAL: {monitor_stats['targets_by_priority'].get('CRITICAL', 0)}")
-            logger.info(f"   HIGH: {monitor_stats['targets_by_priority'].get('HIGH', 0)}")
-            logger.info(f"   NORMAL: {monitor_stats['targets_by_priority'].get('NORMAL', 0)}")
+        # Mostrar sesiones configuradas si extended hours activo
+        if config.is_extended_hours_enabled():
+            logger.info("🕐 Sesiones Extended Hours configuradas:")
+            for name, conf in config.EXTENDED_TRADING_SESSIONS.items():
+                if conf.get('ENABLED'):
+                    logger.info(f"   • {name}: {conf['START']}-{conf['END']} (cada {conf['DATA_INTERVAL']}min)")
         
         logger.info("=" * 70)
     
-    def _send_shutdown_stats_v23(self):
-        """Enviar estadísticas finales v2.3"""
-        try:
-            stats_parts = [
-                "📊 <b>Estadísticas Finales v2.3:</b>",
-                f"• Escaneos: {self.total_scans}",
-                f"• Señales enviadas: {self.signals_sent}",
-                f"• Alertas EXIT: {self.exit_alerts_sent}",
-                f"• Posiciones trackeadas: {self.positions_tracked}",
-                f"• Updates dinámicos: {self.dynamic_updates}",
-                f"• Errores consecutivos: {self.consecutive_errors}"
-            ]
-            
-            # Dynamic monitor stats
-            if self.dynamic_monitor:
-                try:
-                    final_dynamic_stats = self.dynamic_monitor.get_monitoring_stats()
-                    stats_parts.extend([
-                        "",
-                        "🎯 <b>Dynamic Monitor:</b>",
-                        f"• Targets procesados: {final_dynamic_stats['total_targets']}",
-                        f"• Updates totales: {final_dynamic_stats['total_updates']}",
-                        f"• Updates exitosos: {final_dynamic_stats['successful_updates']}",
-                        f"• Errores timezone: {final_dynamic_stats['timezone_errors']}"
-                    ])
-                except Exception as e:
-                    stats_parts.append(f"• Error stats dynamic: {str(e)[:50]}")
-            
-            # Exit manager stats
-            if self.exit_manager:
-                positions_summary = self.exit_manager.get_positions_summary()
-                total_positions = positions_summary.get('total_positions', 0)
-                stats_parts.append(f"• Posiciones activas al cierre: {total_positions}")
-            
-            stats_parts.extend([
-                "",
-                "✅ <b>TODOS LOS FIXES FUNCIONANDO:</b>",
-                "• add_monitor_target priority: OK",
-                "• sync_with_exit_manager: OK", 
-                "• TradingSignal indicators: OK",
-                "",
-                "💤 <i>Sistema detenido correctamente</i>"
-            ])
-            
-            full_message = "\n".join(stats_parts)
-            self.telegram.send_message(full_message)
-            
-        except Exception as e:
-            logger.error(f"❌ Error enviando stats finales: {e}")
-    
-    def get_system_status_v23(self) -> Dict:
-        """Obtener estado completo del sistema v2.3"""
-        try:
-            status = {
-                'version': 'v2.3 - Dynamic Monitoring',
-                'running': self.running,
-                'market_open': self.is_market_open_now(),
-                'components': {
-                    'telegram': self.telegram.initialized if self.telegram else False,
-                    'exit_manager': self.exit_manager is not None,
-                    'dynamic_monitor': self.dynamic_monitor is not None,
-                    'smart_features': self.smart_components is not None,
-                    'adaptive_targets': V3_SYSTEM_AVAILABLE
-                },
-                'total_scans': self.total_scans,
-                'signals_sent': self.signals_sent,
-                'exit_alerts_sent': self.exit_alerts_sent,
-                'positions_tracked': self.positions_tracked,
-                'dynamic_updates': self.dynamic_updates,
-                'consecutive_errors': self.consecutive_errors,
-                'last_scan': self.last_scan_time.isoformat() if self.last_scan_time else None
-            }
-            
-            # Dynamic monitor stats
-            if self.dynamic_monitor:
-                try:
-                    status['dynamic_monitor_stats'] = self.dynamic_monitor.get_monitoring_stats()
-                except Exception as e:
-                    status['dynamic_monitor_error'] = str(e)
-            
-            # Exit manager stats  
-            if self.exit_manager:
-                try:
-                    status['positions'] = self.exit_manager.get_positions_summary()
-                except Exception as e:
-                    status['positions_error'] = str(e)
-            
-            return status
-            
-        except Exception as e:
-            logger.error(f"❌ Error obteniendo system status: {e}")
-            return {'error': str(e)}
+    def _log_final_statistics(self) -> None:
+        """Mostrar estadísticas finales"""
+        if not self.stats['system_start']:
+            return
+        
+        uptime = datetime.now() - self.stats['system_start']
+        
+        logger.info("=" * 70)
+        logger.info("📊 ESTADÍSTICAS FINALES")
+        logger.info("=" * 70)
+        logger.info(f"⏱️ Uptime: {uptime}")
+        logger.info(f"🔍 Total escaneos: {self.stats['total_scans']}")
+        logger.info(f"📊 Señales generadas: {self.stats['signals_generated']}")
+        logger.info(f"🕐 Data collections: {self.stats['data_collections']}")
+        logger.info(f"🔧 Gaps detectados: {self.stats['gaps_detected']}")
+        logger.info(f"✅ Gaps rellenados: {self.stats['gaps_filled']}")
+        logger.info("=" * 70)
+
 
 # =============================================================================
-# FUNCIONES DE CONTROL DE SEÑALES
+# 🎯 FUNCIONES DE UTILIDAD
 # =============================================================================
 
-def setup_signal_handlers(system: SmartTradingSystemV23WithDynamicMonitoring):
-    """Configurar manejadores de señales para shutdown graceful"""
-    def signal_handler(signum, frame):
-        logger.info(f"📡 Señal {signum} recibida - iniciando shutdown graceful...")
-        system.stop_system()
-        sys.exit(0)
-    
-    signal.signal(signal.SIGINT, signal_handler)   # Ctrl+C
-    signal.signal(signal.SIGTERM, signal_handler)  # Kill
-
-# =============================================================================
-# MODO INTERACTIVO V2.3
-# =============================================================================
-
-def mode_interactive_v23():
-    """Modo interactivo mejorado v2.3"""
-    logger.info("🎮 Iniciando modo interactivo v2.3")
+def run_single_scan():
+    """Ejecutar un escaneo único sin loop continuo"""
+    print("🔍 ESCANEO ÚNICO - TRADING SYSTEM V3.1")
+    print("=" * 70)
     
     try:
-        system = SmartTradingSystemV23WithDynamicMonitoring()
+        # Inicializar componentes necesarios
+        scanner = SignalScanner()
+        telegram = TelegramBot()
         
-        while True:
-            print("\n" + "=" * 70)
-            print("🎯 SMART TRADING SYSTEM V2.3 - DYNAMIC MONITORING")
-            print("=" * 70)
+        # Verificar horarios
+        now = datetime.now(pytz.timezone(config.MARKET_TIMEZONE))
+        print(f"⏰ Hora actual: {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        
+        is_market_open = scanner.is_market_open()
+        print(f"🏛️ Mercado: {'🟢 ABIERTO' if is_market_open else '🔴 CERRADO'}")
+        
+        if not is_market_open and not config.DEVELOPMENT_MODE:
+            print("⚠️ Mercado cerrado - Activar DEVELOPMENT_MODE para escanear")
+            return
+        
+        # Escanear
+        print(f"\n🔍 Escaneando {len(config.SYMBOLS)} símbolos...")
+        signals = scanner.scan_multiple_symbols(config.SYMBOLS)
+        
+        # Mostrar resultados
+        print(f"\n📊 RESULTADOS:")
+        print(f"   Señales detectadas: {len(signals)}")
+        
+        if signals:
+            print(f"\n🎯 SEÑALES:")
+            for i, signal in enumerate(signals, 1):
+                print(f"\n   {i}. {signal.symbol} - {signal.signal_type}")
+                print(f"      💪 Fuerza: {signal.signal_strength}/100")
+                print(f"      🎯 Calidad: {signal.entry_quality}")
+                print(f"      💰 Precio: ${signal.current_price:.2f}")
             
-            market_status = "🟢 ABIERTO" if system.is_market_open_now() else "🔴 CERRADO"
-            print(f"🏛️ Mercado: {market_status}")
-            
-            print("\nOpciones disponibles:")
-            print("1. 🔍 Escaneo único con integración dinámica")
-            print("2. 🚪 Evaluar exits con dynamic monitor")  
-            print("3. 🚀 Iniciar sistema automático v2.3")
-            print("4. 📊 Ver estado del sistema")
-            print("5. 🎯 Gestionar Dynamic Monitor")
-            print("6. 🧪 Ejecutar tests v2.3")
-            print("7. ⚙️ Ver configuración")
-            print("8. 🛑 Salir")
-            
-            choice = input("\nSelecciona opción (1-8): ").strip()
-            
-            if choice == "1":
-                print("\n🔍 ESCANEO ÚNICO V2.3:")
-                print("=" * 50)
-                signals = system.perform_scan_with_dynamic_integration()
-                
-                if signals:
+            # Preguntar si enviar alertas
+            if telegram.initialized:
+                response = input("\n📱 ¿Enviar alertas por Telegram? (y/N): ").lower().strip()
+                if response == 'y':
                     for signal in signals:
-                        print(f"{signal.symbol} - {signal.signal_type}")
-                        print(f"  Fuerza: {getattr(signal, 'signal_strength', 0)}/100")
-                        print(f"  Precio: ${signal.current_price:.2f}")
-                        print(f"  Confianza: {getattr(signal, 'confidence_level', 'UNKNOWN')}")
-                        
-                        # Mostrar si se añadió a dynamic monitor
-                        if system.dynamic_monitor and signal.symbol in system.dynamic_monitor.monitor_targets:
-                            target = system.dynamic_monitor.monitor_targets[signal.symbol]
-                            print(f"  🎯 Dynamic Monitor: {target.priority.value}")
-                        print()
-                else:
-                    print("📊 No se detectaron señales válidas")
-            
-            elif choice == "2":
-                print("\n🚪 EVALUACIÓN DE EXITS V2.3:")
-                print("=" * 50)
-                
-                if not system.exit_manager:
-                    print("❌ Exit Manager no disponible")
-                    continue
-                
-                exit_signals = system.perform_exit_evaluation_enhanced()
-                
-                if exit_signals:
-                    for signal in exit_signals:
-                        print(f"{signal.symbol} - {getattr(signal.urgency, 'value', 'UNKNOWN')}")
-                        print(f"  Score deterioro: {signal.exit_score}/100")
-                        print(f"  PnL actual: {getattr(signal.position, 'unrealized_pnl_pct', 0):+.1f}%")
-                        
-                        # Mostrar info de dynamic monitor si aplica
-                        if system.dynamic_monitor and signal.symbol in system.dynamic_monitor.monitor_targets:
-                            target = system.dynamic_monitor.monitor_targets[signal.symbol]
-                            print(f"  🎯 Monitor: {target.priority.value} ({target.update_count} updates)")
-                        print()
-                else:
-                    print("✅ No hay alertas de exit necesarias")
-            
-            elif choice == "3":
-                print("\n🚀 INICIANDO SISTEMA AUTOMÁTICO V2.3...")
-                
-                if system.start_system():
-                    setup_signal_handlers(system)
-                    
-                    try:
-                        print("⏳ Sistema ejecutándose... (Ctrl+C para detener)")
-                        
-                        while system.running:
-                            time.sleep(1)
-                            
-                    except KeyboardInterrupt:
-                        print("\n⏸️ Deteniendo sistema...")
-                        system.stop_system()
-                        print("✅ Sistema detenido correctamente")
-                else:
-                    print("❌ Error iniciando sistema")
-            
-            elif choice == "4":
-                print("\n📊 ESTADO DEL SISTEMA V2.3:")
-                print("=" * 50)
-                
-                status = system.get_system_status_v23()
-                print(f"Versión: {status['version']}")
-                print(f"Running: {'✅' if status['running'] else '❌'}")
-                print(f"Market Open: {'✅' if status['market_open'] else '❌'}")
-                
-                print(f"\nComponentes:")
-                components = status.get('components', {})
-                for comp, active in components.items():
-                    print(f"  {comp}: {'✅' if active else '❌'}")
-                
-                print(f"\nEstadísticas:")
-                print(f"  Escaneos: {status['total_scans']}")
-                print(f"  Señales: {status['signals_sent']}")
-                print(f"  Alertas EXIT: {status['exit_alerts_sent']}")
-                print(f"  Posiciones: {status['positions_tracked']}")
-                print(f"  Updates dinámicos: {status['dynamic_updates']}")
-                
-                # Dynamic Monitor stats
-                if 'dynamic_monitor_stats' in status:
-                    dm_stats = status['dynamic_monitor_stats']
-                    print(f"\nDynamic Monitor:")
-                    print(f"  Targets activos: {dm_stats.get('total_targets', 0)}")
-                    print(f"  Updates totales: {dm_stats.get('total_updates', 0)}")
-                    print(f"  CRITICAL: {dm_stats.get('targets_by_priority', {}).get('CRITICAL', 0)}")
-                    print(f"  HIGH: {dm_stats.get('targets_by_priority', {}).get('HIGH', 0)}")
-                
-                # Posiciones
-                if 'positions' in status:
-                    pos_stats = status['positions']
-                    if pos_stats.get('total_positions', 0) > 0:
-                        print(f"\nPosiciones activas:")
-                        print(f"  Total: {pos_stats['total_positions']}")
-                        print(f"  LONG: {pos_stats.get('long_positions', 0)}")
-                        print(f"  SHORT: {pos_stats.get('short_positions', 0)}")
-                        print(f"  PnL total: {pos_stats.get('total_unrealized_pnl', 0):+.1f}%")
-            
-            elif choice == "5":  # 🎯 NUEVO - Dynamic Monitor
-                if not system.dynamic_monitor:
-                    print("❌ Dynamic Monitor no disponible")
-                    continue
-                
-                print("\n🎯 DYNAMIC MONITOR:")
-                print("=" * 50)
-                
-                stats = system.dynamic_monitor.get_monitoring_stats()
-                print(f"Running: {'✅' if stats['running'] else '❌'}")
-                print(f"Targets totales: {stats['total_targets']}")
-                print(f"Updates totales: {stats['total_updates']}")
-                
-                print("\nPor prioridad:")
-                for priority, count in stats['targets_by_priority'].items():
-                    if count > 0:
-                        print(f"  {priority}: {count}")
-                
-                # Mostrar próximas actualizaciones
-                try:
-                    next_updates = system.dynamic_monitor.get_next_update_schedule()
-                    if next_updates:
-                        print(f"\nPróximas actualizaciones:")
-                        for next_time, symbol, priority in next_updates[:5]:
-                            if hasattr(next_time, 'timestamp'):
-                                time_diff = (next_time - datetime.now()).total_seconds() / 60
-                                print(f"  {symbol}: {priority.value} en {time_diff:.1f} min")
-                except Exception as e:
-                    print(f"  Error mostrando schedule: {e}")
-                
-                # Opciones adicionales
-                print("\nAcciones disponibles:")
-                print("a. Iniciar dynamic monitor")
-                print("b. Detener dynamic monitor")
-                print("c. Sincronizar con exit manager")
-                
-                sub_choice = input("Acción (a/b/c/enter para continuar): ").strip().lower()
-                
-                if sub_choice == 'a':
-                    success = system.dynamic_monitor.start_monitoring()
-                    print(f"Resultado: {'✅ OK' if success else '❌ FALLO'}")
-                elif sub_choice == 'b':
-                    success = system.dynamic_monitor.stop_monitoring()
-                    print(f"Resultado: {'✅ OK' if success else '❌ FALLO'}")
-                elif sub_choice == 'c':
-                    success = system.dynamic_monitor.sync_with_exit_manager(system.exit_manager)
-                    print(f"Sincronización: {'✅ OK' if success else '❌ FALLO'}")
-            
-            elif choice == "6":
-                print("🧪 Ejecutando tests v2.3...")
-                
-                # Test Telegram
-                print("📱 Test Telegram...")
-                if system.telegram:
-                    try:
-                        success = system.telegram.send_message("🧪 Test desde modo interactivo v2.3")
-                        print(f"   ✅ Telegram: {'OK' if success else 'FALLO'}")
-                    except Exception as e:
-                        print(f"   ❌ Error: {e}")
-                
-                # Test Dynamic Monitor
-                print("🎯 Test Dynamic Monitor...")
-                if system.dynamic_monitor:
-                    try:
-                        # Test básico con priority
-                        success = system.dynamic_monitor.add_monitor_target(
-                            "SPY", 
-                            MonitorPriority.HIGH, 
-                            "Test"
-                        )
-                        if success:
-                            print("   ✅ Añadir target con priority: OK")
-                            success = system.dynamic_monitor.update_monitor_target("SPY")
-                            print(f"   ✅ Actualizar target: {'OK' if success else 'FALLO'}")
-                            system.dynamic_monitor.remove_monitor_target("SPY", "Test completado")
-                            print("   ✅ Remover target: OK")
-                        else:
-                            print("   ❌ Error añadiendo target")
-                    except Exception as e:
-                        print(f"   ❌ Error: {e}")
-                else:
-                    print("   ❌ Dynamic Monitor no disponible")
-                
-                print("✅ Tests v2.3 completados")
-            
-            elif choice == "7":
-                print("\n⚙️ CONFIGURACIÓN V2.3:")
-                print("=" * 50)
-                print(f"Símbolos: {len(config.SYMBOLS)}")
-                print(f"Intervalo base: {config.SCAN_INTERVAL} min")
-                print(f"Dynamic Monitor: {'✅ ACTIVO' if system.dynamic_monitor else '❌ NO DISPONIBLE'}")
-                if system.dynamic_monitor:
-                    print(f"  Frecuencias dinámicas: CRITICAL(2min) HIGH(5min) NORMAL(15min)")
-                
-                print(f"Exit Management: {'✅ ACTIVO' if system.exit_manager else '❌ NO DISPONIBLE'}")
-                print(f"Smart Features: {'✅ ACTIVO' if system.smart_components else '❌ NO DISPONIBLE'}")
-                print(f"Adaptive Targets: {'✅ V3.0 ACTIVO' if V3_SYSTEM_AVAILABLE else '📊 V2.0'}")
-                
-                print(f"\nFixes aplicados:")
-                print("  • add_monitor_target priority: ✅ FIXED")
-                print("  • sync_with_exit_manager: ✅ IMPLEMENTED")
-                print("  • TradingSignal indicators: ✅ FIXED")
-                print("  • Timezone handling: ✅ ROBUST")
-            
-            elif choice == "8":
-                print("\n👋 Saliendo del modo interactivo...")
-                if system.running:
-                    system.stop_system()
-                break
-            else:
-                print("❌ Opción no válida")
-                
-    except Exception as e:
-        logger.error(f"❌ Error en modo interactivo: {e}")
-        return 1
-    
-    return 0
-
-# =============================================================================
-# FUNCIÓN PRINCIPAL V2.3
-# =============================================================================
-
-def main_v23():
-    """Función principal v2.3 con todos los fixes"""
-    try:
-        parser = argparse.ArgumentParser(description='Smart Trading System v2.3 - Dynamic Monitoring')
-        parser.add_argument('mode', nargs='?', choices=['auto', 'scan', 'exits', 'dynamic', 'test', 'status'], 
-                          help='Modo de ejecución')
-        parser.add_argument('--symbols', nargs='+', help='Símbolos específicos para escanear')
-        parser.add_argument('--debug', action='store_true', help='Activar modo debug')
-        
-        args = parser.parse_args()
-        
-        if args.debug:
-            logging.getLogger().setLevel(logging.DEBUG)
-            logger.info("🐛 Modo debug activado")
-        
-        if args.mode:
-            mode = args.mode
-            logger.info(f"🎯 Ejecutando modo: {mode}")
-            
-            if mode == "auto":
-                logger.info("🚀 Modo automático v2.3")
-                system = SmartTradingSystemV23WithDynamicMonitoring()
-                
-                if system.start_system():
-                    setup_signal_handlers(system)
-                    
-                    try:
-                        logger.info("⏳ Sistema ejecutándose... (Ctrl+C para detener)")
-                        
-                        while system.running:
-                            time.sleep(1)
-                            
-                    except KeyboardInterrupt:
-                        logger.info("⏸️ Deteniendo sistema...")
-                        system.stop_system()
-                else:
-                    logger.error("❌ Error iniciando sistema automático")
-                    return 1
-            
-            elif mode == "scan":
-                logger.info("🔍 Modo scan único v2.3")
-                system = SmartTradingSystemV23WithDynamicMonitoring()
-                signals = system.perform_scan_with_dynamic_integration()
-                
-                if signals:
-                    print("\n✅ SEÑALES DETECTADAS V2.3:")
-                    print("=" * 50)
-                    for signal in signals:
-                        print(f"{signal.symbol} - {signal.signal_type}")
-                        print(f"  Fuerza: {getattr(signal, 'signal_strength', 0)}/100")
-                        print(f"  Precio: ${signal.current_price:.2f}")
-                        print(f"  Confianza: {getattr(signal, 'confidence_level', 'UNKNOWN')}")
-                        
-                        # Mostrar si se añadió a dynamic monitor
-                        if system.dynamic_monitor and signal.symbol in system.dynamic_monitor.monitor_targets:
-                            target = system.dynamic_monitor.monitor_targets[signal.symbol]
-                            print(f"  🎯 Dynamic Monitor: {target.priority.value}")
-                        print()
-                else:
-                    print("📊 No se detectaron señales válidas")
-            
-            elif mode == "exits":
-                logger.info("🚪 Modo evaluación de exits v2.3")
-                system = SmartTradingSystemV23WithDynamicMonitoring()
-                
-                if not system.exit_manager:
-                    print("❌ Exit Manager no disponible")
-                    return 1
-                
-                exit_signals = system.perform_exit_evaluation_enhanced()
-                
-                if exit_signals:
-                    print("\n🚨 ALERTAS DE EXIT DETECTADAS V2.3:")
-                    print("=" * 60)
-                    for signal in exit_signals:
-                        print(f"{signal.symbol} - {getattr(signal.urgency, 'value', 'UNKNOWN')}")
-                        print(f"  Score deterioro: {signal.exit_score}/100")
-                        
-                        # Mostrar info de dynamic monitor si aplica
-                        if system.dynamic_monitor and signal.symbol in system.dynamic_monitor.monitor_targets:
-                            target = system.dynamic_monitor.monitor_targets[signal.symbol]
-                            print(f"  🎯 Monitor: {target.priority.value} ({target.update_count} updates)")
-                        print()
-                else:
-                    print("✅ No hay alertas de exit necesarias")
-            
-            elif mode == "dynamic":  # 🎯 NUEVO modo
-                logger.info("🎯 Modo Dynamic Monitor v2.3")
-                system = SmartTradingSystemV23WithDynamicMonitoring()
-                
-                if not system.dynamic_monitor:
-                    print("❌ Dynamic Monitor no disponible")
-                    return 1
-                
-                # Demo del dynamic monitor
-                print("📊 Iniciando Dynamic Monitor demo...")
-                print("📊 Añadiendo targets de demo...")
-                system.dynamic_monitor.add_monitor_target("SPY", MonitorPriority.HIGH, "Demo mode")
-                system.dynamic_monitor.add_monitor_target("QQQ", MonitorPriority.NORMAL, "Demo mode")
-                
-                # Iniciar monitoreo
-                print("🚀 Iniciando Dynamic Monitor...")
-                success = system.dynamic_monitor.start_monitoring()
-                
-                if success:
-                    try:
-                        print("⏳ Ejecutando por 5 minutos... (Ctrl+C para detener)")
-                        time.sleep(300)  # 5 minutos
-                    except KeyboardInterrupt:
-                        print("\n⏸️ Detenido por usuario")
-                    
-                    system.dynamic_monitor.stop_monitoring()
-                    
-                    # Stats finales
-                    stats = system.dynamic_monitor.get_monitoring_stats()
-                    print(f"\n📈 RESULTADOS:")
-                    print(f"Updates totales: {stats['total_updates']}")
-                    print(f"Targets procesados: {stats['total_targets']}")
-                else:
-                    print("❌ Error iniciando Dynamic Monitor")
-            
-            elif mode == "test":
-                logger.info("🧪 Modo testing completo v2.3")
-                system = SmartTradingSystemV23WithDynamicMonitoring()
-                
-                print("🧪 EJECUTANDO TESTS COMPLETOS V2.3")
-                print("=" * 70)
-                
-                # Test 1: Telegram
-                print("1. 📱 Test Telegram...")
-                try:
-                    success = system.telegram.send_message("🧪 Test sistema v2.3 - Todos los fixes aplicados")
-                    print(f"   Resultado: {'✅ OK' if success else '❌ FALLO'}")
-                except Exception as e:
-                    print(f"   ❌ Error: {e}")
-                
-                # Test 2: Exit Manager
-                print("2. 🚪 Test Exit Manager...")
-                if system.exit_manager:
-                    try:
-                        positions_summary = system.exit_manager.get_positions_summary()
-                        print(f"   ✅ Exit Manager funcionando")
-                        print(f"   Posiciones activas: {positions_summary.get('total_positions', 0)}")
-                    except Exception as e:
-                        print(f"   ❌ Error: {e}")
-                else:
-                    print("   ❌ Exit Manager no disponible")
-                
-                # Test 3: Dynamic Monitor (EL MÁS IMPORTANTE)
-                print("3. 🎯 Test Dynamic Monitor - FIXES APLICADOS...")
-                if system.dynamic_monitor:
-                    try:
-                        # Test del fix principal: add_monitor_target con priority
-                        success = system.dynamic_monitor.add_monitor_target(
-                            "SPY", 
-                            MonitorPriority.HIGH,  # 🔧 PARÁMETRO QUE FALTABA
-                            "Test fix priority parameter"
-                        )
-                        if success:
-                            print("   ✅ add_monitor_target con priority: FIXED ✅")
-                            
-                            # Test sync_with_exit_manager (método que faltaba)
-                            sync_success = system.dynamic_monitor.sync_with_exit_manager(system.exit_manager)
-                            print(f"   ✅ sync_with_exit_manager: {'FIXED ✅' if sync_success else 'ERROR'}")
-                            
-                            # Test get_monitoring_stats (error isoformat)
-                            stats = system.dynamic_monitor.get_monitoring_stats()
-                            print("   ✅ get_monitoring_stats sin error isoformat: FIXED ✅")
-                            
-                            # Cleanup
-                            system.dynamic_monitor.remove_monitor_target("SPY", "Test completado")
-                        else:
-                            print("   ❌ Error en add_monitor_target")
-                    except Exception as e:
-                        print(f"   ❌ Error: {e}")
-                else:
-                    print("   ❌ Dynamic Monitor no disponible")
-                
-                print("\n🎉 TODOS LOS FIXES VERIFICADOS:")
-                print("✅ add_monitor_target priority parameter: FIXED")
-                print("✅ sync_with_exit_manager method: IMPLEMENTED") 
-                print("✅ get_monitoring_stats isoformat: FIXED")
-                print("✅ TradingSignal indicators attribute: FIXED")
-            
-            elif mode == "status":  # 🎯 NUEVO modo
-                logger.info("📊 Modo status v2.3")
-                system = SmartTradingSystemV23WithDynamicMonitoring()
-                
-                status = system.get_system_status_v23()
-                
-                print(f"\n📊 ESTADO COMPLETO DEL SISTEMA V2.3:")
-                print("=" * 70)
-                print(f"Versión: {status['version']}")
-                print(f"Running: {'✅' if status['running'] else '❌'}")
-                print(f"Market Open: {'✅' if status['market_open'] else '❌'}")
-                
-                print(f"\nComponentes:")
-                components = status.get('components', {})
-                for comp, active in components.items():
-                    print(f"  {comp}: {'✅' if active else '❌'}")
-                
-                print(f"\nEstadísticas:")
-                print(f"  Escaneos: {status['total_scans']}")
-                print(f"  Señales: {status['signals_sent']}")
-                print(f"  Alertas EXIT: {status['exit_alerts_sent']}")
-                print(f"  Posiciones: {status['positions_tracked']}")
-                print(f"  Updates dinámicos: {status['dynamic_updates']}")
-                
-                # Dynamic Monitor stats
-                if 'dynamic_monitor_stats' in status:
-                    dm_stats = status['dynamic_monitor_stats']
-                    print(f"\nDynamic Monitor:")
-                    print(f"  Targets activos: {dm_stats.get('total_targets', 0)}")
-                    print(f"  Updates totales: {dm_stats.get('total_updates', 0)}")
-                    print(f"  CRITICAL: {dm_stats.get('targets_by_priority', {}).get('CRITICAL', 0)}")
-                    print(f"  HIGH: {dm_stats.get('targets_by_priority', {}).get('HIGH', 0)}")
-                
-                # Posiciones
-                if 'positions' in status:
-                    pos_stats = status['positions']
-                    if pos_stats.get('total_positions', 0) > 0:
-                        print(f"\nPosiciones activas:")
-                        print(f"  Total: {pos_stats['total_positions']}")
-                        print(f"  LONG: {pos_stats.get('long_positions', 0)}")
-                        print(f"  SHORT: {pos_stats.get('short_positions', 0)}")
-                        print(f"  PnL total: {pos_stats.get('total_unrealized_pnl', 0):+.1f}%")
-            
-            else:
-                print(f"❌ Modo '{mode}' no reconocido")
-                print("Modos disponibles v2.3: auto, scan, exits, dynamic, test, status")
-                return 1
+                        telegram.send_signal_alert(signal)
+                        time.sleep(1)
+                    print("✅ Alertas enviadas")
         else:
-            # Sin argumentos = modo interactivo v2.3
-            return mode_interactive_v23()
+            print("   ℹ️ No hay señales válidas en este momento")
+            print("   💡 El sistema es muy selectivo - esto es normal")
+        
+        print(f"\n✅ Escaneo completado")
+        
+    except Exception as e:
+        print(f"❌ Error en escaneo: {e}")
+        logger.error(f"Error en single scan: {e}", exc_info=True)
+
+
+def run_data_validation():
+    """🆕 V3.1: Ejecutar validación de datos históricos"""
+    print("🔍 VALIDACIÓN DE DATOS - TRADING SYSTEM V3.1")
+    print("=" * 70)
+    
+    try:
+        # Inicializar data validator
+        validator = DataValidator()
+        
+        # Validar símbolos principales
+        print(f"\n📊 Validando {len(config.SYMBOLS[:5])} símbolos principales...")
+        
+        for symbol in config.SYMBOLS[:5]:
+            print(f"\n🎯 {symbol}:")
+            
+            # 🔧 FIX: Usar firma correcta de validate_symbol
+            report = validator.validate_symbol(
+                symbol=symbol,
+                days_back=30
+            )
+            
+            print(f"   Score: {report.overall_score:.1f}/100")
+            print(f"   Status: {report.overall_status.value}")
+            
+            # 🔧 FIX: Usar critical_issues en lugar de issues
+            if report.critical_issues:
+                print(f"   🚨 Issues críticos: {len(report.critical_issues)}")
+                for issue in report.critical_issues[:3]:  # Mostrar top 3
+                    print(f"      • {issue}")
+            
+            # 🔧 NUEVO: Mostrar warnings también
+            if report.warnings:
+                print(f"   ⚠️ Warnings: {len(report.warnings)}")
+                for warning in report.warnings[:2]:
+                    print(f"      • {warning}")
+            
+            if report.recommendations:
+                print(f"   💡 Recomendaciones:")
+                for rec in report.recommendations[:2]:
+                    print(f"      • {rec}")
+        
+        print(f"\n✅ Validación completada")
+        
+    except Exception as e:
+        print(f"❌ Error en validación: {e}")
+        logger.error(f"Error en data validation: {e}", exc_info=True)
+
+
+
+def run_gap_analysis():
+    """🆕 V3.1: Ejecutar análisis de gaps en datos"""
+    print("🔧 ANÁLISIS DE GAPS - TRADING SYSTEM V3.1")
+    print("=" * 70)
+    
+    try:
+        # Inicializar gap detector
+        gap_detector = GapDetector()
+        
+        print(f"\n📊 Analizando gaps en {len(config.SYMBOLS[:3])} símbolos...")
+        
+        total_gaps = 0
+        total_fillable = 0
+        
+        for symbol in config.SYMBOLS[:3]:
+            print(f"\n🎯 {symbol}:")
+            
+            # Obtener datos recientes
+            from indicators import TechnicalIndicators
+            indicators = TechnicalIndicators()
+            data = indicators.get_all_indicators(symbol)
+            
+            if 'market_data' in data and not data['market_data'].empty:
+                # Generar reporte de calidad
+                report = gap_detector.analyze_data_quality(
+                    data['market_data'],
+                    symbol,
+                    expected_interval_minutes=15
+                )
+                
+                print(f"   Gaps detectados: {report.total_gaps}")
+                
+                # 🔧 FIX: Calcular fillable_gaps manualmente
+                fillable_gaps = len([
+                    gap for gap in report.gaps_detected 
+                    if hasattr(gap, 'is_fillable') and gap.is_fillable
+                ])
+                
+                print(f"   Gaps rellenables: {fillable_gaps}")
+                print(f"   Completitud: {report.completeness_pct:.1f}%")
+                
+                # 🔧 FIX: Usar overall_quality_score en lugar de quality_score
+                print(f"   Score calidad: {report.overall_quality_score:.1f}/100")
+                
+                total_gaps += report.total_gaps
+                total_fillable += fillable_gaps
+                
+                # Mostrar gaps críticos
+                critical_gaps = [g for g in report.gaps_detected 
+                                if hasattr(g, 'severity') and g.severity.value in ['HIGH', 'CRITICAL']]
+                
+                if critical_gaps:
+                    print(f"   ⚠️ Gaps críticos: {len(critical_gaps)}")
+                    for gap in critical_gaps[:2]:
+                        duration = gap.duration_minutes if hasattr(gap, 'duration_minutes') else 0
+                        gap_type = gap.gap_type.value if hasattr(gap, 'gap_type') else 'UNKNOWN'
+                        print(f"      • {gap_type}: {duration:.0f} min")
+        
+        print(f"\n📊 RESUMEN TOTAL:")
+        print(f"   Total gaps: {total_gaps}")
+        print(f"   Rellenables: {total_fillable}")
+        if total_gaps > 0:
+            print(f"   Tasa rellenable: {(total_fillable/total_gaps*100):.1f}%")
+        else:
+            print(f"   Tasa rellenable: N/A (sin gaps)")
+        
+        print(f"\n✅ Análisis completado")
+        
+    except Exception as e:
+        print(f"❌ Error en análisis: {e}")
+        logger.error(f"Error en gap analysis: {e}", exc_info=True)
+
+
+def run_collector_test():
+    """🆕 V3.1: Test del continuous collector"""
+    print("🕐 TEST CONTINUOUS COLLECTOR - TRADING SYSTEM V3.1")
+    print("=" * 70)
+    
+    try:
+        # Inicializar collector
+        collector = ContinuousDataCollector()
+        
+        print(f"📊 Collector configurado:")
+        print(f"   Símbolos: {len(collector.symbols)}")
+        print(f"   Sesiones: {len(collector.sessions)}")
+        print(f"   Status: {collector.status.value}")
+        
+        # Mostrar sesiones
+        print(f"\n🕐 Sesiones configuradas:")
+        for session in collector.sessions:
+            enabled = "✅" if session.enabled else "❌"
+            print(f"   {enabled} {session.name}: {session.start_time}-{session.end_time} "
+                  f"(cada {session.interval_minutes}min)")
+        
+        # Test recolección forzada
+        print(f"\n🔧 Ejecutando recolección forzada de test...")
+        test_symbols = collector.symbols[:2]
+        
+        results = collector.force_collection_now(test_symbols)
+        
+        print(f"\n📊 Resultados:")
+        for result in results:
+            status = "✅" if result.success else "❌"
+            print(f"   {status} {result.symbol}:")
+            print(f"      Puntos: {result.data_points}")
+            print(f"      Gaps: {result.gaps_detected} detectados, {result.gaps_filled} rellenados")
+            print(f"      Tiempo: {result.collection_time_ms:.0f}ms")
+        
+        print(f"\n✅ Test completado")
+        
+    except Exception as e:
+        print(f"❌ Error en test: {e}")
+        logger.error(f"Error en collector test: {e}", exc_info=True)
+
+
+def show_system_status():
+    """Mostrar estado actual del sistema"""
+    print("📊 ESTADO DEL SISTEMA - TRADING SYSTEM V3.1")
+    print("=" * 70)
+    
+    try:
+        # Verificar componentes
+        print("\n🔧 COMPONENTES:")
+        
+        components = {
+            'Scanner': True,
+            'Telegram Bot': True,
+            'Exit Manager': True,
+            'Dynamic Monitor': DYNAMIC_MONITOR_AVAILABLE,
+            'Continuous Collector': True,
+            'Gap Detector': True,
+            'Data Validator': True,
+        }
+        
+        for name, available in components.items():
+            status = "✅" if available else "❌"
+            print(f"   {status} {name}")
+        
+        # Verificar configuración
+        print("\n⚙️ CONFIGURACIÓN:")
+        print(f"   Extended Hours: {'✅' if config.is_extended_hours_enabled() else '❌'}")
+        print(f"   Modo desarrollo: {'✅' if config.DEVELOPMENT_MODE else '❌'}")
+        print(f"   Símbolos: {len(config.SYMBOLS)}")
+        print(f"   Intervalo scan: {config.SCAN_INTERVAL} min")
+        print(f"   Riesgo/trade: {config.RISK_PER_TRADE}%")
+        
+        # Horarios
+        print("\n⏰ HORARIOS:")
+        now = datetime.now(pytz.timezone(config.MARKET_TIMEZONE))
+        print(f"   Hora actual: {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        
+        if config.is_extended_hours_enabled():
+            session_name, session_config = config.get_current_trading_session()
+            if session_name:
+                print(f"   Sesión actual: {session_name}")
+                print(f"   Descripción: {session_config.get('DESCRIPTION', 'N/A')}")
+            else:
+                print(f"   Sesión actual: Ninguna")
+        
+        # Base de datos
+        print("\n🗄️ BASE DE DATOS:")
+        try:
+            from database.connection import get_connection
+            conn = get_connection()
+            if conn:
+                cursor = conn.cursor()
+                
+                # Contar registros
+                cursor.execute("SELECT COUNT(*) FROM indicators_data")
+                indicators_count = cursor.fetchone()[0]
+                
+                cursor.execute("SELECT COUNT(*) FROM signals_sent")
+                signals_count = cursor.fetchone()[0]
+                
+                print(f"   ✅ Conectada")
+                print(f"   Indicators: {indicators_count:,} registros")
+                print(f"   Signals: {signals_count:,} registros")
+                
+                conn.close()
+            else:
+                print(f"   ❌ No conectada")
+        except Exception as e:
+            print(f"   ❌ Error: {e}")
+        
+        print(f"\n✅ Estado verificado")
+        
+    except Exception as e:
+        print(f"❌ Error verificando estado: {e}")
+        logger.error(f"Error en system status: {e}", exc_info=True)
+
+
+# =============================================================================
+# 🚀 FUNCIÓN PRINCIPAL Y CLI
+# =============================================================================
+
+def main():
+    """Función principal con interfaz CLI mejorada"""
+    import argparse
+    
+    parser = argparse.ArgumentParser(
+        description='🚀 Smart Trading System V3.1 - Extended Hours',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Ejemplos de uso:
+  python main.py                      # Modo interactivo
+  python main.py --auto               # Trading automático
+  python main.py --scan               # Escaneo único
+  python main.py --status             # Estado del sistema
+  python main.py --validate           # Validar datos
+  python main.py --gaps               # Analizar gaps
+  python main.py --test-collector     # Test collector
+        """
+    )
+    
+    parser.add_argument('--auto', action='store_true',
+                       help='Iniciar trading automático')
+    parser.add_argument('--scan', action='store_true',
+                       help='Ejecutar escaneo único')
+    parser.add_argument('--status', action='store_true',
+                       help='Mostrar estado del sistema')
+    parser.add_argument('--validate', action='store_true',
+                       help='Validar calidad de datos')
+    parser.add_argument('--gaps', action='store_true',
+                       help='Analizar gaps en datos')
+    parser.add_argument('--test-collector', action='store_true',
+                       help='Test del continuous collector')
+    
+    args = parser.parse_args()
+    
+    # Ejecutar según argumentos
+    try:
+        if args.auto:
+            # Trading automático
+            system = TradingSystemV31()
+            
+            if system.start_system():
+                # Mantener sistema ejecutándose
+                try:
+                    while system.running:
+                        time.sleep(1)
+                except KeyboardInterrupt:
+                    logger.info("📡 Interrupción de usuario")
+                finally:
+                    system.stop_system()
+            else:
+                logger.error("❌ No se pudo iniciar el sistema")
+                return 1
+        
+        elif args.scan:
+            run_single_scan()
+        
+        elif args.status:
+            show_system_status()
+        
+        elif args.validate:
+            run_data_validation()
+        
+        elif args.gaps:
+            run_gap_analysis()
+        
+        elif args.test_collector:
+            run_collector_test()
+        
+        else:
+            # Modo interactivo
+            run_interactive_mode()
         
         return 0
         
+    except KeyboardInterrupt:
+        print("\n👋 Programa interrumpido por el usuario")
+        return 0
     except Exception as e:
-        logger.error(f"💥 Error crítico v2.3: {e}")
+        logger.error(f"❌ Error en programa principal: {e}", exc_info=True)
         return 1
 
+
+def run_interactive_mode():
+    """Modo interactivo con menú"""
+    while True:
+        print("\n" + "=" * 70)
+        print("🚀 SMART TRADING SYSTEM V3.1 - MENÚ PRINCIPAL")
+        print("=" * 70)
+        print("\n📋 OPCIONES:")
+        print("1. 🚀 Iniciar trading automático")
+        print("2. 🔍 Escaneo único de mercado")
+        print("3. 📊 Estado del sistema")
+        print("4. ✅ Validar calidad de datos")
+        print("5. 🔧 Analizar gaps en datos")
+        print("6. 🕐 Test continuous collector")
+        print("7. 📖 Ayuda y documentación")
+        print("0. 🚪 Salir")
+        
+        try:
+            choice = input("\n👉 Elige una opción (0-7): ").strip()
+            
+            if choice == '0':
+                print("👋 ¡Hasta pronto!")
+                break
+            
+            elif choice == '1':
+                print("\n🚀 Iniciando trading automático...")
+                print("⚠️ Presiona Ctrl+C para detener")
+                time.sleep(2)
+                
+                system = TradingSystemV31()
+                
+                if system.start_system():
+                    try:
+                        while system.running:
+                            time.sleep(1)
+                    except KeyboardInterrupt:
+                        print("\n📡 Deteniendo sistema...")
+                    finally:
+                        system.stop_system()
+                else:
+                    print("❌ No se pudo iniciar el sistema")
+                
+                input("\n📱 Presiona Enter para continuar...")
+            
+            elif choice == '2':
+                run_single_scan()
+                input("\n📱 Presiona Enter para continuar...")
+            
+            elif choice == '3':
+                show_system_status()
+                input("\n📱 Presiona Enter para continuar...")
+            
+            elif choice == '4':
+                run_data_validation()
+                input("\n📱 Presiona Enter para continuar...")
+            
+            elif choice == '5':
+                run_gap_analysis()
+                input("\n📱 Presiona Enter para continuar...")
+            
+            elif choice == '6':
+                run_collector_test()
+                input("\n📱 Presiona Enter para continuar...")
+            
+            elif choice == '7':
+                show_help()
+                input("\n📱 Presiona Enter para continuar...")
+            
+            else:
+                print("❌ Opción no válida")
+                time.sleep(1)
+        
+        except (KeyboardInterrupt, EOFError):
+            print("\n👋 Saliendo...")
+            break
+        except Exception as e:
+            print(f"❌ Error: {e}")
+            logger.error(f"Error en modo interactivo: {e}", exc_info=True)
+
+
+def show_help():
+    """Mostrar ayuda detallada"""
+    print("\n📖 AYUDA - TRADING SYSTEM V3.1")
+    print("=" * 70)
+    
+    print("\n🎯 CARACTERÍSTICAS V3.1:")
+    print("• ✅ Extended Hours: Monitoreo 24/5 (pre/post/overnight)")
+    print("• ✅ Continuous Collection: Recolección automática de datos")
+    print("• ✅ Gap Detection: Detección y relleno automático de gaps")
+    print("• ✅ Data Validation: Validación de calidad para backtesting")
+    print("• ✅ Dynamic Monitor: Monitoreo adaptativo de posiciones")
+    print("• ✅ Multi-threaded: Scanner + Collector en paralelo")
+    
+    print("\n🔧 COMPONENTES:")
+    print("• Scanner: Detección de señales de trading")
+    print("• Telegram Bot: Alertas en tiempo real")
+    print("• Exit Manager: Gestión automática de salidas")
+    print("• Continuous Collector: Recolección 24/5 de datos")
+    print("• Gap Detector: Análisis y relleno de gaps")
+    print("• Data Validator: Validación de calidad de datos")
+    
+    print("\n⏰ HORARIOS EXTENDED:")
+    print("• PRE_MARKET: 04:00-09:30 (cada 30 min)")
+    print("• MORNING: 10:00-12:00 (cada 15 min)")
+    print("• AFTERNOON: 13:30-15:30 (cada 15 min)")
+    print("• POST_MARKET: 16:00-20:00 (cada 30 min)")
+    print("• OVERNIGHT: 20:00-04:00 (cada 2 horas)")
+    
+    print("\n🚀 FLUJO DE TRABAJO:")
+    print("1. Configurar extended hours en config.py")
+    print("2. Verificar estado: python main.py --status")
+    print("3. Validar datos: python main.py --validate")
+    print("4. Test collector: python main.py --test-collector")
+    print("5. Escaneo único: python main.py --scan")
+    print("6. Trading auto: python main.py --auto")
+    
+    print("\n💡 CONSEJOS:")
+    print("• El continuous collector rellena gaps automáticamente")
+    print("• Validar datos antes de backtesting es crítico")
+    print("• Extended hours mejora la calidad de datos")
+    print("• El sistema es dual: collection + scanning paralelo")
+    print("• Revisar logs en logs/trading_system.log")
+    
+    print("\n🆘 SOLUCIÓN DE PROBLEMAS:")
+    print("• Sin collector: Verificar config.CONTINUOUS_DATA_CONFIG")
+    print("• Gaps excesivos: Ejecutar python main.py --gaps")
+    print("• Datos incompletos: Ejecutar validación completa")
+    print("• Errores de BD: Verificar database/connection.py")
+
+
+# =============================================================================
+# 🎬 ENTRY POINT
+# =============================================================================
+
 if __name__ == "__main__":
-    print("🎯 Smart Trading System v2.3 con Dynamic Monitoring - TODOS LOS FIXES APLICADOS")
-    print("=" * 80)
-    print("🔧 FIXES INCLUIDOS:")
-    print("   ✅ add_monitor_target() - Parámetro 'priority' añadido")
-    print("   ✅ sync_with_exit_manager() - Método implementado")
-    print("   ✅ TradingSignal.indicators - Error solucionado")
-    print("   ✅ get_monitoring_stats() - Error isoformat corregido")
-    print("   ✅ Integración completa V3.0 - Adaptive targets")
-    print("   ✅ Manejo robusto de errores en todas las integraciones")
-    print("=" * 80)
-    print("🚀 Iniciando sistema...")
-    sys.exit(main_v23())
+    try:
+        exit_code = main()
+        sys.exit(exit_code)
+    except Exception as e:
+        logger.error(f"❌ Error fatal: {e}", exc_info=True)
+        sys.exit(1)
