@@ -420,7 +420,7 @@ class TradingSystemV31:
                 try:
                     # Validar símbolos principales
                     for symbol in config.SYMBOLS[:3]:  # Top 3
-                        report = self.data_validator.validate_symbol_data(
+                        report = self.data_validator.validate_symbol(
                             symbol,
                             validation_level=ValidationLevel.BASIC,
                             days_back=7
@@ -720,8 +720,11 @@ def run_data_validation():
     print("=" * 70)
     
     try:
-        # Inicializar data validator
-        validator = DataValidator()
+        # Inicializar data validator CON el nivel de validación deseado
+        # El nivel se define AQUÍ, no en cada llamada a validate_symbol()
+        from data_validator import DataValidator, ValidationLevel
+        
+        validator = DataValidator(validation_level=ValidationLevel.STANDARD)
         
         # Validar símbolos principales
         print(f"\n📊 Validando {len(config.SYMBOLS[:5])} símbolos principales...")
@@ -729,7 +732,8 @@ def run_data_validation():
         for symbol in config.SYMBOLS[:5]:
             print(f"\n🎯 {symbol}:")
             
-            # 🔧 FIX: Usar firma correcta de validate_symbol
+            # ✅ FIX: NO pasar validation_level aquí
+            # El método solo acepta: symbol, data (opcional), days_back
             report = validator.validate_symbol(
                 symbol=symbol,
                 days_back=30
@@ -737,25 +741,27 @@ def run_data_validation():
             
             print(f"   Score: {report.overall_score:.1f}/100")
             print(f"   Status: {report.overall_status.value}")
+            print(f"   Backtest ready: {'✅' if report.backtest_ready else '❌'}")
             
-            # 🔧 FIX: Usar critical_issues en lugar de issues
+            # Mostrar issues críticos
             if report.critical_issues:
                 print(f"   🚨 Issues críticos: {len(report.critical_issues)}")
-                for issue in report.critical_issues[:3]:  # Mostrar top 3
+                for issue in report.critical_issues[:3]:
                     print(f"      • {issue}")
             
-            # 🔧 NUEVO: Mostrar warnings también
+            # Mostrar warnings
             if report.warnings:
                 print(f"   ⚠️ Warnings: {len(report.warnings)}")
                 for warning in report.warnings[:2]:
                     print(f"      • {warning}")
             
+            # Mostrar recomendaciones
             if report.recommendations:
                 print(f"   💡 Recomendaciones:")
                 for rec in report.recommendations[:2]:
                     print(f"      • {rec}")
         
-        print(f"\n✅ Validación completada")
+        print("\n✅ Validación completada")
         
     except Exception as e:
         print(f"❌ Error en validación: {e}")

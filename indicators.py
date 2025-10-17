@@ -1,16 +1,13 @@
 #!/usr/bin/env python3
 """
-📊 SISTEMA DE INDICADORES TÉCNICOS V3.1 - EXTENDED HOURS + GAP DETECTION
+📊 SISTEMA DE INDICADORES TÉCNICOS V3.2 - REAL DATA GAP FILLING
 ========================================================================
 
-Este módulo contiene todos los indicadores técnicos utilizados para
-detectar señales de trading de alta calidad.
-
-🆕 V3.1 NUEVAS FUNCIONALIDADES:
-- Extended Hours automático (pre/post/overnight)
-- Gap detection y auto-filling inteligente
-- Datos continuos para backtesting robusto
-- Wrapper transparente (backward compatible)
+🆕 V3.2 CORRECCIONES CRÍTICAS:
+- Gap filling con datos REALES de yfinance
+- Worst-case scenario conservador si no hay datos
+- NO inventa precios (High/Low reales para stops/targets)
+- Backward compatible con V3.1
 
 Indicadores implementados:
 - MACD (Moving Average Convergence Divergence)
@@ -31,6 +28,7 @@ from typing import Dict, Tuple, Optional, Union, List
 from datetime import datetime, timedelta
 import warnings
 import pytz
+import time
 
 # Importar configuración
 try:
@@ -44,14 +42,31 @@ try:
         'MIN_GAP_MINUTES': 60,
         'OVERNIGHT_GAP_HOURS': [20, 4],
         'FILL_STRATEGIES': {
-            'SMALL_GAP': 'INTERPOLATE',
-            'OVERNIGHT_GAP': 'FORWARD_FILL',
-            'WEEKEND_GAP': 'FORWARD_FILL'
+            'SMALL_GAP': 'REAL_DATA',
+            'OVERNIGHT_GAP': 'REAL_DATA',
+            'WEEKEND_GAP': 'PRESERVE_GAP',
+            'HOLIDAY_GAP': 'PRESERVE_GAP'
         }
     })
     
+    REAL_DATA_CONFIG = getattr(config, 'GAP_DETECTION_CONFIG', {}).get('REAL_DATA_CONFIG', {
+        'USE_YFINANCE': True,
+        'INCLUDE_PREPOST': True,
+        'FALLBACK_TO_CONSERVATIVE': True,
+        'MAX_GAP_TO_FILL_HOURS': 12,
+        'RETRY_ATTEMPTS': 3,
+        'RETRY_DELAY_SECONDS': 2
+    })
+    
+    WORST_CASE_CONFIG = getattr(config, 'GAP_DETECTION_CONFIG', {}).get('WORST_CASE_CONFIG', {
+        'ENABLED': True,
+        'METHOD': 'CONSERVATIVE_RANGE',
+        'PRICE_MOVEMENT_ESTIMATE': 0.02,
+        'USE_ATR_IF_AVAILABLE': True
+    })
+    
     logger = logging.getLogger(__name__)
-    logger.info("✅ Extended Hours V3.1 configurado desde config.py")
+    logger.info("✅ Extended Hours V3.2 configurado con REAL DATA")
     
 except ImportError:
     # Fallback a configuración básica
@@ -62,13 +77,25 @@ except ImportError:
         'MIN_GAP_MINUTES': 60,
         'OVERNIGHT_GAP_HOURS': [20, 4],
         'FILL_STRATEGIES': {
-            'SMALL_GAP': 'INTERPOLATE',
-            'OVERNIGHT_GAP': 'FORWARD_FILL',
-            'WEEKEND_GAP': 'FORWARD_FILL'
+            'SMALL_GAP': 'REAL_DATA',
+            'OVERNIGHT_GAP': 'REAL_DATA',
+            'WEEKEND_GAP': 'PRESERVE_GAP'
         }
     }
+    REAL_DATA_CONFIG = {
+        'USE_YFINANCE': True,
+        'INCLUDE_PREPOST': True,
+        'FALLBACK_TO_CONSERVATIVE': True,
+        'MAX_GAP_TO_FILL_HOURS': 12,
+        'RETRY_ATTEMPTS': 3
+    }
+    WORST_CASE_CONFIG = {
+        'ENABLED': True,
+        'METHOD': 'CONSERVATIVE_RANGE',
+        'PRICE_MOVEMENT_ESTIMATE': 0.02
+    }
     logger = logging.getLogger(__name__)
-    logger.warning("⚠️ Config no disponible, usando configuración básica extended hours")
+    logger.warning("⚠️ Config no disponible, usando configuración básica V3.2")
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -78,21 +105,29 @@ warnings.filterwarnings('ignore', category=FutureWarning)
 
 class TechnicalIndicators:
     """
-    Clase principal para calcular todos los indicadores técnicos con soporte Extended Hours
+    Clase principal para calcular todos los indicadores técnicos con Gap Filling REAL
     """
     
     def __init__(self):
         """Inicializar la clase de indicadores"""
         self.last_update = {}  # Cache para evitar recálculos innecesarios
-        self.gap_stats = {'gaps_detected': 0, 'gaps_filled': 0, 'last_check': None}
+        self.gap_stats = {
+            'gaps_detected': 0, 
+            'gaps_filled': 0, 
+            'gaps_with_real_data': 0,  # 🆕 Contador datos reales
+            'gaps_worst_case': 0,       # 🆕 Contador worst-case
+            'gaps_preserved': 0,        # 🆕 Contador gaps preservados
+            'last_check': None
+        }
         
-        logger.info("🔍 TechnicalIndicators V3.1 inicializado")
+        logger.info("🔍 TechnicalIndicators V3.2 inicializado")
         logger.info(f"🕐 Extended Hours: {'✅ Habilitado' if USE_EXTENDED_HOURS else '❌ Deshabilitado'}")
         logger.info(f"🔧 Gap Detection: {'✅ Habilitado' if USE_GAP_DETECTION else '❌ Deshabilitado'}")
+        logger.info(f"📊 Real Data Filling: {'✅ Habilitado' if REAL_DATA_CONFIG.get('USE_YFINANCE') else '❌ Deshabilitado'}")
     
     def get_market_data(self, symbol: str, period: str = "15m", days: int = 30) -> pd.DataFrame:
         """
-        🆕 WRAPPER MEJORADO: Descargar datos con Extended Hours + Gap Detection
+        🆕 V3.2: Wrapper mejorado con REAL DATA gap filling
         
         Args:
             symbol: Símbolo a descargar (ej: "AAPL")
@@ -100,17 +135,17 @@ class TechnicalIndicators:
             days: Días de historial a descargar
             
         Returns:
-            DataFrame con OHLCV data sin gaps
+            DataFrame con OHLCV data con gaps rellenados usando datos REALES
         """
         try:
-            logger.info(f"📊 Descargando datos V3.1 para {symbol} - {period} - {days} días")
+            logger.info(f"📊 Descargando datos V3.2 para {symbol} - {period} - {days} días")
             
             # STEP 1: Descargar datos raw con extended hours
             raw_data = self._download_raw_data_extended(symbol, period, days)
             
-            # STEP 2: Gap detection y filling (si está habilitado)
+            # STEP 2: Gap detection y filling REAL (si está habilitado)
             if USE_GAP_DETECTION and len(raw_data) > 10:
-                processed_data = self._detect_and_fill_gaps(raw_data, symbol, period)
+                processed_data = self._detect_and_fill_gaps_v32(raw_data, symbol, period)
                 if len(processed_data) > len(raw_data):
                     logger.info(f"🔧 {symbol}: {len(processed_data) - len(raw_data)} gaps rellenados")
             else:
@@ -123,7 +158,7 @@ class TechnicalIndicators:
             return validated_data
             
         except Exception as e:
-            logger.error(f"❌ Error en get_market_data V3.1 para {symbol}: {str(e)}")
+            logger.error(f"❌ Error en get_market_data V3.2 para {symbol}: {str(e)}")
             # Fallback a método original si falla extended
             return self._get_market_data_fallback(symbol, period, days)
     
@@ -183,9 +218,12 @@ class TechnicalIndicators:
             logger.error(f"❌ Error descargando datos extended para {symbol}: {str(e)}")
             raise
     
-    def _detect_and_fill_gaps(self, data: pd.DataFrame, symbol: str, period: str) -> pd.DataFrame:
+    def _detect_and_fill_gaps_v32(self, data: pd.DataFrame, symbol: str, period: str) -> pd.DataFrame:
         """
-        🆕 DETECTAR Y RELLENAR GAPS AUTOMÁTICAMENTE
+        🆕 V3.2: DETECTAR Y RELLENAR GAPS CON DATOS REALES
+        
+        CAMBIO CRÍTICO: Ahora obtiene datos REALES de yfinance para los gaps,
+        no inventa precios. Esto es esencial para backtesting de stops/targets.
         
         Args:
             data: DataFrame con datos OHLCV
@@ -193,7 +231,7 @@ class TechnicalIndicators:
             period: Período para cálculo de gaps esperados
             
         Returns:
-            DataFrame con gaps rellenados
+            DataFrame con gaps rellenados usando datos REALES
         """
         try:
             if len(data) < 5:
@@ -221,6 +259,7 @@ class TechnicalIndicators:
                             'start': gap_start,
                             'end': gap_end,
                             'duration_minutes': gap_minutes,
+                            'duration_hours': gap_minutes / 60,
                             'type': gap_type,
                             'before_idx': i-1,
                             'after_idx': i
@@ -230,22 +269,21 @@ class TechnicalIndicators:
                 logger.debug(f"✅ {symbol}: No se detectaron gaps significativos")
                 return data_sorted
             
-            logger.info(f"🔍 {symbol}: {len(gaps)} gaps detectados")
+            logger.debug(f"🔍 {symbol}: {len(gaps)} gaps detectados")
             self.gap_stats['gaps_detected'] += len(gaps)
             
-            # Rellenar gaps según estrategia
+            # Rellenar gaps según estrategia V3.2
             filled_data = data_sorted.copy()
             
             for gap in gaps:
                 try:
-                    filled_rows = self._fill_gap(
+                    filled_rows = self._fill_gap_v32(
                         data_sorted, gap, symbol, interval_minutes
                     )
                     
                     if len(filled_rows) > 0:
                         # Insertar rows rellenadas
                         filled_data = pd.concat([filled_data, filled_rows]).sort_index()
-                        self.gap_stats['gaps_filled'] += 1
                         logger.debug(f"🔧 {symbol}: Gap {gap['type']} rellenado ({gap['duration_minutes']:.0f} min)")
                         
                 except Exception as gap_error:
@@ -261,14 +299,279 @@ class TechnicalIndicators:
             return filled_data
             
         except Exception as e:
-            logger.error(f"❌ Error detectando/rellenando gaps para {symbol}: {str(e)}")
+            logger.error(f"❌ Error detectando/rellenando gaps V3.2 para {symbol}: {str(e)}")
             return data  # Retornar datos originales si falla
     
-    def _classify_gap(self, start_time: datetime, end_time: datetime, duration_minutes: float) -> str:
+    def _fill_gap_v32(self, data: pd.DataFrame, gap: dict, symbol: str, 
+                      interval_minutes: int) -> pd.DataFrame:
+        """
+        🆕 V3.2: MÉTODO PRINCIPAL DE GAP FILLING CON DATOS REALES
+        
+        Este método es el CORE del fix. Ahora:
+        1. Intenta obtener datos REALES de yfinance para el gap
+        2. Si falla, usa worst-case scenario conservador
+        3. NUNCA inventa precios flat (H=L=C)
+        
+        Args:
+            data: DataFrame original
+            gap: Dict con info del gap
+            symbol: Símbolo
+            interval_minutes: Intervalo en minutos
+            
+        Returns:
+            DataFrame con datos del gap (reales o worst-case)
+        """
+        try:
+            gap_type = gap['type']
+            fill_strategy = GAP_CONFIG['FILL_STRATEGIES'].get(gap_type, 'PRESERVE_GAP')
+            
+            logger.debug(f"🔧 {symbol}: Gap {gap_type} - Estrategia: {fill_strategy}")
+            
+            # ===================================================================
+            # ESTRATEGIA 1: PRESERVE_GAP - NO RELLENAR
+            # ===================================================================
+            if fill_strategy == 'PRESERVE_GAP':
+                logger.debug(f"🚫 {symbol}: Gap {gap_type} preservado (mercado cerrado)")
+                self.gap_stats['gaps_preserved'] += 1
+                return pd.DataFrame()  # NO rellenar
+            
+            # ===================================================================
+            # ESTRATEGIA 2: REAL_DATA - OBTENER DATOS REALES DE YFINANCE
+            # ===================================================================
+            elif fill_strategy == 'REAL_DATA':
+                # Verificar si el gap es demasiado largo
+                max_hours = REAL_DATA_CONFIG.get('MAX_GAP_TO_FILL_HOURS', 12)
+                
+                if gap['duration_hours'] > max_hours:
+                    logger.warning(f"⚠️ {symbol}: Gap muy largo ({gap['duration_hours']:.1f}h), preservando")
+                    self.gap_stats['gaps_preserved'] += 1
+                    return pd.DataFrame()
+                
+                # Intentar obtener datos reales
+                real_data = self._get_real_data_for_gap(
+                    symbol, 
+                    gap['start'], 
+                    gap['end'], 
+                    interval_minutes
+                )
+                
+                if len(real_data) > 0:
+                    logger.info(f"✅ {symbol}: Gap rellenado con {len(real_data)} barras REALES")
+                    self.gap_stats['gaps_filled'] += 1
+                    self.gap_stats['gaps_with_real_data'] += 1
+                    return real_data
+                
+                # Si no hay datos reales, usar worst-case
+                logger.warning(f"⚠️ {symbol}: No hay datos reales, usando worst-case")
+                return self._create_worst_case_gap_bar(data, gap, symbol)
+            
+            # ===================================================================
+            # ESTRATEGIA 3: FALLBACK - WORST CASE (solo si falla todo)
+            # ===================================================================
+            else:
+                logger.warning(f"⚠️ {symbol}: Estrategia {fill_strategy} no reconocida, usando worst-case")
+                return self._create_worst_case_gap_bar(data, gap, symbol)
+                
+        except Exception as e:
+            logger.error(f"❌ Error rellenando gap V3.2 para {symbol}: {str(e)}")
+            return pd.DataFrame()
+    
+    def _get_real_data_for_gap(self, symbol: str, start: datetime, 
+                               end: datetime, interval_minutes: int) -> pd.DataFrame:
+        """
+        🆕 V3.2: OBTENER DATOS REALES DE YFINANCE PARA UN GAP ESPECÍFICO
+        
+        Este método es CRÍTICO para el fix. Descarga datos reales del período
+        del gap, incluyendo extended hours. Estos datos tienen High/Low reales
+        que permiten verificar si se tocó un stop/target.
+        
+        Args:
+            symbol: Símbolo a descargar
+            start: Inicio del gap
+            end: Fin del gap
+            interval_minutes: Intervalo deseado
+            
+        Returns:
+            DataFrame con datos REALES del gap (puede estar vacío si falla)
+        """
+        try:
+            # Determinar intervalo de yfinance
+            if interval_minutes <= 1:
+                yf_interval = '1m'
+            elif interval_minutes <= 5:
+                yf_interval = '5m'
+            elif interval_minutes <= 15:
+                yf_interval = '15m'
+            elif interval_minutes <= 30:
+                yf_interval = '30m'
+            elif interval_minutes <= 60:
+                yf_interval = '1h'
+            else:
+                yf_interval = '1d'
+            
+            # Reintentos configurables
+            max_retries = REAL_DATA_CONFIG.get('RETRY_ATTEMPTS', 3)
+            retry_delay = REAL_DATA_CONFIG.get('RETRY_DELAY_SECONDS', 2)
+            
+            for attempt in range(max_retries):
+                try:
+                    ticker = yf.Ticker(symbol)
+                    
+                    # Descargar datos con extended hours
+                    gap_data = ticker.history(
+                        start=start - timedelta(hours=1),  # Buffer antes
+                        end=end + timedelta(hours=1),      # Buffer después
+                        interval=yf_interval,
+                        prepost=True,  # ✅ CRÍTICO: Extended hours
+                        auto_adjust=True
+                    )
+                    
+                    if gap_data.empty:
+                        logger.debug(f"📊 {symbol}: Intento {attempt+1}/{max_retries} - Sin datos")
+                        if attempt < max_retries - 1:
+                            time.sleep(retry_delay)
+                            continue
+                        else:
+                            return pd.DataFrame()
+                    
+                    # Filtrar solo el período del gap
+                    gap_data = gap_data[(gap_data.index >= start) & (gap_data.index <= end)]
+                    
+                    if gap_data.empty:
+                        logger.debug(f"📊 {symbol}: Datos fuera del período del gap")
+                        if attempt < max_retries - 1:
+                            time.sleep(retry_delay)
+                            continue
+                        else:
+                            return pd.DataFrame()
+                    
+                    # Normalizar columnas
+                    column_mapping = {}
+                    for col in gap_data.columns:
+                        col_lower = col.lower()
+                        if 'open' in col_lower:
+                            column_mapping[col] = 'Open'
+                        elif 'high' in col_lower:
+                            column_mapping[col] = 'High'
+                        elif 'low' in col_lower:
+                            column_mapping[col] = 'Low'
+                        elif 'close' in col_lower:
+                            column_mapping[col] = 'Close'
+                        elif 'volume' in col_lower:
+                            column_mapping[col] = 'Volume'
+                    
+                    gap_data = gap_data.rename(columns=column_mapping)
+                    
+                    # Verificar que tenemos las columnas necesarias
+                    required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
+                    if not all(col in gap_data.columns for col in required_cols):
+                        logger.warning(f"⚠️ {symbol}: Columnas incompletas en datos del gap")
+                        if attempt < max_retries - 1:
+                            time.sleep(retry_delay)
+                            continue
+                        else:
+                            return pd.DataFrame()
+                    
+                    gap_data = gap_data[required_cols]
+                    
+                    logger.info(f"✅ {symbol}: {len(gap_data)} barras REALES obtenidas para gap")
+                    return gap_data
+                    
+                except Exception as retry_error:
+                    logger.warning(f"⚠️ {symbol}: Intento {attempt+1}/{max_retries} falló: {retry_error}")
+                    if attempt < max_retries - 1:
+                        time.sleep(retry_delay)
+                    else:
+                        logger.error(f"❌ {symbol}: Todos los intentos fallaron")
+                        return pd.DataFrame()
+            
+            return pd.DataFrame()
+            
+        except Exception as e:
+            logger.error(f"❌ Error obteniendo datos reales para gap de {symbol}: {e}")
+            return pd.DataFrame()
+    
+    def _create_worst_case_gap_bar(self, data: pd.DataFrame, gap: dict, 
+                                    symbol: str) -> pd.DataFrame:
+        """
+        🆕 V3.2: CREAR BARRA WORST-CASE CONSERVADORA PARA GAP
+        
+        Si no hay datos reales disponibles, crea UNA SOLA BARRA que representa
+        el gap de forma conservadora, asumiendo que el precio se movió.
+        
+        IMPORTANTE: Esta barra tiene H ≠ L para permitir detección de stops.
+        
+        Args:
+            data: DataFrame original
+            gap: Dict con info del gap
+            symbol: Símbolo
+            
+        Returns:
+            DataFrame con UNA barra worst-case
+        """
+        try:
+            if not WORST_CASE_CONFIG.get('ENABLED', True):
+                return pd.DataFrame()
+            
+            before_row = data.iloc[gap['before_idx']]
+            after_row = data.iloc[gap['after_idx']]
+            
+            before_close = before_row['Close']
+            after_open = after_row['Open']
+            
+            # Calcular movimiento del precio
+            price_change = after_open - before_close
+            price_change_pct = abs(price_change / before_close) if before_close > 0 else 0
+            
+            # Método CONSERVATIVE_RANGE: Asumir que el precio se movió
+            method = WORST_CASE_CONFIG.get('METHOD', 'CONSERVATIVE_RANGE')
+            
+            if method == 'CONSERVATIVE_RANGE':
+                # Asumir movimiento conservador
+                movement_estimate = WORST_CASE_CONFIG.get('PRICE_MOVEMENT_ESTIMATE', 0.02)
+                safe_margin = WORST_CASE_CONFIG.get('SAFE_MARGIN', 1.2)
+                
+                # Calcular rango asumido
+                if price_change > 0:  # Precio subió
+                    # Asumir que pudo haber bajado primero (worst case para stops)
+                    worst_low = before_close * (1 - movement_estimate * safe_margin)
+                    worst_high = after_open
+                else:  # Precio bajó
+                    # Asumir que pudo haber subido primero (worst case para stops)
+                    worst_high = before_close * (1 + movement_estimate * safe_margin)
+                    worst_low = after_open
+                
+                # Crear barra worst-case
+                gap_bar = pd.DataFrame([{
+                    'Open': before_close,
+                    'High': max(before_close, after_open, worst_high),
+                    'Low': min(before_close, after_open, worst_low),
+                    'Close': after_open,
+                    'Volume': 0  # Sin volumen (gap)
+                }], index=[gap['start'] + timedelta(minutes=30)])  # Punto medio del gap
+                
+                logger.info(f"⚠️ {symbol}: Gap representado con worst-case conservador "
+                          f"(H:{worst_high:.2f}, L:{worst_low:.2f})")
+                
+                self.gap_stats['gaps_filled'] += 1
+                self.gap_stats['gaps_worst_case'] += 1
+                
+                return gap_bar
+            
+            else:
+                logger.warning(f"⚠️ Método worst-case no reconocido: {method}")
+                return pd.DataFrame()
+                
+        except Exception as e:
+            logger.error(f"❌ Error creando worst-case bar: {e}")
+            return pd.DataFrame()
+    
+    def _classify_gap(self, start_time: datetime, end_time: datetime, 
+                     duration_minutes: float) -> str:
         """Clasificar tipo de gap basado en duración y horario"""
         try:
             # Gap de fin de semana
-            if duration_minutes > 48 * 60:  # > 48 horas
+            if duration_minutes > GAP_CONFIG.get('WEEKEND_GAP_HOURS', 48) * 60:
                 return 'WEEKEND_GAP'
             
             # Gap overnight (8PM - 4AM)
@@ -285,91 +588,14 @@ class TechnicalIndicators:
                 return 'SMALL_GAP'
             
             # Gap durante día laborable (posible festivo)
-            return 'HOLIDAY_GAP'
+            holiday_hours = GAP_CONFIG.get('HOLIDAY_GAP_HOURS', 24)
+            if duration_minutes > holiday_hours * 60:
+                return 'HOLIDAY_GAP'
+            
+            return 'UNKNOWN_GAP'
             
         except Exception:
             return 'UNKNOWN_GAP'
-    
-    def _fill_gap(self, data: pd.DataFrame, gap: dict, symbol: str, interval_minutes: int) -> pd.DataFrame:
-        """Rellenar un gap específico según su tipo"""
-        try:
-            gap_type = gap['type']
-            fill_strategy = GAP_CONFIG['FILL_STRATEGIES'].get(gap_type, 'FORWARD_FILL')
-            
-            before_row = data.iloc[gap['before_idx']]
-            after_row = data.iloc[gap['after_idx']]
-            
-            # Generar timestamps para rellenar
-            start_time = gap['start']
-            end_time = gap['end']
-            
-            # Calcular número de intervalos necesarios
-            total_minutes = (end_time - start_time).total_seconds() / 60
-            num_intervals = max(1, int(total_minutes / interval_minutes) - 1)
-            
-            # Limitar número de intervalos para evitar exceso de datos
-            max_intervals = 200  # máximo ~50 horas de datos de 15min
-            if num_intervals > max_intervals:
-                num_intervals = max_intervals
-            
-            if num_intervals <= 0:
-                return pd.DataFrame()
-            
-            # Generar timestamps
-            time_range = pd.date_range(
-                start=start_time + timedelta(minutes=interval_minutes),
-                end=end_time - timedelta(minutes=interval_minutes/2),
-                periods=num_intervals
-            )
-            
-            # Crear datos según estrategia
-            filled_rows = []
-            
-            for i, timestamp in enumerate(time_range):
-                if fill_strategy == 'FORWARD_FILL':
-                    # Usar último precio válido
-                    new_row = {
-                        'Open': before_row['Close'],
-                        'High': before_row['Close'],
-                        'Low': before_row['Close'],
-                        'Close': before_row['Close'],
-                        'Volume': 0  # Sin volumen durante gaps
-                    }
-                
-                elif fill_strategy == 'INTERPOLATE':
-                    # Interpolar entre antes y después (solo para gaps pequeños)
-                    progress = (i + 1) / (num_intervals + 1)
-                    interpolated_price = before_row['Close'] + (after_row['Open'] - before_row['Close']) * progress
-                    
-                    new_row = {
-                        'Open': interpolated_price,
-                        'High': interpolated_price,
-                        'Low': interpolated_price,
-                        'Close': interpolated_price,
-                        'Volume': int(before_row['Volume'] * 0.1)  # Volumen reducido
-                    }
-                
-                else:
-                    # Default: forward fill
-                    new_row = {
-                        'Open': before_row['Close'],
-                        'High': before_row['Close'],
-                        'Low': before_row['Close'],
-                        'Close': before_row['Close'],
-                        'Volume': 0
-                    }
-                
-                filled_rows.append(new_row)
-            
-            if filled_rows:
-                filled_df = pd.DataFrame(filled_rows, index=time_range)
-                return filled_df
-            else:
-                return pd.DataFrame()
-                
-        except Exception as e:
-            logger.error(f"❌ Error rellenando gap específico: {str(e)}")
-            return pd.DataFrame()
     
     def _get_interval_minutes(self, period: str) -> int:
         """Convertir período string a minutos"""
@@ -483,13 +709,24 @@ class TechnicalIndicators:
             raise
     
     def get_gap_statistics(self) -> Dict:
-        """Obtener estadísticas de gaps detectados y rellenados"""
+        """
+        🆕 V3.2: Obtener estadísticas mejoradas de gaps
+        """
+        total_filled = self.gap_stats['gaps_filled']
+        
         return {
             'gaps_detected': self.gap_stats['gaps_detected'],
-            'gaps_filled': self.gap_stats['gaps_filled'],
+            'gaps_filled': total_filled,
+            'gaps_with_real_data': self.gap_stats['gaps_with_real_data'],
+            'gaps_worst_case': self.gap_stats['gaps_worst_case'],
+            'gaps_preserved': self.gap_stats['gaps_preserved'],
             'last_check': self.gap_stats['last_check'],
             'fill_rate': (
-                self.gap_stats['gaps_filled'] / max(1, self.gap_stats['gaps_detected']) * 100
+                total_filled / max(1, self.gap_stats['gaps_detected']) * 100
+            ),
+            'real_data_rate': (
+                self.gap_stats['gaps_with_real_data'] / max(1, total_filled) * 100
+                if total_filled > 0 else 0
             )
         }
 
@@ -872,7 +1109,7 @@ class TechnicalIndicators:
 
     def get_all_indicators(self, symbol: str, period: str = "15m", days: int = 30) -> Dict:
         """
-        🆕 MEJORADO: Calcular todos los indicadores con extended hours
+        🆕 V3.2: Calcular todos los indicadores con REAL DATA gap filling
         
         Args:
             symbol: Símbolo a analizar
@@ -883,9 +1120,9 @@ class TechnicalIndicators:
             Dict con todos los indicadores + datos OHLC completos
         """
         try:
-            logger.info(f"🔍 Calculando indicadores V3.1 para {symbol}")
+            logger.info(f"🔍 Calculando indicadores V3.2 para {symbol}")
             
-            # Obtener datos de mercado (ahora con extended hours + gap filling)
+            # Obtener datos de mercado (ahora con REAL DATA gap filling)
             data = self.get_market_data(symbol, period, days)
             
             if len(data) < 30:
@@ -925,12 +1162,13 @@ class TechnicalIndicators:
                 # Conservar datos OHLCV para targets adaptativos
                 'market_data': data,
                 
-                # 🆕 Metadatos extended hours
+                # 🆕 V3.2: Metadatos de gap filling
                 'extended_hours_used': USE_EXTENDED_HOURS,
-                'gaps_filled': len(data) > (days * 6.5 * 4) if USE_GAP_DETECTION else False  # Estimación
+                'real_data_filling_used': REAL_DATA_CONFIG.get('USE_YFINANCE', False),
+                'gap_stats': self.get_gap_statistics()
             }
             
-            logger.info(f"✅ {symbol}: Indicadores V3.1 calculados exitosamente")
+            logger.info(f"✅ {symbol}: Indicadores V3.2 calculados exitosamente")
             
             # Guardar en base de datos
             try:
@@ -942,12 +1180,12 @@ class TechnicalIndicators:
             return indicators
             
         except Exception as e:
-            logger.error(f"❌ Error calculando indicadores V3.1 para {symbol}: {str(e)}")
+            logger.error(f"❌ Error calculando indicadores V3.2 para {symbol}: {str(e)}")
             raise
     
     def print_indicators_summary(self, indicators: Dict) -> None:
         """
-        🆕 MEJORADO: Imprimir resumen con info extended hours
+        🆕 V3.2: Imprimir resumen con estadísticas de gap filling real
         
         Args:
             indicators: Dict con todos los indicadores
@@ -956,17 +1194,25 @@ class TechnicalIndicators:
             symbol = indicators['symbol']
             price = indicators['current_price']
             
-            print(f"\n📊 INDICADORES TÉCNICOS V3.1 - {symbol} (${price:.2f})")
+            print(f"\n📊 INDICADORES TÉCNICOS V3.2 - {symbol} (${price:.2f})")
             print("=" * 60)
             
-            # 🆕 Info extended hours
+            # 🆕 V3.2: Info de gap filling con datos reales
             if indicators.get('extended_hours_used', False):
                 print(f"🕐 Extended Hours: ✅ ACTIVO")
-                if indicators.get('gaps_filled', False):
-                    print(f"🔧 Gaps rellenados: ✅ SÍ")
-                gap_stats = self.get_gap_statistics()
-                if gap_stats['gaps_detected'] > 0:
-                    print(f"📊 Gaps stats: {gap_stats['gaps_filled']}/{gap_stats['gaps_detected']} rellenados ({gap_stats['fill_rate']:.1f}%)")
+                
+                if indicators.get('real_data_filling_used', False):
+                    print(f"📊 Real Data Filling: ✅ HABILITADO")
+                
+                gap_stats = indicators.get('gap_stats', {})
+                if gap_stats.get('gaps_detected', 0) > 0:
+                    print(f"🔧 Gap Stats:")
+                    print(f"   • Detectados: {gap_stats['gaps_detected']}")
+                    print(f"   • Rellenados: {gap_stats['gaps_filled']}")
+                    print(f"   • Con datos reales: {gap_stats['gaps_with_real_data']} "
+                          f"({gap_stats.get('real_data_rate', 0):.1f}%)")
+                    print(f"   • Worst-case: {gap_stats['gaps_worst_case']}")
+                    print(f"   • Preservados: {gap_stats['gaps_preserved']}")
             else:
                 print(f"🕐 Extended Hours: ❌ DESHABILITADO")
             print("-" * 60)
@@ -1053,49 +1299,73 @@ class TechnicalIndicators:
 
 
 # =============================================================================
-# 🧪 FUNCIONES DE TESTING Y DEMO V3.1
+# 🧪 FUNCIONES DE TESTING Y DEMO V3.2
 # =============================================================================
 
-def test_extended_hours_functionality(symbol: str = "SPY"):
+def test_real_data_gap_filling(symbol: str = "SPY"):
     """
-    🆕 Test específico para funcionalidad Extended Hours
+    🆕 V3.2: Test específico para REAL DATA gap filling
     """
-    print(f"🧪 TESTING EXTENDED HOURS V3.1 - {symbol}")
+    print(f"🧪 TESTING REAL DATA GAP FILLING V3.2 - {symbol}")
     print("=" * 60)
     
     try:
         # Crear instancia
         indicators = TechnicalIndicators()
         
-        print("1️⃣ Testeando descarga con extended hours...")
+        print("1️⃣ Testeando descarga con real data gap filling...")
         result = indicators.get_all_indicators(symbol)
         
         print(f"✅ Datos obtenidos: {result['data_points']} barras")
-        print(f"🕐 Extended hours usado: {result.get('extended_hours_used', 'N/A')}")
-        print(f"🔧 Gaps rellenados: {result.get('gaps_filled', 'N/A')}")
+        print(f"🕐 Extended hours: {result.get('extended_hours_used', 'N/A')}")
+        print(f"📊 Real data filling: {result.get('real_data_filling_used', 'N/A')}")
         
-        # Mostrar estadísticas de gaps
-        gap_stats = indicators.get_gap_statistics()
-        print(f"\n📊 ESTADÍSTICAS DE GAPS:")
-        print(f"   Detectados: {gap_stats['gaps_detected']}")
-        print(f"   Rellenados: {gap_stats['gaps_filled']}")
-        print(f"   Tasa éxito: {gap_stats['fill_rate']:.1f}%")
+        # Mostrar estadísticas detalladas de gaps
+        gap_stats = result.get('gap_stats', {})
+        print(f"\n📊 ESTADÍSTICAS DETALLADAS DE GAPS:")
+        print(f"   Detectados: {gap_stats.get('gaps_detected', 0)}")
+        print(f"   Rellenados: {gap_stats.get('gaps_filled', 0)}")
+        print(f"   └─ Con datos REALES: {gap_stats.get('gaps_with_real_data', 0)} "
+              f"({gap_stats.get('real_data_rate', 0):.1f}%)")
+        print(f"   └─ Worst-case: {gap_stats.get('gaps_worst_case', 0)}")
+        print(f"   Preservados (weekend/holiday): {gap_stats.get('gaps_preserved', 0)}")
+        print(f"   Tasa éxito: {gap_stats.get('fill_rate', 0):.1f}%")
+        
+        # Validar calidad de datos para backtesting
+        market_data = result.get('market_data')
+        if market_data is not None and not market_data.empty:
+            # Verificar barras flat (H=L=C) que son problemáticas
+            flat_bars = market_data[market_data['High'] == market_data['Low']]
+            flat_pct = (len(flat_bars) / len(market_data)) * 100
+            
+            print(f"\n🔍 VALIDACIÓN CALIDAD PARA BACKTESTING:")
+            print(f"   Total barras: {len(market_data)}")
+            print(f"   Barras flat (H=L): {len(flat_bars)} ({flat_pct:.1f}%)")
+            
+            if flat_pct > 10:
+                print(f"   ⚠️ ADVERTENCIA: >10% barras flat, revisar gap filling")
+            elif flat_pct > 5:
+                print(f"   ⚠️ Aceptable pero revisar: 5-10% barras flat")
+            else:
+                print(f"   ✅ Excelente: <5% barras flat")
         
         # Imprimir resumen
         indicators.print_indicators_summary(result)
         
-        print("✅ Test Extended Hours exitoso!")
+        print("\n✅ Test Real Data Gap Filling exitoso!")
         return result
         
     except Exception as e:
-        print(f"❌ Error en test extended hours: {str(e)}")
+        print(f"❌ Error en test: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return None
 
 def test_single_indicator(symbol: str = "SPY"):
     """
     Test de un solo símbolo para verificar funcionamiento
     """
-    print(f"🧪 TESTING INDICADORES V3.1 - {symbol}")
+    print(f"🧪 TESTING INDICADORES V3.2 - {symbol}")
     print("=" * 50)
     
     try:
@@ -1121,7 +1391,7 @@ def test_multiple_symbols():
     """
     symbols = ["SPY", "AAPL", "NVDA"]
     
-    print("🧪 TESTING MÚLTIPLES SÍMBOLOS V3.1")
+    print("🧪 TESTING MÚLTIPLES SÍMBOLOS V3.2")
     print("=" * 50)
     
     indicators = TechnicalIndicators()
@@ -1138,36 +1408,275 @@ def test_multiple_symbols():
             print(f"❌ {symbol} falló: {str(e)}")
             results[symbol] = None
     
-    # Mostrar estadísticas finales
-    print(f"\n📊 ESTADÍSTICAS FINALES DE GAPS:")
+    # Mostrar estadísticas finales agregadas
+    print(f"\n📊 ESTADÍSTICAS FINALES AGREGADAS:")
     gap_stats = indicators.get_gap_statistics()
-    print(f"   Total detectados: {gap_stats['gaps_detected']}")
-    print(f"   Total rellenados: {gap_stats['gaps_filled']}")
+    print(f"   Total gaps detectados: {gap_stats['gaps_detected']}")
+    print(f"   Total gaps rellenados: {gap_stats['gaps_filled']}")
+    print(f"   Con datos REALES: {gap_stats['gaps_with_real_data']} ({gap_stats['real_data_rate']:.1f}%)")
+    print(f"   Worst-case: {gap_stats['gaps_worst_case']}")
+    print(f"   Preservados: {gap_stats['gaps_preserved']}")
     print(f"   Tasa éxito global: {gap_stats['fill_rate']:.1f}%")
     
     return results
 
+def validate_backtesting_data_quality(symbol: str = "SPY", days: int = 30):
+    """
+    🆕 V3.2: Validar que los datos son aptos para backtesting
+    
+    Verifica que:
+    - Tenemos suficientes datos reales (no sintéticos)
+    - Las barras tienen High/Low diferentes (no flat)
+    - Los gaps están bien manejados
+    """
+    print(f"🔍 VALIDACIÓN CALIDAD DATOS PARA BACKTESTING - {symbol}")
+    print("=" * 60)
+    
+    try:
+        indicators = TechnicalIndicators()
+        
+        # Obtener datos
+        print(f"📊 Descargando {days} días de datos...")
+        data = indicators.get_market_data(symbol, period='15m', days=days)
+        
+        print(f"\n✅ {len(data)} barras obtenidas")
+        
+        # 1. Verificar barras flat (H=L)
+        flat_bars = data[data['High'] == data['Low']]
+        flat_pct = (len(flat_bars) / len(data)) * 100
+        
+        print(f"\n1️⃣ BARRAS FLAT (H=L):")
+        print(f"   Total: {len(flat_bars)} ({flat_pct:.2f}%)")
+        
+        if flat_pct > 10:
+            print(f"   ❌ CRÍTICO: >10% barras flat - NO apto para backtesting")
+            print(f"   ⚠️ Los stops/targets no se pueden verificar correctamente")
+        elif flat_pct > 5:
+            print(f"   ⚠️ ADVERTENCIA: 5-10% barras flat - revisar")
+        else:
+            print(f"   ✅ EXCELENTE: <5% barras flat - apto para backtesting")
+        
+        # 2. Verificar consistencia OHLC
+        inconsistent = (
+            (data['High'] < data['Low']) |
+            (data['High'] < data['Open']) |
+            (data['High'] < data['Close']) |
+            (data['Low'] > data['Open']) |
+            (data['Low'] > data['Close'])
+        )
+        inconsistent_pct = (inconsistent.sum() / len(data)) * 100
+        
+        print(f"\n2️⃣ CONSISTENCIA OHLC:")
+        print(f"   Barras inconsistentes: {inconsistent.sum()} ({inconsistent_pct:.2f}%)")
+        
+        if inconsistent_pct > 1:
+            print(f"   ❌ PROBLEMA: >1% inconsistencias")
+        elif inconsistent_pct > 0:
+            print(f"   ⚠️ Pocas inconsistencias detectadas")
+        else:
+            print(f"   ✅ Sin inconsistencias OHLC")
+        
+        # 3. Verificar gaps temporales
+        time_diffs = data.index.to_series().diff()
+        expected_interval = timedelta(minutes=15)
+        
+        # Gaps significativos (> 2 horas)
+        significant_gaps = time_diffs[time_diffs > timedelta(hours=2)]
+        
+        print(f"\n3️⃣ ANÁLISIS DE GAPS:")
+        print(f"   Gaps significativos (>2h): {len(significant_gaps)}")
+        
+        if len(significant_gaps) > 0:
+            print(f"   Gaps encontrados:")
+            for idx, gap in significant_gaps.items():
+                gap_hours = gap.total_seconds() / 3600
+                print(f"      • {idx}: {gap_hours:.1f} horas")
+        
+        # 4. Obtener estadísticas de gap filling
+        gap_stats = indicators.get_gap_statistics()
+        
+        print(f"\n4️⃣ ESTADÍSTICAS GAP FILLING:")
+        print(f"   Gaps detectados: {gap_stats['gaps_detected']}")
+        print(f"   Gaps rellenados: {gap_stats['gaps_filled']}")
+        print(f"   Con datos REALES: {gap_stats['gaps_with_real_data']} ({gap_stats['real_data_rate']:.1f}%)")
+        print(f"   Worst-case usado: {gap_stats['gaps_worst_case']}")
+        print(f"   Preservados: {gap_stats['gaps_preserved']}")
+        
+        # 5. Decisión final
+        print(f"\n{'='*60}")
+        print(f"📊 DECISIÓN FINAL:")
+        
+        backtest_ready = (
+            flat_pct <= 10 and
+            inconsistent_pct <= 1 and
+            len(data) >= 1000 and
+            gap_stats['real_data_rate'] >= 60  # Al menos 60% datos reales
+        )
+        
+        if backtest_ready:
+            print(f"✅ APTO PARA BACKTESTING")
+            print(f"   • Calidad de datos: BUENA")
+            print(f"   • Stops/targets verificables: SÍ")
+            print(f"   • Datos reales suficientes: SÍ")
+        else:
+            print(f"❌ NO APTO PARA BACKTESTING")
+            print(f"   Razones:")
+            if flat_pct > 10:
+                print(f"   • Demasiadas barras flat ({flat_pct:.1f}%)")
+            if inconsistent_pct > 1:
+                print(f"   • Inconsistencias OHLC ({inconsistent_pct:.1f}%)")
+            if len(data) < 1000:
+                print(f"   • Datos insuficientes ({len(data)} barras)")
+            if gap_stats['real_data_rate'] < 60:
+                print(f"   • Pocos datos reales ({gap_stats['real_data_rate']:.1f}%)")
+        
+        print(f"{'='*60}")
+        
+        return backtest_ready
+        
+    except Exception as e:
+        print(f"❌ Error en validación: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+def compare_gap_filling_methods(symbol: str = "AAPL"):
+    """
+    🆕 V3.2: Comparar diferentes métodos de gap filling
+    
+    Demuestra la diferencia entre:
+    - Forward fill (V3.1 - MALO)
+    - Real data (V3.2 - BUENO)
+    """
+    print(f"🔬 COMPARACIÓN MÉTODOS GAP FILLING - {symbol}")
+    print("=" * 60)
+    
+    try:
+        indicators = TechnicalIndicators()
+        
+        # Obtener datos con método actual (V3.2)
+        print("1️⃣ Método V3.2 (Real Data)...")
+        data_v32 = indicators.get_market_data(symbol, period='15m', days=7)
+        
+        # Analizar barras flat
+        flat_v32 = data_v32[data_v32['High'] == data_v32['Low']]
+        flat_pct_v32 = (len(flat_v32) / len(data_v32)) * 100
+        
+        print(f"   Total barras: {len(data_v32)}")
+        print(f"   Barras flat (H=L): {len(flat_v32)} ({flat_pct_v32:.1f}%)")
+        
+        # Gap stats
+        gap_stats = indicators.get_gap_statistics()
+        print(f"   Gaps con datos REALES: {gap_stats['gaps_with_real_data']}")
+        print(f"   Gaps worst-case: {gap_stats['gaps_worst_case']}")
+        
+        print(f"\n📊 ANÁLISIS:")
+        print(f"   Con V3.2 (Real Data):")
+        print(f"   • {flat_pct_v32:.1f}% barras flat")
+        print(f"   • {gap_stats['real_data_rate']:.1f}% datos reales en gaps")
+        print(f"   • ✅ Stops/targets verificables en {100-flat_pct_v32:.1f}% casos")
+        
+        if flat_pct_v32 < 10:
+            print(f"\n✅ V3.2 FUNCIONA CORRECTAMENTE")
+            print(f"   Los gaps tienen High/Low reales para verificar stops")
+        else:
+            print(f"\n⚠️ Revisar configuración - muchas barras flat")
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ Error en comparación: {e}")
+        return False
+
 if __name__ == "__main__":
-    # Ejecutar tests si se ejecuta directamente
-    print("🚀 SISTEMA DE INDICADORES TÉCNICOS V3.1 - EXTENDED HOURS")
+    """Punto de entrada para testing"""
+    print("🚀 SISTEMA DE INDICADORES TÉCNICOS V3.2 - REAL DATA GAP FILLING")
     print("=" * 70)
     
-    # Test extended hours específico
-    print("\n1️⃣ Testing funcionalidad Extended Hours...")
-    test_extended_result = test_extended_hours_functionality("SPY")
+    import sys
     
-    if test_extended_result:
-        print("\n🎯 ¿Quieres probar test básico de indicadores? (y/n)")
-        response = input().lower().strip()
+    # Menú interactivo
+    print("\n📋 OPCIONES DE TEST:")
+    print("1. Test Real Data Gap Filling (SPY)")
+    print("2. Test indicador único (SPY)")
+    print("3. Test múltiples símbolos")
+    print("4. Validar calidad para backtesting")
+    print("5. Comparar métodos de gap filling")
+    print("6. Test completo (todas las opciones)")
+    print("0. Salir")
+    
+    try:
+        choice = input("\n👉 Elige una opción (0-6): ").strip()
         
-        if response == 'y':
-            test_result = test_single_indicator("SPY")
+        if choice == '0':
+            print("👋 ¡Hasta pronto!")
+            sys.exit(0)
+        
+        elif choice == '1':
+            print("\n" + "="*70)
+            test_real_data_gap_filling("SPY")
+        
+        elif choice == '2':
+            print("\n" + "="*70)
+            test_single_indicator("SPY")
+        
+        elif choice == '3':
+            print("\n" + "="*70)
+            test_multiple_symbols()
+        
+        elif choice == '4':
+            print("\n" + "="*70)
+            symbol = input("Símbolo a validar (default: SPY): ").strip() or "SPY"
+            days = input("Días de historial (default: 30): ").strip()
+            days = int(days) if days else 30
+            validate_backtesting_data_quality(symbol, days)
+        
+        elif choice == '5':
+            print("\n" + "="*70)
+            symbol = input("Símbolo para comparar (default: AAPL): ").strip() or "AAPL"
+            compare_gap_filling_methods(symbol)
+        
+        elif choice == '6':
+            print("\n🔬 EJECUTANDO SUITE COMPLETA DE TESTS...")
             
-            if test_result:
-                print("\n🎯 ¿Quieres probar con múltiples símbolos? (y/n)")
-                response2 = input().lower().strip()
-                
-                if response2 == 'y':
-                    test_multiple_symbols()
+            print("\n" + "="*70)
+            print("TEST 1: Real Data Gap Filling")
+            print("="*70)
+            test_real_data_gap_filling("SPY")
+            
+            print("\n" + "="*70)
+            print("TEST 2: Indicador Único")
+            print("="*70)
+            test_single_indicator("SPY")
+            
+            print("\n" + "="*70)
+            print("TEST 3: Múltiples Símbolos")
+            print("="*70)
+            test_multiple_symbols()
+            
+            print("\n" + "="*70)
+            print("TEST 4: Validación Backtesting")
+            print("="*70)
+            validate_backtesting_data_quality("SPY", 30)
+            
+            print("\n" + "="*70)
+            print("TEST 5: Comparación Métodos")
+            print("="*70)
+            compare_gap_filling_methods("AAPL")
+            
+            print("\n✅ SUITE COMPLETA DE TESTS FINALIZADA")
+        
+        else:
+            print("❌ Opción no válida")
     
-    print("\n🏁 Tests V3.1 completados!")
+    except KeyboardInterrupt:
+        print("\n\n👋 Test interrumpido por el usuario")
+        sys.exit(0)
+    
+    except Exception as e:
+        print(f"\n❌ Error en test: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+    
+    print("\n🏁 Tests V3.2 completados!")

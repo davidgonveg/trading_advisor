@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-⚙️ CONFIGURACIÓN DEL SISTEMA DE TRADING AUTOMATIZADO V3.1 - EXTENDED HOURS
+⚙️ CONFIGURACIÓN DEL SISTEMA DE TRADING AUTOMATIZADO V3.2 - REAL DATA GAPS
 =========================================================================
 
 Este archivo contiene toda la configuración del sistema.
 Modifica estos parámetros según tus necesidades.
 
-🆕 V3.1: Añadido soporte para Extended Hours y datos continuos
+🆕 V3.2: GAP FILLING CORREGIDO - USA DATOS REALES DE YFINANCE
 """
 
 import os
@@ -199,7 +199,7 @@ EXTENDED_TRADING_SESSIONS = {
 ALLOWED_WEEKDAYS = [0, 1, 2, 3, 4]  # Lunes a Viernes
 
 # =============================================================================
-# 🆕 CONFIGURACIÓN DE DATOS CONTINUOS V3.1
+# 🆕 CONFIGURACIÓN DE DATOS CONTINUOS V3.2
 # =============================================================================
 
 CONTINUOUS_DATA_CONFIG = {
@@ -207,31 +207,55 @@ CONTINUOUS_DATA_CONFIG = {
     'ENABLE_OVERNIGHT_MONITORING': True,
     'AUTO_FILL_GAPS': True,
     'MAX_GAP_HOURS': 4,  # gaps > 4h se consideran overnight
-    'FORWARD_FILL_OVERNIGHT': True,
-    'PRESERVE_WEEKEND_GAPS': True,  # no fill gaps de fin de semana
+    'FORWARD_FILL_OVERNIGHT': False,  # 🔧 CAMBIADO: No usar forward fill
+    'PRESERVE_WEEKEND_GAPS': True,  # ✅ CORRECTO: preservar gaps reales
     'QUALITY_CHECK_BEFORE_BACKTEST': True
 }
 
-# 🆕 CONFIGURACIÓN DE GAP DETECTION Y FILLING
+# =============================================================================
+# 🆕 CONFIGURACIÓN DE GAP DETECTION Y FILLING V3.2 - CORREGIDO
+# =============================================================================
+
 GAP_DETECTION_CONFIG = {
     'MIN_GAP_MINUTES': 60,  # gaps menores a 1h = normales
     'OVERNIGHT_GAP_HOURS': [20, 4],  # 8PM - 4AM considerado overnight
     'WEEKEND_GAP_HOURS': 48,  # > 48h = gap de fin de semana
     'HOLIDAY_GAP_HOURS': 24,  # > 24h en día laborable = posible festivo
     
-    # Estrategias de filling
+    # 🔧 ESTRATEGIAS CORREGIDAS - USA DATOS REALES
     'FILL_STRATEGIES': {
-        'SMALL_GAP': 'INTERPOLATE',     # < 2h: interpolar
-        'OVERNIGHT_GAP': 'FORWARD_FILL', # 8PM-4AM: último precio
-        'WEEKEND_GAP': 'FORWARD_FILL',   # fin de semana: último precio
-        'HOLIDAY_GAP': 'FORWARD_FILL'    # festivos: último precio
+        'SMALL_GAP': 'REAL_DATA',        # ✅ Intentar datos reales primero
+        'OVERNIGHT_GAP': 'REAL_DATA',    # ✅ CRÍTICO: datos reales para stops
+        'WEEKEND_GAP': 'PRESERVE_GAP',   # ✅ NO rellenar (mercado cerrado)
+        'HOLIDAY_GAP': 'PRESERVE_GAP'    # ✅ NO rellenar (mercado cerrado)
+    },
+    
+    # 🆕 CONFIGURACIÓN PARA DESCARGA DE DATOS REALES
+    'REAL_DATA_CONFIG': {
+        'USE_YFINANCE': True,
+        'INCLUDE_PREPOST': True,              # ✅ Extended hours
+        'FALLBACK_TO_CONSERVATIVE': True,     # Si falla, usar worst-case
+        'MAX_GAP_TO_FILL_HOURS': 12,         # No rellenar gaps > 12h
+        'RETRY_ATTEMPTS': 3,                  # Reintentos si falla API
+        'RETRY_DELAY_SECONDS': 2,            # Delay entre reintentos
+        'USE_WORST_CASE_ON_FAIL': True       # Usar worst-case si falla todo
+    },
+    
+    # 🆕 WORST-CASE SCENARIO PARA GAPS SIN DATOS
+    'WORST_CASE_CONFIG': {
+        'ENABLED': True,
+        'METHOD': 'CONSERVATIVE_RANGE',       # Asumir precio se movió
+        'PRICE_MOVEMENT_ESTIMATE': 0.02,     # Asumir ±2% de movimiento
+        'USE_ATR_IF_AVAILABLE': True,        # Usar ATR histórico si está disponible
+        'SAFE_MARGIN': 1.2                   # Multiplicador de seguridad
     },
     
     # Validación de calidad
     'QUALITY_THRESHOLDS': {
-        'MIN_COMPLETENESS_PCT': 95,      # >= 95% datos disponibles
-        'MAX_CONSECUTIVE_GAPS': 5,       # máximo 5 gaps seguidos
-        'MAX_GAP_DURATION_HOURS': 72     # máximo 72h de gap continuo
+        'MIN_COMPLETENESS_PCT': 95,          # >= 95% datos disponibles
+        'MAX_CONSECUTIVE_GAPS': 5,           # máximo 5 gaps seguidos
+        'MAX_GAP_DURATION_HOURS': 72,        # máximo 72h de gap continuo
+        'MIN_REAL_DATA_PCT': 80              # 🆕 Mínimo 80% datos reales (no sintéticos)
     }
 }
 
@@ -240,7 +264,9 @@ YFINANCE_EXTENDED_CONFIG = {
     'INCLUDE_PREPOST': True,  # ✅ CRÍTICO: incluir extended hours
     'EXTENDED_HOURS_ENABLED': True,
     'OVERNIGHT_DATA_ENABLED': True,
-    'PREPOST_REQUIRED': True  # forzar prepost=True siempre
+    'PREPOST_REQUIRED': True,  # forzar prepost=True siempre
+    'AUTO_ADJUST': True,       # Ajustar por splits/dividendos
+    'TIMEOUT_SECONDS': 30      # Timeout para requests
 }
 
 # =============================================================================
@@ -267,7 +293,8 @@ ALERT_TYPES = {
     'SYSTEM_ERROR': True,       # Enviar cuando hay errores
     'DAILY_SUMMARY': False,     # Enviar resumen diario (desactivado por defecto)
     'GAP_DETECTED': True,       # 🆕 alertas de gaps detectados
-    'DATA_QUALITY_ISSUE': True  # 🆕 alertas de calidad de datos
+    'DATA_QUALITY_ISSUE': True, # 🆕 alertas de calidad de datos
+    'REAL_DATA_FAILED': True    # 🆕 alerta si no se pueden obtener datos reales
 }
 
 # =============================================================================
@@ -275,21 +302,17 @@ ALERT_TYPES = {
 # =============================================================================
 
 # Logging
-# Crear directorio de logs si no existe
 LOG_DIR = Path("logs")
 LOG_DIR.mkdir(exist_ok=True)
 
-# Logging con ruta completa
 LOG_LEVEL = "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
 LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-LOG_FILE = LOG_DIR / "trading_system.log"  # Ruta completa
+LOG_FILE = LOG_DIR / "trading_system.log"
 
-# También crear logs específicos si quieres
+# Logs específicos
 SCANNER_LOG_FILE = LOG_DIR / "scanner.log"
 EXIT_MANAGER_LOG_FILE = LOG_DIR / "exit_manager.log"
 DATABASE_LOG_FILE = LOG_DIR / "database.log"
-
-# 🆕 Logs específicos para nuevos módulos
 GAP_DETECTOR_LOG_FILE = LOG_DIR / "gap_detector.log"
 CONTINUOUS_COLLECTOR_LOG_FILE = LOG_DIR / "continuous_collector.log"
 DATA_VALIDATOR_LOG_FILE = LOG_DIR / "data_validator.log"
@@ -298,14 +321,8 @@ DATA_VALIDATOR_LOG_FILE = LOG_DIR / "data_validator.log"
 API_CONFIG = {
     'YFINANCE_TIMEOUT': 30,
     'MAX_RETRIES': 3,
-    'RATE_LIMIT_DELAY': 0.1,
-}
-
-# API Configuration (duplicado corregido)
-API_CONFIG = {
-    'YFINANCE_TIMEOUT': 30,
-    'MAX_RETRIES': 3,
     'RETRY_DELAY': 5,  # segundos
+    'RATE_LIMIT_DELAY': 0.1,
 }
 
 # Performance
@@ -318,13 +335,8 @@ PERFORMANCE_CONFIG = {
 # 🧪 CONFIGURACIÓN DE DESARROLLO Y TESTING
 # =============================================================================
 
-# Modo de desarrollo (más logs, sin alertas reales en testing)
 DEVELOPMENT_MODE = os.getenv('DEVELOPMENT_MODE', 'False').lower() == 'true'
-
-# Testing
 TEST_MODE = os.getenv('TEST_MODE', 'False').lower() == 'true'
-
-# Símbolos para testing (más pequeño)
 TEST_SYMBOLS = ["SPY", "AAPL"]
 
 # Habilitar/deshabilitar sistema adaptativo
@@ -340,11 +352,11 @@ ADAPTIVE_RR_LIMITS = {
 
 # Configuración análisis técnico
 TECHNICAL_ANALYSIS_CONFIG = {
-    'LOOKBACK_PERIOD': 50,           # Velas para análisis pivots
-    'FIBONACCI_LEVELS': [1.236, 1.382, 1.618, 2.618],  # Extensiones Fibonacci
-    'PSYCHOLOGICAL_LEVELS': [1, 2.5, 5, 10],           # Niveles psicológicos
-    'ATR_EXTENSIONS': [2, 3, 4, 6],                     # Múltiplos ATR para targets
-    'MAX_TARGET_DISTANCE_PCT': 20                        # Máx distancia target %
+    'LOOKBACK_PERIOD': 50,
+    'FIBONACCI_LEVELS': [1.236, 1.382, 1.618, 2.618],
+    'PSYCHOLOGICAL_LEVELS': [1, 2.5, 5, 10],
+    'ATR_EXTENSIONS': [2, 3, 4, 6],
+    'MAX_TARGET_DISTANCE_PCT': 20
 }
 
 # Configuración scoring
@@ -364,7 +376,7 @@ ENABLE_POSITION_CACHE = True
 POSITION_CACHE_TIMEOUT_MINUTES = 5
 
 # =============================================================================
-# 🆕 CONFIGURACIÓN ESPECÍFICA PARA BACKTESTING V3.1
+# 🆕 CONFIGURACIÓN ESPECÍFICA PARA BACKTESTING V3.2
 # =============================================================================
 
 BACKTEST_CONFIG = {
@@ -373,24 +385,28 @@ BACKTEST_CONFIG = {
     'VALIDATE_DATA_QUALITY': True,      # validar calidad antes de empezar
     'MIN_DATA_COMPLETENESS': 95,        # % mínimo de datos requerido
     'EXTENDED_HOURS_ANALYSIS': True,    # incluir extended hours en análisis
-    'OVERNIGHT_GAP_ANALYSIS': True      # analizar gaps overnight para stop-loss
+    'OVERNIGHT_GAP_ANALYSIS': True,     # analizar gaps overnight para stop-loss
+    'REQUIRE_REAL_DATA': True,          # 🆕 Exigir datos reales (no sintéticos)
+    'MAX_SYNTHETIC_DATA_PCT': 20,       # 🆕 Máximo 20% datos sintéticos
+    'STOP_ON_QUALITY_FAIL': True        # 🆕 Detener si calidad insuficiente
 }
 
 # =============================================================================
-# 🔄 CONFIGURACIÓN DE MANTENIMIENTO Y LIMPIEZA V3.1
+# 🔄 CONFIGURACIÓN DE MANTENIMIENTO Y LIMPIEZA V3.2
 # =============================================================================
 
 MAINTENANCE_CONFIG = {
     'AUTO_CLEANUP_ENABLED': True,
-    'CLEANUP_INTERVAL_HOURS': 24,      # limpiar cada 24h
-    'KEEP_RAW_DATA_DAYS': 30,          # mantener datos raw 30 días
-    'KEEP_PROCESSED_DATA_DAYS': 90,    # mantener datos procesados 90 días
-    'AUTO_GAP_DETECTION_INTERVAL': 6,  # verificar gaps cada 6h
-    'DATA_QUALITY_CHECK_INTERVAL': 12  # verificar calidad cada 12h
+    'CLEANUP_INTERVAL_HOURS': 24,
+    'KEEP_RAW_DATA_DAYS': 30,
+    'KEEP_PROCESSED_DATA_DAYS': 90,
+    'AUTO_GAP_DETECTION_INTERVAL': 6,
+    'DATA_QUALITY_CHECK_INTERVAL': 12,
+    'REAL_DATA_REFRESH_DAYS': 7         # 🆕 Re-descargar datos reales cada 7 días
 }
 
 # =============================================================================
-# 🆕 UTILIDADES PARA OTROS MÓDULOS V3.1
+# 🆕 UTILIDADES PARA OTROS MÓDULOS V3.2
 # =============================================================================
 
 def get_current_trading_session():
@@ -433,14 +449,24 @@ def should_use_extended_hours():
     """Verificar si se debe usar extended hours en yfinance"""
     return YFINANCE_EXTENDED_CONFIG['PREPOST_REQUIRED']
 
+def get_gap_fill_strategy(gap_type: str) -> str:
+    """
+    🆕 V3.2: Obtener estrategia de filling para un tipo de gap
+    """
+    return GAP_DETECTION_CONFIG['FILL_STRATEGIES'].get(gap_type, 'PRESERVE_GAP')
+
+def should_use_real_data() -> bool:
+    """
+    🆕 V3.2: Verificar si se debe usar datos reales para gaps
+    """
+    return GAP_DETECTION_CONFIG['REAL_DATA_CONFIG']['USE_YFINANCE']
+
 # =============================================================================
 # 🔍 VALIDACIÓN DE CONFIGURACIÓN
 # =============================================================================
 
 def validate_config():
-    """
-    Validar que la configuración es correcta
-    """
+    """Validar que la configuración es correcta"""
     errors = []
     
     # Validar Telegram
@@ -469,13 +495,17 @@ def validate_config():
     if not 0.1 <= RISK_PER_TRADE <= 5.0:
         errors.append("❌ RISK_PER_TRADE debe estar entre 0.1% y 5.0%")
     
+    # 🆕 Validar estrategias de gap filling
+    valid_strategies = ['REAL_DATA', 'PRESERVE_GAP', 'FORWARD_FILL', 'INTERPOLATE']
+    for gap_type, strategy in GAP_DETECTION_CONFIG['FILL_STRATEGIES'].items():
+        if strategy not in valid_strategies:
+            errors.append(f"❌ Estrategia inválida para {gap_type}: {strategy}")
+    
     return errors
 
 def print_config_summary():
-    """
-    Imprimir resumen de configuración actual
-    """
-    print("⚙️ CONFIGURACIÓN DEL SISTEMA V3.1")
+    """Imprimir resumen de configuración actual"""
+    print("⚙️ CONFIGURACIÓN DEL SISTEMA V3.2")
     print("=" * 50)
     print(f"📊 Símbolos: {', '.join(SYMBOLS)}")
     print(f"⏰ Intervalo: {SCAN_INTERVAL} minutos")
@@ -485,11 +515,17 @@ def print_config_summary():
     print(f"📱 Telegram configurado: {'Sí' if TELEGRAM_TOKEN and CHAT_ID else 'No'}")
     print(f"🕐 Extended hours: {'Sí' if is_extended_hours_enabled() else 'No'}")
     
+    # 🆕 Info de gap filling
+    print(f"\n🔧 GAP FILLING V3.2:")
+    print(f"   Usar datos reales: {'Sí' if should_use_real_data() else 'No'}")
+    for gap_type, strategy in GAP_DETECTION_CONFIG['FILL_STRATEGIES'].items():
+        print(f"   {gap_type}: {strategy}")
+    
     current_session, config = get_current_trading_session()
     if current_session:
-        print(f"🎯 Sesión actual: {current_session} (intervalo: {config['DATA_INTERVAL']} min)")
+        print(f"\n🎯 Sesión actual: {current_session} (intervalo: {config['DATA_INTERVAL']} min)")
     else:
-        print("💤 No hay sesión activa actualmente")
+        print("\n💤 No hay sesión activa actualmente")
     print("=" * 50)
 
 # Ejecutar validación al importar
