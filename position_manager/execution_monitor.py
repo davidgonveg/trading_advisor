@@ -65,9 +65,9 @@ class ExecutionMonitor:
         self.tracker = position_tracker
         self.tolerance_pct = tolerance_pct
         self.use_real_prices = use_real_prices
-        
-        # Cache de precios para evitar consultas repetidas
-        self.price_cache: Dict[str, Tuple[float, datetime]] = {}
+
+        # 🆕 V4.1: Cache de precios OHLC para evitar consultas repetidas
+        self.price_cache: Dict[str, Tuple[Dict[str, float], datetime]] = {}
         self.cache_ttl_seconds = 30  # Tiempo de vida del cache
         
         # Importar indicators solo si usamos precios reales
@@ -90,50 +90,73 @@ class ExecutionMonitor:
     # 💰 OBTENCIÓN DE PRECIOS
     # =========================================================================
     
-    def get_current_price(self, symbol: str) -> Optional[float]:
+    def get_current_price(self, symbol: str) -> Optional[Dict[str, float]]:
         """
-        Obtener precio actual del mercado
-        
+        🆕 V4.1: Obtener precios OHLC del mercado (Close, High, Low)
+
+        CAMBIO CRÍTICO: Ahora devuelve dict con Close, High, Low en lugar de solo Close.
+        Esto permite verificar correctamente si TP/SL fueron tocados dentro de la barra.
+
         Args:
             symbol: Símbolo del activo
-            
+
         Returns:
-            Precio actual o None si no se puede obtener
+            Dict con {'close': float, 'high': float, 'low': float} o None
         """
         try:
             # Verificar cache primero
             if symbol in self.price_cache:
-                cached_price, cached_time = self.price_cache[symbol]
+                cached_data, cached_time = self.price_cache[symbol]
                 age_seconds = (datetime.now() - cached_time).total_seconds()
-                
+
                 if age_seconds < self.cache_ttl_seconds:
-                    logger.debug(f"💾 Usando precio cacheado para {symbol}: ${cached_price:.2f}")
-                    return cached_price
-            
+                    logger.debug(f"💾 Usando precio cacheado para {symbol}: ${cached_data['close']:.2f}")
+                    return cached_data
+
             # Obtener precio nuevo
             if self.use_real_prices and self.indicators:
-                # Precio real de yfinance
+                # Precio real de yfinance con OHLC completo
                 data = self.indicators.get_market_data(symbol, period='1d', interval='1m')
                 if data is not None and not data.empty:
-                    current_price = float(data['Close'].iloc[-1])
-                    self.price_cache[symbol] = (current_price, datetime.now())
-                    logger.debug(f"📊 Precio real {symbol}: ${current_price:.2f}")
-                    return current_price
+                    # Obtener última barra con Close, High, Low
+                    last_bar = data.iloc[-1]
+                    price_data = {
+                        'close': float(last_bar['Close']),
+                        'high': float(last_bar['High']),
+                        'low': float(last_bar['Low'])
+                    }
+                    self.price_cache[symbol] = (price_data, datetime.now())
+                    logger.debug(f"📊 Precio real {symbol}: Close=${price_data['close']:.2f}, "
+                               f"High=${price_data['high']:.2f}, Low=${price_data['low']:.2f}")
+                    return price_data
             else:
-                # Modo testing: usar precio de la posición con variación simulada
+                # Modo testing: simular OHLC con variación
                 position = self.tracker.get_position(symbol)
                 if position and position.current_price > 0:
                     # Simular pequeña variación aleatoria
                     import random
+                    base_price = position.current_price
                     variation = random.uniform(-0.5, 0.5)  # ±0.5%
-                    simulated_price = position.current_price * (1 + variation / 100)
-                    self.price_cache[symbol] = (simulated_price, datetime.now())
-                    logger.debug(f"🎲 Precio simulado {symbol}: ${simulated_price:.2f}")
-                    return simulated_price
-            
+                    simulated_close = base_price * (1 + variation / 100)
+
+                    # Simular High/Low con rango intraday
+                    intraday_range = abs(variation) * 1.5  # 1.5x la variación para el rango
+                    simulated_high = simulated_close * (1 + intraday_range / 100)
+                    simulated_low = simulated_close * (1 - intraday_range / 100)
+
+                    price_data = {
+                        'close': simulated_close,
+                        'high': simulated_high,
+                        'low': simulated_low
+                    }
+                    self.price_cache[symbol] = (price_data, datetime.now())
+                    logger.debug(f"🎲 Precio simulado {symbol}: Close=${price_data['close']:.2f}, "
+                               f"High=${price_data['high']:.2f}, Low=${price_data['low']:.2f}")
+                    return price_data
+
             logger.warning(f"⚠️ No se pudo obtener precio para {symbol}")
             return None
-            
+
         except Exception as e:
             logger.error(f"❌ Error obteniendo precio {symbol}: {e}")
             return None
@@ -152,43 +175,45 @@ class ExecutionMonitor:
         position: TrackedPosition
     ) -> List[ExecutionEvent]:
         """
-        Verificar si algún nivel se ha ejecutado desde último check
-        
+        🆕 V4.1: Verificar ejecuciones usando High/Low de barras
+
+        CAMBIO CRÍTICO: Ahora usa High/Low para detectar TP/SL tocados.
+
         Args:
             position: Posición a verificar
-            
+
         Returns:
             Lista de eventos de ejecución detectados
         """
         try:
             events = []
-            
-            # 1. Obtener precio actual
-            current_price = self.get_current_price(position.symbol)
-            if current_price is None:
+
+            # 1. Obtener precios OHLC actuales
+            price_data = self.get_current_price(position.symbol)
+            if price_data is None:
                 return events
-            
+
             # 2. Verificar niveles de entrada (solo PENDING)
-            entry_events = self.check_entry_levels(position, current_price)
+            entry_events = self.check_entry_levels(position, price_data)
             events.extend(entry_events)
-            
+
             # 3. Verificar niveles de salida (solo PENDING)
-            exit_events = self.check_exit_levels(position, current_price)
+            exit_events = self.check_exit_levels(position, price_data)
             events.extend(exit_events)
-            
-            # 4. Verificar stop loss
-            stop_events = self.check_stop_loss(position, current_price)
+
+            # 4. Verificar stop loss (CRÍTICO: usa Low/High)
+            stop_events = self.check_stop_loss(position, price_data)
             events.extend(stop_events)
-            
-            # 5. Actualizar precio actual en tracker
+
+            # 5. Actualizar precio actual en tracker (usar close)
             if events:
                 self.tracker.calculate_position_metrics(
                     position.position_id,
-                    current_price
+                    price_data['close']
                 )
-            
+
             return events
-            
+
         except Exception as e:
             logger.error(f"❌ Error verificando ejecuciones {position.symbol}: {e}")
             return []
@@ -196,50 +221,59 @@ class ExecutionMonitor:
     def check_entry_levels(
         self,
         position: TrackedPosition,
-        current_price: float
+        price_data: Dict[str, float]
     ) -> List[ExecutionEvent]:
         """
-        Verificar niveles de entrada específicamente
-        
+        🆕 V4.1: Verificar niveles de entrada usando Low (LONG) o High (SHORT)
+
         Args:
             position: Posición a verificar
-            current_price: Precio actual del mercado
-            
+            price_data: Dict con close, high, low
+
         Returns:
             Lista de eventos de entrada detectados
         """
         events = []
-        
+
         try:
+            current_price = price_data['close']
+
             for entry in position.entry_levels:
                 # Solo verificar niveles PENDING
                 if entry.status != ExecutionStatus.PENDING:
                     continue
-                
+
                 # Verificar si el precio tocó el nivel con tolerancia
                 executed = False
-                
+                execution_price = current_price  # Precio de ejecución por defecto
+
                 if position.direction == 'LONG':
                     # LONG: Ejecuta cuando precio <= target (bajando)
+                    # Usar LOW de la barra para verificar si se tocó el nivel
                     tolerance = entry.target_price * (self.tolerance_pct / 100)
-                    if current_price <= (entry.target_price + tolerance):
+                    if price_data['low'] <= (entry.target_price + tolerance):
                         executed = True
+                        # Precio de ejecución: el target o el low si es peor
+                        execution_price = max(price_data['low'], entry.target_price)
                 else:  # SHORT
                     # SHORT: Ejecuta cuando precio >= target (subiendo)
+                    # Usar HIGH de la barra para verificar si se tocó el nivel
                     tolerance = entry.target_price * (self.tolerance_pct / 100)
-                    if current_price >= (entry.target_price - tolerance):
+                    if price_data['high'] >= (entry.target_price - tolerance):
                         executed = True
-                
+                        # Precio de ejecución: el target o el high si es peor
+                        execution_price = min(price_data['high'], entry.target_price)
+
                 if executed:
                     # Marcar como ejecutado en el tracker
                     success = self.tracker.mark_level_as_filled(
                         symbol=position.symbol,
                         level_id=entry.level_id,
                         level_type='ENTRY',
-                        filled_price=current_price,
+                        filled_price=execution_price,
                         filled_percentage=entry.percentage
                     )
-                    
+
                     if success:
                         # Crear evento
                         event = ExecutionEvent(
@@ -249,19 +283,19 @@ class ExecutionMonitor:
                             event_type=ExecutionEventType.ENTRY_FILLED,
                             level_id=entry.level_id,
                             target_price=entry.target_price,
-                            executed_price=current_price,
+                            executed_price=execution_price,
                             percentage=entry.percentage,
                             timestamp=datetime.now(),
-                            trigger_reason=f"Precio {current_price:.2f} alcanzó nivel {entry.target_price:.2f}"
+                            trigger_reason=f"Precio tocó nivel {entry.target_price:.2f} (Low/High: {price_data['low']:.2f}/{price_data['high']:.2f})"
                         )
                         event.slippage = event.calculate_slippage()
                         events.append(event)
-                        
+
                         logger.info(f"✅ ENTRY {entry.level_id} ejecutado: {position.symbol}")
                         logger.info(f"   Target: ${entry.target_price:.2f}")
-                        logger.info(f"   Ejecutado: ${current_price:.2f}")
+                        logger.info(f"   Ejecutado: ${execution_price:.2f}")
                         logger.info(f"   Slippage: {event.slippage:+.3f}%")
-            
+
             # Verificar niveles que deben ser saltados
             if position.direction == 'LONG':
                 # En LONG, si precio subió mucho, saltar niveles bajos pendientes
@@ -276,9 +310,9 @@ class ExecutionMonitor:
                                 f"Precio ${current_price:.2f} pasó nivel ${entry.target_price:.2f}"
                             )
                             logger.info(f"⏭️ Entry {entry.level_id} SALTADO en {position.symbol}")
-            
+
             return events
-            
+
         except Exception as e:
             logger.error(f"❌ Error verificando entradas: {e}")
             return events
@@ -286,54 +320,66 @@ class ExecutionMonitor:
     def check_exit_levels(
         self,
         position: TrackedPosition,
-        current_price: float
+        price_data: Dict[str, float]
     ) -> List[ExecutionEvent]:
         """
-        Verificar niveles de salida (take profits)
-        
+        🆕 V4.1: Verificar niveles de salida (TP) usando High (LONG) o Low (SHORT)
+
+        CAMBIO CRÍTICO: Usa High para detectar TP en LONG, Low para SHORT.
+        Esto asegura que no nos perdamos un TP que se tocó dentro de la barra.
+
         Args:
             position: Posición a verificar
-            current_price: Precio actual del mercado
-            
+            price_data: Dict con close, high, low
+
         Returns:
             Lista de eventos de salida detectados
         """
         events = []
-        
+
         try:
+            current_price = price_data['close']
+
             for exit_level in position.exit_levels:
                 # Solo verificar niveles PENDING
                 if exit_level.status != ExecutionStatus.PENDING:
                     continue
-                
+
                 # Solo verificar exits si ya entramos en la posición
                 if position.get_entries_executed_count() == 0:
                     continue
-                
+
                 # Verificar si el precio tocó el nivel con tolerancia
                 executed = False
-                
+                execution_price = current_price  # Precio de ejecución por defecto
+
                 if position.direction == 'LONG':
                     # LONG: Exit cuando precio >= target (subiendo)
+                    # Usar HIGH de la barra para verificar si se tocó el TP
                     tolerance = exit_level.target_price * (self.tolerance_pct / 100)
-                    if current_price >= (exit_level.target_price - tolerance):
+                    if price_data['high'] >= (exit_level.target_price - tolerance):
                         executed = True
+                        # Precio de ejecución: el target o el high si es mejor
+                        execution_price = min(price_data['high'], exit_level.target_price)
                 else:  # SHORT
                     # SHORT: Exit cuando precio <= target (bajando)
+                    # Usar LOW de la barra para verificar si se tocó el TP
                     tolerance = exit_level.target_price * (self.tolerance_pct / 100)
-                    if current_price <= (exit_level.target_price + tolerance):
+                    if price_data['low'] <= (exit_level.target_price + tolerance):
                         executed = True
-                
+                        # Precio de ejecución: el target o el low si es mejor
+                        execution_price = max(price_data['low'], exit_level.target_price)
+
                 if executed:
                     # Marcar como ejecutado en el tracker
                     success = self.tracker.mark_level_as_filled(
                         symbol=position.symbol,
                         level_id=exit_level.level_id,
                         level_type='EXIT',
-                        filled_price=current_price,
+                        filled_price=execution_price,
                         filled_percentage=exit_level.percentage
                     )
-                    
+
                     if success:
                         # Crear evento
                         event = ExecutionEvent(
@@ -343,21 +389,21 @@ class ExecutionMonitor:
                             event_type=ExecutionEventType.EXIT_FILLED,
                             level_id=exit_level.level_id,
                             target_price=exit_level.target_price,
-                            executed_price=current_price,
+                            executed_price=execution_price,
                             percentage=exit_level.percentage,
                             timestamp=datetime.now(),
-                            trigger_reason=f"Take profit {exit_level.level_id} alcanzado"
+                            trigger_reason=f"Take profit {exit_level.level_id} tocado (Low/High: {price_data['low']:.2f}/{price_data['high']:.2f})"
                         )
                         event.slippage = event.calculate_slippage()
                         events.append(event)
-                        
+
                         logger.info(f"🎯 EXIT {exit_level.level_id} ejecutado: {position.symbol}")
                         logger.info(f"   Target: ${exit_level.target_price:.2f}")
-                        logger.info(f"   Ejecutado: ${current_price:.2f}")
+                        logger.info(f"   Ejecutado: ${execution_price:.2f}")
                         logger.info(f"   Slippage: {event.slippage:+.3f}%")
-            
+
             return events
-            
+
         except Exception as e:
             logger.error(f"❌ Error verificando salidas: {e}")
             return events
@@ -365,46 +411,66 @@ class ExecutionMonitor:
     def check_stop_loss(
         self,
         position: TrackedPosition,
-        current_price: float
+        price_data: Dict[str, float]
     ) -> List[ExecutionEvent]:
         """
-        Verificar stop loss
-        
+        🆕 V4.1: Verificar stop loss usando Low (LONG) o High (SHORT)
+
+        CAMBIO MÁS CRÍTICO: Usa Low para detectar SL en LONG, High para SHORT.
+        Esto asegura que NUNCA nos perdamos un stop loss que se tocó dentro de la barra,
+        especialmente importante en gaps overnight.
+
+        Ejemplo problema sin High/Low:
+        - Barra overnight (20:00-22:00, 120 min)
+        - Open: $100, Close: $100, High: $105, Low: $95
+        - Stop loss en $98
+        - Solo mirando Close ($100): NO detecta SL ❌
+        - Mirando Low ($95): SÍ detecta que tocó $98 ✅
+
         Args:
             position: Posición a verificar
-            current_price: Precio actual del mercado
-            
+            price_data: Dict con close, high, low
+
         Returns:
             Lista con evento de stop si se tocó
         """
         events = []
-        
+
         try:
             if not position.stop_loss:
                 return events
-            
+
             # Solo verificar si stop está PENDING
             if position.stop_loss.status != ExecutionStatus.PENDING:
                 return events
-            
+
             # Solo verificar stop si ya entramos en la posición
             if position.get_entries_executed_count() == 0:
                 return events
-            
-            # Verificar si el precio tocó el stop
+
+            # Verificar si el precio tocó el stop (CRITICAL LOGIC)
             stop_hit = False
-            
+            execution_price = price_data['close']  # Precio de ejecución por defecto
+
             if position.direction == 'LONG':
                 # LONG: Stop cuando precio <= stop (bajando)
+                # Usar LOW de la barra para verificar si se tocó el SL
                 tolerance = position.stop_loss.target_price * (self.tolerance_pct / 100)
-                if current_price <= (position.stop_loss.target_price + tolerance):
+                if price_data['low'] <= (position.stop_loss.target_price + tolerance):
                     stop_hit = True
+                    # Precio de ejecución: el stop o el low si es peor
+                    execution_price = min(price_data['low'], position.stop_loss.target_price)
+                    logger.warning(f"⚠️ {position.symbol}: SL tocado - Low=${price_data['low']:.2f} <= Stop=${position.stop_loss.target_price:.2f}")
             else:  # SHORT
                 # SHORT: Stop cuando precio >= stop (subiendo)
+                # Usar HIGH de la barra para verificar si se tocó el SL
                 tolerance = position.stop_loss.target_price * (self.tolerance_pct / 100)
-                if current_price >= (position.stop_loss.target_price - tolerance):
+                if price_data['high'] >= (position.stop_loss.target_price - tolerance):
                     stop_hit = True
-            
+                    # Precio de ejecución: el stop o el high si es peor
+                    execution_price = max(price_data['high'], position.stop_loss.target_price)
+                    logger.warning(f"⚠️ {position.symbol}: SL tocado - High=${price_data['high']:.2f} >= Stop=${position.stop_loss.target_price:.2f}")
+
             if stop_hit:
                 # Marcar como ejecutado
                 success = self.tracker.update_level_status(
@@ -412,9 +478,9 @@ class ExecutionMonitor:
                     level_id=0,  # Stop no tiene level_id
                     level_type='STOP',
                     new_status=ExecutionStatus.FILLED,
-                    filled_price=current_price
+                    filled_price=execution_price
                 )
-                
+
                 if success:
                     # Crear evento
                     event = ExecutionEvent(
@@ -424,21 +490,22 @@ class ExecutionMonitor:
                         event_type=ExecutionEventType.STOP_HIT,
                         level_id=0,
                         target_price=position.stop_loss.target_price,
-                        executed_price=current_price,
+                        executed_price=execution_price,
                         percentage=100.0,  # Stop cierra toda la posición
                         timestamp=datetime.now(),
-                        trigger_reason="Stop loss alcanzado"
+                        trigger_reason=f"Stop loss tocado (Low/High: {price_data['low']:.2f}/{price_data['high']:.2f})"
                     )
                     event.slippage = event.calculate_slippage()
                     events.append(event)
-                    
+
                     logger.warning(f"🛑 STOP LOSS ejecutado: {position.symbol}")
                     logger.warning(f"   Stop: ${position.stop_loss.target_price:.2f}")
-                    logger.warning(f"   Ejecutado: ${current_price:.2f}")
+                    logger.warning(f"   Ejecutado: ${execution_price:.2f}")
+                    logger.warning(f"   Barra: Low=${price_data['low']:.2f}, High=${price_data['high']:.2f}, Close=${price_data['close']:.2f}")
                     logger.warning(f"   Slippage: {event.slippage:+.3f}%")
-            
+
             return events
-            
+
         except Exception as e:
             logger.error(f"❌ Error verificando stop loss: {e}")
             return events
@@ -504,12 +571,12 @@ class ExecutionMonitor:
         force_price: Optional[float] = None
     ) -> List[ExecutionEvent]:
         """
-        Monitorear una única posición (útil para testing)
-        
+        🆕 V4.1: Monitorear una única posición (útil para testing)
+
         Args:
             symbol: Símbolo de la posición
-            force_price: Precio forzado (para testing)
-            
+            force_price: Precio forzado (para testing) - se convierte a OHLC
+
         Returns:
             Lista de eventos detectados
         """
@@ -518,21 +585,27 @@ class ExecutionMonitor:
             if not position:
                 logger.warning(f"⚠️ No hay posición activa para {symbol}")
                 return []
-            
-            # Si hay precio forzado, usarlo
+
+            # Si hay precio forzado, convertirlo a formato OHLC
             if force_price:
                 old_cache = self.use_real_prices
                 self.use_real_prices = False
-                self.price_cache[symbol] = (force_price, datetime.now())
-            
+                # Crear price_data simulado con pequeño rango High/Low
+                price_data = {
+                    'close': force_price,
+                    'high': force_price * 1.001,  # +0.1% para simular rango
+                    'low': force_price * 0.999    # -0.1% para simular rango
+                }
+                self.price_cache[symbol] = (price_data, datetime.now())
+
             events = self.check_position_executions(position)
-            
+
             # Restaurar modo
             if force_price:
                 self.use_real_prices = old_cache
-            
+
             return events
-            
+
         except Exception as e:
             logger.error(f"❌ Error monitoreando {symbol}: {e}")
             return []
