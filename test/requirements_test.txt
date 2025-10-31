@@ -1,0 +1,19 @@
+# Dependencias para Testing del Trading Advisor
+# =============================================
+
+# Testing framework
+pytest>=7.4.0
+pytest-cov>=4.1.0        # Cobertura de código
+pytest-xdist>=3.3.0      # Ejecución paralela
+pytest-timeout>=2.1.0    # Timeouts para tests
+pytest-html>=3.2.0       # Reportes HTML
+
+# Dependencias del proyecto (si no están ya instaladas)
+pandas>=2.0.0
+numpy>=1.24.0
+sqlite3-python          # Para tests de BD
+python-dotenv>=1.0.0
+
+# Opcional: para mejor output
+pytest-sugar>=0.9.7     # Output más bonito
+pytest-clarity>=1.0.1   # Mejor output de assertions
