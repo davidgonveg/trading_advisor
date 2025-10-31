@@ -286,6 +286,27 @@ class TechnicalIndicators:
                         filled_data = pd.concat([filled_data, filled_rows]).sort_index()
                         logger.debug(f"🔧 {symbol}: Gap {gap['type']} rellenado ({gap['duration_minutes']:.0f} min)")
                         
+                        # 🆕 PERSISTIR GAP EN DATABASE
+                        try:
+                            from database.connection import mark_gap_as_filled
+                            
+                            fill_method = 'REAL_DATA' if len(filled_rows) > 0 else 'PRESERVED'
+                            
+                            mark_gap_as_filled(
+                                symbol=symbol,
+                                gap_start=gap['start'],
+                                gap_end=gap['end'],
+                                fill_method=fill_method,
+                                bars_added=len(filled_rows)
+                            )
+                            
+                            logger.debug(f"💾 {symbol}: Gap persistido en DB")
+                            
+                        except ImportError:
+                            logger.warning("⚠️ mark_gap_as_filled no disponible")
+                        except Exception as persist_error:
+                            logger.warning(f"⚠️ {symbol}: No se pudo persistir gap: {persist_error}")
+                        
                 except Exception as gap_error:
                     logger.warning(f"⚠️ {symbol}: Error rellenando gap {gap['type']}: {gap_error}")
                     continue

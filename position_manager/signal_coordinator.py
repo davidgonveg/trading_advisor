@@ -525,6 +525,236 @@ class SignalCoordinator:
             )
         }
     
+    def should_send_update_for_events(
+        self,
+        position: 'TrackedPosition',
+        events: List['ExecutionEvent']
+    ) -> bool:
+        """
+        Decidir si enviar update basándose en eventos detectados
+        
+        Args:
+            position: Posición activa
+            events: Eventos detectados en el último ciclo de monitoreo
+            
+        Returns:
+            True si debe enviar update a Telegram
+            
+        Lógica:
+        - SIEMPRE enviar si hay STOP_HIT
+        - Verificar intervalo mínimo desde última señal
+        - Enviar si hay eventos significativos (ENTRY/EXIT FILLED)
+        """
+        try:
+            # 1. SIEMPRE notificar si se toca el stop loss
+            if any(e.event_type == ExecutionEventType.STOP_HIT for e in events):
+                logger.info(f"🔴 {position.symbol}: Stop Loss hit - enviando notificación inmediata")
+                return True
+            
+            # 2. Verificar intervalo mínimo desde última señal
+            if position.last_signal_sent:
+                time_since_last = datetime.now() - position.last_signal_sent
+                if time_since_last < self.min_update_interval:
+                    logger.debug(
+                        f"⏸️ {position.symbol}: Solo {time_since_last.seconds//60}min "
+                        f"desde última señal (mínimo {self.min_update_interval.seconds//60}min)"
+                    )
+                    self.stats['updates_skipped'] += 1
+                    return False
+            
+            # 3. Filtrar eventos significativos
+            significant_events = [
+                e for e in events 
+                if e.event_type in [
+                    ExecutionEventType.ENTRY_FILLED,
+                    ExecutionEventType.EXIT_FILLED,
+                    ExecutionEventType.TRAILING_STOP_HIT
+                ]
+            ]
+            
+            if len(significant_events) == 0:
+                logger.debug(f"ℹ️ {position.symbol}: No hay eventos significativos para notificar")
+                return False
+            
+            # 4. Decidir enviar
+            logger.info(
+                f"📬 {position.symbol}: {len(significant_events)} eventos "
+                f"significativos - enviando update"
+            )
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Error evaluando si enviar update: {e}")
+            return False
+
+
+    def generate_update_message(
+        self,
+        position: 'TrackedPosition',
+        events: List['ExecutionEvent']
+    ) -> str:
+        """
+        Generar mensaje de actualización formateado para Telegram
+        
+        Args:
+            position: Posición activa
+            events: Eventos que dispararon el update
+            
+        Returns:
+            Mensaje HTML formateado para Telegram
+            
+        Formato del mensaje:
+        - Header con símbolo y dirección
+        - Eventos detectados (con emojis)
+        - Estado actual de la posición
+        - Niveles pendientes
+        - Stop loss
+        """
+        try:
+            # ===================================================================
+            # HEADER
+            # ===================================================================
+            direction_emoji = "🟢" if position.direction == "LONG" else "🔴"
+            msg = f"{direction_emoji} <b>UPDATE: {position.symbol} {position.direction}</b>\n\n"
+            
+            # ===================================================================
+            # EVENTOS DETECTADOS
+            # ===================================================================
+            msg += "📊 <b>Eventos detectados:</b>\n"
+            
+            for event in events:
+                # Emoji según tipo de evento
+                if event.event_type == ExecutionEventType.ENTRY_FILLED:
+                    emoji = "✅"
+                    event_name = f"Entry #{event.level_id}"
+                elif event.event_type == ExecutionEventType.EXIT_FILLED:
+                    emoji = "💰"
+                    event_name = f"Exit #{event.level_id}"
+                elif event.event_type == ExecutionEventType.STOP_HIT:
+                    emoji = "🛑"
+                    event_name = "STOP LOSS"
+                elif event.event_type == ExecutionEventType.TRAILING_STOP_HIT:
+                    emoji = "🎯"
+                    event_name = "Trailing Stop"
+                else:
+                    emoji = "📍"
+                    event_name = event.event_type.value
+                
+                # Slippage info
+                slippage_info = ""
+                if event.slippage != 0:
+                    slippage_sign = "+" if event.slippage > 0 else ""
+                    slippage_info = f" ({slippage_sign}{event.slippage:.2f}% slippage)"
+                
+                msg += f"{emoji} {event_name}: ${event.executed_price:.2f}{slippage_info}\n"
+            
+            msg += "\n"
+            
+            # ===================================================================
+            # ESTADO ACTUAL DE LA POSICIÓN
+            # ===================================================================
+            msg += "📈 <b>Estado actual:</b>\n"
+            msg += f"• Ejecutado: {position.total_filled_percentage:.1f}%\n"
+            
+            if position.average_entry_price > 0:
+                msg += f"• Precio medio entrada: ${position.average_entry_price:.2f}\n"
+            
+            # P&L
+            if position.unrealized_pnl != 0:
+                pnl_emoji = "📈" if position.unrealized_pnl > 0 else "📉"
+                pnl_sign = "+" if position.unrealized_pnl > 0 else ""
+                msg += f"• P&L: {pnl_emoji} {pnl_sign}{position.unrealized_pnl:.2f}%\n"
+            
+            # Status
+            status_emoji = {
+                PositionStatus.PENDING: "⏳",
+                PositionStatus.PARTIALLY_FILLED: "🔄",
+                PositionStatus.FULLY_ENTERED: "✅",
+                PositionStatus.EXITING: "🚪",
+                PositionStatus.CLOSED: "🔒",
+                PositionStatus.STOPPED: "🛑"
+            }.get(position.status, "❓")
+            
+            msg += f"• Status: {status_emoji} {position.status.value}\n\n"
+            
+            # ===================================================================
+            # NIVELES PENDIENTES (solo si no está completamente cerrada)
+            # ===================================================================
+            if position.status not in [PositionStatus.CLOSED, PositionStatus.STOPPED]:
+                
+                # Entradas pendientes
+                pending_entries = [
+                    e for e in position.entry_levels 
+                    if e.status == ExecutionStatus.PENDING
+                ]
+                
+                if pending_entries:
+                    msg += "⏳ <b>Entradas pendientes:</b>\n"
+                    for entry in pending_entries[:3]:  # Máximo 3 para no saturar
+                        msg += (
+                            f"• Entry #{entry.level_id}: ${entry.target_price:.2f} "
+                            f"({entry.percentage:.0f}%)\n"
+                        )
+                    
+                    if len(pending_entries) > 3:
+                        msg += f"• ... y {len(pending_entries) - 3} más\n"
+                    
+                    msg += "\n"
+                
+                # Exits/Targets pendientes
+                pending_exits = [
+                    e for e in position.exit_levels 
+                    if e.status == ExecutionStatus.PENDING
+                ]
+                
+                if pending_exits:
+                    msg += "🎯 <b>Targets:</b>\n"
+                    for exit in pending_exits[:2]:  # Solo primeros 2 targets
+                        rr_info = ""
+                        if exit.risk_reward_ratio:
+                            rr_info = f" (R:R {exit.risk_reward_ratio:.1f})"
+                        
+                        msg += (
+                            f"• TP{exit.level_id}: ${exit.target_price:.2f}{rr_info}\n"
+                        )
+                    
+                    if len(pending_exits) > 2:
+                        msg += f"• ... y {len(pending_exits) - 2} targets más\n"
+                    
+                    msg += "\n"
+                
+                # Stop Loss
+                if position.stop_loss and position.stop_loss.status == ExecutionStatus.PENDING:
+                    msg += f"🛑 <b>Stop Loss:</b> ${position.stop_loss.target_price:.2f}\n"
+            
+            # ===================================================================
+            # FOOTER (si está cerrada)
+            # ===================================================================
+            if position.status in [PositionStatus.CLOSED, PositionStatus.STOPPED]:
+                msg += "\n🔒 <b>Posición cerrada</b>\n"
+                
+                if position.position_closed_at:
+                    duration = position.position_closed_at - position.signal_timestamp
+                    hours = duration.total_seconds() / 3600
+                    msg += f"⏱️ Duración: {hours:.1f}h\n"
+            
+            # ===================================================================
+            # TIMESTAMP
+            # ===================================================================
+            msg += f"\n🕐 {datetime.now().strftime('%H:%M:%S')}"
+            
+            return msg
+            
+        except Exception as e:
+            logger.error(f"❌ Error generando mensaje de update: {e}")
+            # Fallback a mensaje básico
+            return (
+                f"🔔 <b>UPDATE: {position.symbol}</b>\n\n"
+                f"Se detectaron {len(events)} eventos.\n"
+                f"Ejecutado: {position.total_filled_percentage:.1f}%\n"
+                f"Status: {position.status.value}"
+            )
+
     def print_statistics(self):
         """Imprimir estadísticas en formato legible"""
         stats = self.get_statistics()

@@ -417,6 +417,42 @@ class ExitManager:
         except Exception as e:
             logger.error(f"❌ Error calculando cambio momentum: {e}")
             return 0
+
+    def add_position_from_signal(self, signal, plan) -> bool:
+        """
+        Registrar nueva posición desde señal del scanner
+        
+        Args:
+            signal: TradingSignal del scanner
+            plan: PositionPlan del position_calculator
+            
+        Returns:
+            True si se registró exitosamente
+        """
+        try:
+            # Crear registro de posición activa
+            position_data = {
+                'symbol': signal.symbol,
+                'direction': signal.signal_type,
+                'signal_strength': signal.signal_strength,
+                'entry_price': plan.entries[0].price if plan.entries else signal.current_price,
+                'stop_loss': plan.stop_loss.price,
+                'opened_at': datetime.now(),
+                'status': 'ACTIVE'
+            }
+            
+            # Agregar a posiciones activas
+            if signal.symbol not in self.active_positions:
+                self.active_positions[signal.symbol] = position_data
+                logger.info(f"✅ Posición registrada: {signal.symbol} {signal.signal_type}")
+                return True
+            else:
+                logger.warning(f"⚠️ {signal.symbol} ya tiene posición activa")
+                return False
+                
+        except Exception as e:
+            logger.error(f"❌ Error registrando posición: {e}")
+            return False
     
     def detect_trend_reversal(self, position: ActivePosition, indicators: Dict) -> bool:
         """Detectar si hay reversión de tendencia clara"""
