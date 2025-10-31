@@ -11,7 +11,7 @@ pytest-html>=3.2.0       # Reportes HTML
 # Dependencias del proyecto (si no están ya instaladas)
 pandas>=2.0.0
 numpy>=1.24.0
-sqlite3-python          # Para tests de BD
+# sqlite3 viene incluido con Python, no necesita instalarse
 python-dotenv>=1.0.0
 
 # Opcional: para mejor output
