@@ -177,7 +177,9 @@ def initialize_database():
         conn.commit()
         conn.close()
         
-        logger.info("✅ Base de datos V3.1 inicializada correctamente")
+        create_gap_fills_table()
+        
+        logger.info("✅ Database V3.1 inicializada correctamente")
         return True
         
     except Exception as e:
@@ -1104,6 +1106,125 @@ def maintenance_database() -> Dict[str, Any]:
             'success': False,
             'error': str(e)
         }
+        
+def mark_gap_as_filled(symbol: str, gap_start: datetime, gap_end: datetime, 
+                       fill_method: str = 'REAL_DATA', bars_added: int = 0) -> bool:
+    """Marcar un gap como rellenado en la base de datos"""
+    try:
+        conn = get_connection()
+        if not conn:
+            logger.warning("⚠️ No hay conexión a DB, gap no se persistirá")
+            return False
+        
+        cursor = conn.cursor()
+        
+        # Verificar si ya existe
+        cursor.execute('''
+        SELECT id FROM gap_fills 
+        WHERE symbol = ? AND gap_start = ? AND gap_end = ?
+        ''', (symbol, gap_start.isoformat(), gap_end.isoformat()))
+        
+        existing = cursor.fetchone()
+        
+        if existing:
+            cursor.execute('''
+            UPDATE gap_fills 
+            SET fill_method = ?, bars_added = ?, last_updated = ?, fill_count = fill_count + 1
+            WHERE id = ?
+            ''', (fill_method, bars_added, datetime.now().isoformat(), existing[0]))
+        else:
+            cursor.execute('''
+            INSERT INTO gap_fills (symbol, gap_start, gap_end, fill_method, bars_added, filled_at, fill_count)
+            VALUES (?, ?, ?, ?, ?, ?, 1)
+            ''', (symbol, gap_start.isoformat(), gap_end.isoformat(), fill_method, bars_added, datetime.now().isoformat()))
+        
+        conn.commit()
+        conn.close()
+        
+        logger.debug(f"✅ Gap marcado como rellenado: {symbol}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Error marcando gap: {e}")
+        return False
+
+
+def get_filled_gaps(symbol: str, days_back: int = 30) -> list:
+    """Obtener gaps ya rellenados"""
+    try:
+        conn = get_connection()
+        if not conn:
+            return []
+        
+        cursor = conn.cursor()
+        cutoff = datetime.now() - timedelta(days=days_back)
+        
+        cursor.execute('''
+        SELECT symbol, gap_start, gap_end, fill_method, bars_added, filled_at, fill_count
+        FROM gap_fills WHERE symbol = ? AND filled_at >= ?
+        ORDER BY filled_at DESC
+        ''', (symbol, cutoff.isoformat()))
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        filled_gaps = []
+        for row in rows:
+            filled_gaps.append({
+                'symbol': row[0],
+                'gap_start': datetime.fromisoformat(row[1]),
+                'gap_end': datetime.fromisoformat(row[2]),
+                'fill_method': row[3],
+                'bars_added': row[4],
+                'filled_at': datetime.fromisoformat(row[5]),
+                'fill_count': row[6]
+            })
+        
+        return filled_gaps
+        
+    except Exception as e:
+        logger.error(f"❌ Error obteniendo gaps: {e}")
+        return []
+
+
+def create_gap_fills_table():
+    """Crear tabla gap_fills si no existe"""
+    try:
+        conn = get_connection()
+        if not conn:
+            return False
+        
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS gap_fills (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT NOT NULL,
+            gap_start TIMESTAMP NOT NULL,
+            gap_end TIMESTAMP NOT NULL,
+            fill_method TEXT NOT NULL,
+            bars_added INTEGER DEFAULT 0,
+            filled_at TIMESTAMP NOT NULL,
+            fill_count INTEGER DEFAULT 1,
+            last_updated TIMESTAMP,
+            UNIQUE(symbol, gap_start, gap_end)
+        )
+        ''')
+        
+        cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_gap_fills_symbol_date 
+        ON gap_fills(symbol, filled_at)
+        ''')
+        
+        conn.commit()
+        conn.close()
+        
+        logger.info("✅ Tabla gap_fills creada/verificada")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Error creando tabla: {e}")
+        return False
 
 if __name__ == "__main__":
     """Ejecutar tests si se ejecuta directamente"""

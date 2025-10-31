@@ -416,7 +416,7 @@ class TradingSystemV40:
     
     def monitor_positions_loop(self) -> None:
         """
-        🆕 V4.0: Loop de monitoreo de posiciones
+        🆕 V4.0: Loop de monitoreo de posiciones - FIXED
         
         NUEVA FUNCIONALIDAD:
         - Monitorea todas las posiciones activas cada 5min
@@ -438,33 +438,51 @@ class TradingSystemV40:
                     if events_by_position:
                         logger.info(f"📊 Eventos detectados en {len(events_by_position)} posiciones")
                         
-                        # Procesar eventos
+                        # Procesar cada posición con eventos
                         for position_id, events in events_by_position.items():
-                            position = self.position_tracker.get_position_by_id(position_id)
-                            
-                            if not position:
-                                continue
-                            
-                            # Enviar notificación por cada evento
-                            for event in events:
-                                try:
-                                    message = self.signal_coordinator.generate_execution_notification(
-                                        position, event
+                            try:
+                                # Obtener posición
+                                position = self.position_tracker.get_position_by_id(position_id)
+                                
+                                if not position:
+                                    logger.warning(f"⚠️ Posición {position_id[:8]}... no encontrada")
+                                    continue
+                                
+                                # ✅ FIX: Verificar si debe enviar update
+                                if self.signal_coordinator.should_send_update_for_events(position, events):
+                                    
+                                    # ✅ FIX: Usar método correcto
+                                    message = self.signal_coordinator.generate_update_message(
+                                        position, 
+                                        events
                                     )
                                     
-                                    if self.telegram.send_message(message):
-                                        self.stats['executions_detected'] += 1
-                                        logger.info(f"📱 Notificación enviada: {event.event_type.value} en {position.symbol}")
+                                    # Enviar mensaje
+                                    if message and self.telegram.send_message(message):
+                                        self.stats['executions_detected'] += len(events)
+                                        self.stats['updates_sent'] += 1
+                                        logger.info(f"📱 Update enviado: {position.symbol} ({len(events)} eventos)")
                                     
-                                    time.sleep(1)
-                                    
-                                except Exception as e:
-                                    logger.error(f"❌ Error enviando notificación: {e}")
+                                    time.sleep(1)  # Delay entre mensajes
+                                
+                                else:
+                                    logger.debug(f"⏭️ Update omitido para {position.symbol} (intervalo mínimo)")
+                                    self.stats['spam_prevented'] += 1
+                            
+                            except Exception as e:
+                                logger.error(f"❌ Error procesando eventos de {position_id[:8]}: {e}")
+                                continue
+                    
+                    else:
+                        logger.debug("ℹ️ No hay eventos en posiciones activas")
                     
                     # Actualizar estadísticas del coordinator
-                    coord_stats = self.signal_coordinator.get_statistics()
-                    self.stats['updates_sent'] = coord_stats['updates_sent']
-                    self.stats['spam_prevented'] = coord_stats['spam_prevented']
+                    try:
+                        coord_stats = self.signal_coordinator.get_statistics()
+                        self.stats['updates_sent'] = coord_stats['updates_sent']
+                        self.stats['spam_prevented'] = coord_stats['spam_prevented']
+                    except Exception as e:
+                        logger.debug(f"No se pudieron actualizar stats del coordinator: {e}")
                     
                 except Exception as e:
                     logger.error(f"❌ Error en monitoreo de posiciones: {e}")
