@@ -45,8 +45,8 @@ import json
 # Importaciones del sistema
 try:
     import config
-    from indicators import TechnicalIndicators
-    from gap_detector import GapDetector, Gap
+    from analysis.indicators import TechnicalIndicators
+    from analysis.gap_detector import GapDetector, Gap
     from database.connection import get_connection, save_indicators_data
     
     SYSTEM_INTEGRATION = True

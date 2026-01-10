@@ -12,7 +12,7 @@ Exports principales:
 - SignalCoordinator: Coordinación inteligente de señales
 
 Uso básico:
-    from position_manager import PositionTracker, ExecutionMonitor, SignalCoordinator
+    from execution.position_manager import PositionTracker, ExecutionMonitor, SignalCoordinator
     
     tracker = PositionTracker()
     monitor = ExecutionMonitor(tracker)
@@ -141,10 +141,3 @@ def get_version_info():
         },
         'status': 'READY'
     }
-
-
-# =============================================================================
-# 📝 NOTA
-# =============================================================================
-# Para probar el package, ejecuta desde la raíz del proyecto:
-#   python test_position_manager.py

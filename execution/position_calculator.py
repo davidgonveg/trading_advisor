@@ -25,7 +25,7 @@ import numpy as np
 import pandas as pd
 
 # Importar el nuevo calculador adaptativo
-from adaptive_targets import AdaptiveTakeProfitCalculator, AdaptiveTarget
+from execution.adaptive_targets import AdaptiveTakeProfitCalculator, AdaptiveTarget
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

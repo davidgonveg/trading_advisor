@@ -35,7 +35,7 @@ import html
 
 # Importar configuración y módulos del sistema
 import config
-from scanner import TradingSignal
+from analysis.scanner import TradingSignal
 
 # Configurar logging
 logging.basicConfig(level=getattr(logging, config.LOG_LEVEL, 'INFO'))

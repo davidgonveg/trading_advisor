@@ -23,9 +23,7 @@ from typing import Dict, List, Optional, Any, TYPE_CHECKING
 from uuid import uuid4
 import json
 
-# Añadir path del proyecto para imports
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
+# sys.path hack removed
 
 # Imports de position_manager
 from .models import (

@@ -31,8 +31,8 @@ import pytz
 
 # Importar módulos del sistema
 import config
-from scanner import SignalScanner, TradingSignal
-from indicators import TechnicalIndicators
+from analysis.scanner import SignalScanner, TradingSignal
+from analysis.indicators import TechnicalIndicators
 
 # Configurar logging
 logger = logging.getLogger(__name__)

@@ -518,7 +518,7 @@ def integrate_smart_features():
             rate_limiter.wait_if_needed()
             
             # Importar aquí para evitar circular imports
-            from indicators import TechnicalIndicators
+            from analysis.indicators import TechnicalIndicators
             indicators = TechnicalIndicators()
             
             # Registrar request

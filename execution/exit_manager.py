@@ -31,9 +31,9 @@ import os
 import pytz
 
 # Importar módulos del sistema
-from scanner import TradingSignal, SignalScanner
-from indicators import TechnicalIndicators
-from position_calculator import PositionPlan
+from analysis.scanner import TradingSignal, SignalScanner
+from analysis.indicators import TechnicalIndicators
+from execution.position_calculator import PositionPlan
 import config
 
 logging.basicConfig(level=logging.INFO)
@@ -775,8 +775,8 @@ def demo_exit_manager_with_real_position():
     print("=" * 60)
     
     try:
-        from scanner import SignalScanner, TradingSignal
-        from position_calculator import PositionCalculator
+        from analysis.scanner import SignalScanner, TradingSignal
+        from execution.position_calculator import PositionCalculator
         
         scanner = SignalScanner()
         exit_manager = ExitManager("demo_positions.json")

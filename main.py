@@ -38,18 +38,18 @@ import pytz
 # Importaciones del sistema
 try:
     import config
-    from scanner import SignalScanner, TradingSignal
-    from telegram_bot import TelegramBot
-    from exit_manager import ExitManager
+    from analysis.scanner import SignalScanner, TradingSignal
+    from services.telegram_bot import TelegramBot
+    from execution.exit_manager import ExitManager
     
     # 🆕 V3.1: Nuevos componentes para extended hours
-    from continuous_collector import ContinuousDataCollector, CollectionStatus
-    from gap_detector import GapDetector
-    from data_validator import DataValidator, ValidationLevel
+    from services.continuous_collector import ContinuousDataCollector, CollectionStatus
+    from analysis.gap_detector import GapDetector
+    from services.data_validator import DataValidator, ValidationLevel
     
     # Position Management V3.0 (si está disponible)
     try:
-        from dynamic_monitor import DynamicMonitor
+        from services.dynamic_monitor import DynamicMonitor
         DYNAMIC_MONITOR_AVAILABLE = True
     except ImportError:
         DYNAMIC_MONITOR_AVAILABLE = False

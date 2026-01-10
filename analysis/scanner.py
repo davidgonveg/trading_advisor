@@ -24,8 +24,8 @@ from dataclasses import dataclass
 import warnings
 
 # Importar nuestros módulos
-from indicators import TechnicalIndicators
-# from position_calculator import PositionCalculatorV3, PositionPlan
+from analysis.indicators import TechnicalIndicators
+# from execution.position_calculator import PositionCalculatorV3, PositionPlan
 import config
 
 
@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 try:
     import config
     if getattr(config, 'USE_ADAPTIVE_TARGETS', False):
-        from position_calculator import PositionCalculatorV3, PositionPlan
+        from execution.position_calculator import PositionCalculatorV3, PositionPlan
         USE_V3 = True
         logger.info("🎯 Scanner: Targets adaptativos V3.0 ACTIVADOS")
     else:
@@ -90,7 +90,7 @@ class SignalScanner:
         if USE_V3:
             self.position_calc = PositionCalculatorV3()
         else:
-            from position_calculator import PositionCalculatorV3 as PositionCalculatorV2
+            from execution.position_calculator import PositionCalculatorV3 as PositionCalculatorV2
             self.position_calc = PositionCalculator()
         
         # Configurar zona horaria del mercado (desde config que lee .env)

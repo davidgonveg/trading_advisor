@@ -21,9 +21,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple, Any, TYPE_CHECKING
 
-# Añadir path del proyecto para imports
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
+# sys.path hack removed
 
 # Imports de position_manager
 from .models import (
@@ -38,9 +36,9 @@ from .execution_monitor import ExecutionMonitor
 
 # Imports condicionales
 if TYPE_CHECKING:
-    from scanner import TradingSignal, SignalScanner
-    from telegram_bot import TelegramBot
-    from position_calculator import PositionPlan
+    from analysis.scanner import TradingSignal, SignalScanner
+    from services.telegram_bot import TelegramBot
+    from execution.position_calculator import PositionPlan
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
