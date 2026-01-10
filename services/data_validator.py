@@ -46,7 +46,9 @@ import yfinance as yf
 try:
     import config
     from indicators import TechnicalIndicators
+    from data.manager import DataManager # 🆕 V3.3
     from gap_detector import GapDetector, DataQualityReport
+
     from database.connection import get_connection, get_gap_reports
     
     SYSTEM_INTEGRATION = True
@@ -148,13 +150,17 @@ class DataValidator:
         
         # Componentes del sistema si están disponibles
         self.indicators = None
+        self.data_manager = None
         self.gap_detector = None
         self.database_available = False
+
         
         if SYSTEM_INTEGRATION:
             try:
                 self.indicators = TechnicalIndicators()
+                self.data_manager = DataManager(vars(config)) # 🆕 V3.3
                 self.gap_detector = GapDetector()
+
                 
                 # Verificar base de datos
                 conn = get_connection()
@@ -321,11 +327,16 @@ class DataValidator:
     def _get_symbol_data(self, symbol: str, days_back: int) -> Optional[pd.DataFrame]:
         """Obtener datos del símbolo para validación"""
         try:
-            if self.indicators:
-                # Usar sistema integrado
-                indicators_data = self.indicators.get_all_indicators(symbol)
-                if 'market_data' in indicators_data:
-                    return indicators_data['market_data']
+            if self.indicators and self.data_manager:
+                # Usar sistema integrado V3.3
+                market_data = self.data_manager.get_data(
+                    symbol=symbol,
+                    timeframe="15m",
+                    days=days_back
+                )
+                if market_data is not None and not market_data.empty:
+                    return market_data
+
             
             # Fallback: usar yfinance directamente
             logger.info(f"📊 Descargando datos para {symbol} via yfinance fallback")

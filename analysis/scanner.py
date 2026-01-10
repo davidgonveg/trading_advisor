@@ -25,6 +25,7 @@ import warnings
 
 # Importar nuestros módulos
 from analysis.indicators import TechnicalIndicators
+from data.manager import DataManager
 # from execution.position_calculator import PositionCalculatorV3, PositionPlan
 import config
 
@@ -93,9 +94,12 @@ class SignalScanner:
             from execution.position_calculator import PositionCalculatorV3 as PositionCalculatorV2
             self.position_calc = PositionCalculator()
         
-        # Configurar zona horaria del mercado (desde config que lee .env)
-        self.market_tz = pytz.timezone(config.MARKET_TIMEZONE)
+        # Configurar zona horaria del mercado        # Inicializar componentes
+        self.market_tz = pytz.timezone(getattr(config, 'MARKET_TIMEZONE', 'US/Eastern'))
+        self.indicators = TechnicalIndicators()
+        self.data_manager = DataManager(vars(config)) # 🆕 V3.3: Centralized Data Manager
         
+        # Inicializar calculadora de posiciones
         # Cache para evitar recálculos
         self.cache = {}
         self.cache_timeout = 300  # 5 minutos
@@ -538,11 +542,21 @@ class SignalScanner:
         try:
             logger.info(f"🔍 Escaneando {symbol}...")
             
-            # Obtener todos los indicadores
-            indicators = self.indicators.get_all_indicators(
+            # Obtener datos de mercado (Centralized Data Manager)
+            market_data = self.data_manager.get_data(
                 symbol=symbol,
-                period=config.TIMEFRAME,
+                timeframe=config.TIMEFRAME,
                 days=config.HISTORY_DAYS
+            )
+            
+            if market_data is None or market_data.empty:
+                logger.warning(f"⚠️ {symbol}: No hay datos de mercado disponibles")
+                return None
+
+            # Calcular todos los indicadores
+            indicators = self.indicators.calculate_all_indicators(
+                data=market_data,
+                symbol=symbol
             )
             
             current_price = indicators['current_price']
@@ -582,14 +596,13 @@ class SignalScanner:
             if entry_quality != "NO_TRADE":
                 try:
                     # ✅ STEP 1: Obtener market_data antes de llamar V3.0
-                    market_data = None
-                    try:
-                        # Obtener datos OHLCV para análisis técnico adaptativo
-                        market_data = self.indicators.get_market_data(symbol, period="15m", days=30)
-                        logger.debug(f"✅ Market data obtenido para {symbol}: {len(market_data)} registros")
-                    except Exception as data_error:
-                        logger.warning(f"⚠️ Error obteniendo market data para {symbol}: {data_error}")
-                        market_data = None
+                    # ✅ STEP 1: Obtener market_data (Reutilizado de indicators)
+                    market_data = indicators.get('market_data')
+                    if market_data is None or market_data.empty:
+                        logger.warning(f"⚠️ {symbol}: Market data no disponible en indicadores")
+                        position_plan = None
+                        # Don't return here, let flow continue to V3 check which handles None
+
                     
                     # ✅ STEP 2: Llamar V3.0 con TODOS los parámetros necesarios
                     if USE_V3:

@@ -46,6 +46,8 @@ try:
     from services.continuous_collector import ContinuousDataCollector, CollectionStatus
     from analysis.gap_detector import GapDetector
     from services.data_validator import DataValidator, ValidationLevel
+    from data.manager import DataManager # 🆕 V3.3
+
     
     # Position Management V3.0 (si está disponible)
     try:
@@ -787,17 +789,28 @@ def run_gap_analysis():
             print(f"\n🎯 {symbol}:")
             
             # Obtener datos recientes
+            # Obtener datos recientes via DataManager
             from indicators import TechnicalIndicators
-            indicators = TechnicalIndicators()
-            data = indicators.get_all_indicators(symbol)
+            from data.manager import DataManager
             
-            if 'market_data' in data and not data['market_data'].empty:
+            # Inicializar componentes
+            data_manager = DataManager(vars(config))
+            indicators = TechnicalIndicators()
+            
+            # 1. Fetch Data
+            market_data = data_manager.get_data(symbol, "15m", 30)
+            
+            if market_data is not None and not market_data.empty:
+                # 2. Calculate Indicators (opcional si solo queremos analizar gaps en raw data)
+                # Pero GapDetector suele trabajar sobre el dataframe.
+                
                 # Generar reporte de calidad
                 report = gap_detector.analyze_data_quality(
-                    data['market_data'],
+                    market_data,
                     symbol,
                     expected_interval_minutes=15
                 )
+
                 
                 print(f"   Gaps detectados: {report.total_gaps}")
                 

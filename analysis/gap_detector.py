@@ -367,7 +367,9 @@ class GapDetector:
         """Determinar si el gap se puede rellenar de forma confiable"""
         try:
             # Gaps muy largos son difíciles de rellenar
-            if duration_minutes > 72 * 60:  # > 72 horas
+            max_fill_hours = self.gap_config.get('REAL_DATA_CONFIG', {}).get('MAX_GAP_TO_FILL_HOURS', 168)
+            if duration_minutes > max_fill_hours * 60:
+                logger.debug(f"Gap too large to fill: {duration_minutes/60:.1f}h > {max_fill_hours}h")
                 return False
             
             # API failures son problemáticos

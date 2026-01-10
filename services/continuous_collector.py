@@ -46,7 +46,9 @@ import json
 try:
     import config
     from analysis.indicators import TechnicalIndicators
+    from data.manager import DataManager # 🆕 V3.3
     from analysis.gap_detector import GapDetector, Gap
+
     from database.connection import get_connection, save_indicators_data, save_continuous_data
     
     SYSTEM_INTEGRATION = True
@@ -122,13 +124,17 @@ class ContinuousDataCollector:
         
         # Componentes del sistema
         self.indicators = None
+        self.data_manager = None
         self.gap_detector = None
         self.database_available = False
+
         
         if SYSTEM_INTEGRATION:
             try:
                 self.indicators = TechnicalIndicators()
+                self.data_manager = DataManager(vars(config)) # 🆕 V3.3
                 self.gap_detector = GapDetector()
+
                 # Verificar base de datos
                 conn = get_connection()
                 if conn:
@@ -298,10 +304,23 @@ class ContinuousDataCollector:
             self.last_api_call[symbol] = time.time()
             
             # Recolectar datos
-            if self.indicators:
-                # Usar sistema integrado
-                indicators_data = self.indicators.get_all_indicators(symbol)
+            if self.indicators and self.data_manager:
+                # Usar sistema integrado V3.3
+                
+                # 1. Obtener datos (Fetch via DataManager)
+                market_data = self.data_manager.get_data(
+                    symbol=symbol,
+                    timeframe="15m",
+                    days=30 # Configurable
+                )
+                
+                if market_data is None or market_data.empty:
+                    raise ValueError(f"No data fetched for {symbol}")
+                
+                # 2. Calcular indicadores
+                indicators_data = self.indicators.calculate_all_indicators(market_data, symbol)
                 data_points = indicators_data.get('data_points', 0)
+
                 
                 # Verificar si hay gaps en los nuevos datos
                 gaps_detected = 0
@@ -734,8 +753,13 @@ class ContinuousDataCollector:
             # Analizar cada símbolo
             for symbol in self.symbols:
                 try:
-                    # Obtener datos recientes del símbolo
-                    indicators_data = self.indicators.get_all_indicators(symbol)
+                    # Obtener datos recientes del símbolo via DataManager
+                    market_data = self.data_manager.get_data(symbol, "15m", 30)
+                    if market_data is None or market_data.empty:
+                        continue
+                        
+                    indicators_data = self.indicators.calculate_all_indicators(market_data, symbol)
+
                     
                     if 'market_data' in indicators_data and not indicators_data['market_data'].empty:
                         market_data = indicators_data['market_data']

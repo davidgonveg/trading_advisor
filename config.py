@@ -16,6 +16,11 @@ from pathlib import Path
 # Cargar variables de entorno desde .env
 load_dotenv()
 
+# API Keys para proveedores de datos (Backup Strategy)
+TWELVE_DATA_API_KEY = os.getenv('TWELVE_DATA_API_KEY')
+ALPHA_VANTAGE_API_KEY = os.getenv('ALPHA_VANTAGE_API_KEY')
+POLYGON_API_KEY = os.getenv('POLYGON_API_KEY')
+
 # =============================================================================
 # 📊 CONFIGURACIÓN DE SÍMBOLOS Y MERCADO
 # =============================================================================

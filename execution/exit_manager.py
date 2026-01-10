@@ -33,7 +33,9 @@ import pytz
 # Importar módulos del sistema
 from analysis.scanner import TradingSignal, SignalScanner
 from analysis.indicators import TechnicalIndicators
+from data.manager import DataManager # 🆕 V3.3
 from execution.position_calculator import PositionPlan
+
 import config
 
 logging.basicConfig(level=logging.INFO)
@@ -102,6 +104,8 @@ class ExitManager:
         # Componentes
         self.scanner = SignalScanner()
         self.indicators = TechnicalIndicators()
+        self.data_manager = DataManager(vars(config)) # 🆕 V3.3
+
         
         # Configurar timezone para operaciones de fecha
         self.market_tz = pytz.timezone(config.MARKET_TIMEZONE)
@@ -509,8 +513,14 @@ class ExitManager:
             
             logger.info(f"🔍 Evaluando exit para {symbol} ({position.direction})")
             
-            # Obtener indicadores actuales
-            indicators = self.indicators.get_all_indicators(symbol)
+            # Obtener indicadores actuales via DataManager y Calculate
+            market_data = self.data_manager.get_data(symbol, "15m", 30)
+            if market_data is None or market_data.empty:
+                logger.warning(f"⚠️ {symbol}: No hay datos para evaluar exit")
+                return None
+                
+            indicators = self.indicators.calculate_all_indicators(market_data, symbol)
+
             
             # Actualizar precio actual
             position.current_price = indicators['current_price']
