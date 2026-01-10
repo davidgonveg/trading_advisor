@@ -47,7 +47,7 @@ try:
     import config
     from analysis.indicators import TechnicalIndicators
     from analysis.gap_detector import GapDetector, Gap
-    from database.connection import get_connection, save_indicators_data
+    from database.connection import get_connection, save_indicators_data, save_continuous_data
     
     SYSTEM_INTEGRATION = True
     logger = logging.getLogger(__name__)
@@ -320,6 +320,38 @@ class ContinuousDataCollector:
                         save_indicators_data(indicators_data)
                     except Exception as db_error:
                         logger.warning(f"⚠️ {symbol}: Error guardando en BD: {db_error}")
+                
+                # 🆕 FIX: Guardar también en tabla continuous_data
+                if self.database_available and 'market_data' in indicators_data:
+                    try:
+                        market_data = indicators_data['market_data']
+                        if not market_data.empty:
+                            # Tomar la última vela cerrada y guardarla
+                            last_candle = market_data.iloc[-1]
+                            
+                            # Formatear punto de datos
+                            data_point = {
+                                'timestamp': last_candle.name.isoformat() if hasattr(last_candle.name, 'isoformat') else str(last_candle.name),
+                                'open': float(last_candle['Open']),
+                                'high': float(last_candle['High']),
+                                'low': float(last_candle['Low']),
+                                'close': float(last_candle['Close']),
+                                'volume': int(last_candle['Volume']),
+                                'is_gap_filled': False, # Asumimos real por ahora
+                                'data_source': 'API'
+                            }
+                            
+                            conn_success = save_continuous_data(
+                                symbol=symbol,
+                                timeframe="15m", # Default de indicators.py
+                                data_points=[data_point],
+                                session_type=session.name
+                            )
+                            if conn_success:
+                                logger.debug(f"💾 {symbol}: Datos continuos guardados")
+                            
+                    except Exception as cont_error:
+                        logger.warning(f"⚠️ {symbol}: Error guardando continuous data: {cont_error}")
                 
                 collection_time = (time.time() - start_time) * 1000
                 

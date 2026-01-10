@@ -35,18 +35,18 @@ logger = logging.getLogger(__name__)
 
 
 # 🆕 V3.0: Import calculador híbrido
+# 🆕 V3.0: Import calculador híbrido
 try:
-    import config
-    if getattr(config, 'USE_ADAPTIVE_TARGETS', False):
-        from execution.position_calculator import PositionCalculatorV3, PositionPlan
-        USE_V3 = True
-        logger.info("🎯 Scanner: Targets adaptativos V3.0 ACTIVADOS")
-    else:
-        USE_V3 = False
-        logger.info("📊 Scanner: Usando sistema clásico V2.0")
-except ImportError:
+    from execution.position_calculator import PositionCalculatorV3, PositionPlan
+    USE_V3 = True
+    logger.info("🎯 Scanner: Targets adaptativos V3.0 ACTIVADOS")
+except ImportError as e:
     USE_V3 = False
-    logger.info("⚠️ Scanner: V3.0 no disponible, usando V2.0")
+    logger.info(f"⚠️ Scanner: V3.0 no disponible ({e}), usando V2.0")
+    # Define dummy PositionPlan just in case to avoid NameError if import failed
+    @dataclass
+    class PositionPlan:
+        pass
     
 
 # Suprimir warnings

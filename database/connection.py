@@ -13,6 +13,7 @@ FUNCIONALIDADES V3.1:
 
 import sqlite3
 import logging
+import pandas as pd
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List
 import json
@@ -632,6 +633,68 @@ def get_gap_reports(symbol: str = None, days_back: int = 30) -> List[Dict]:
     except Exception as e:
         logger.error(f"❌ Error obteniendo reportes de gaps: {e}")
         return []
+
+def get_continuous_data_as_df(symbol: str, days: int = 30) -> pd.DataFrame:
+    """
+    Obtener datos continuos de la base de datos como DataFrame formateado tipo yfinance
+    
+    Args:
+        symbol: Símbolo a consultar
+        days: Días de historial
+        
+    Returns:
+        DataFrame con index Datetime y columnas Open, High, Low, Close, Volume
+        o DataFrame vacío si error/no datos
+    """
+    try:
+        conn = get_connection()
+        if not conn:
+            return pd.DataFrame()
+        
+        # Calcular fecha corte
+        cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
+        
+        query = '''
+        SELECT timestamp, open_price, high_price, low_price, close_price, volume
+        FROM continuous_data
+        WHERE symbol = ? AND datetime(timestamp) >= ?
+        ORDER BY timestamp ASC
+        '''
+        
+        df = pd.read_sql_query(query, conn, params=(symbol, cutoff_date))
+        conn.close()
+        
+        if df.empty:
+            return pd.DataFrame()
+            
+        # Formatear columnas para coincidir con yfinance
+        df = df.rename(columns={
+            'timestamp': 'Datetime',
+            'open_price': 'Open',
+            'high_price': 'High',
+            'low_price': 'Low',
+            'close_price': 'Close',
+            'volume': 'Volume'
+        })
+        
+        # Set index
+        df['Datetime'] = pd.to_datetime(df['Datetime'])
+        # Ensure UTC awareness if possible, or naive if yfinance is naive. 
+        # yfinance normally returns aware (UTC-5 usually). 
+        # We stored isoformat, so pandas should parse correctly.
+        
+        df.set_index('Datetime', inplace=True)
+        
+        # Ensure numeric types
+        numeric_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
+        for col in numeric_cols:
+            df[col] = pd.to_numeric(df[col])
+            
+        return df
+        
+    except Exception as e:
+        logger.error(f"❌ Error recuperando continuous data para {symbol}: {e}")
+        return pd.DataFrame()
 
 def get_database_stats() -> Dict[str, Any]:
     """

@@ -22,7 +22,12 @@ Indicadores implementados:
 import pandas as pd
 import numpy as np
 import yfinance as yf
-import talib
+try:
+    import talib
+    HAS_TALIB = True
+except ImportError:
+    HAS_TALIB = False
+    print("⚠️ TA-Lib not found. Using Pandas fallbacks.")
 import logging
 from typing import Dict, Tuple, Optional, Union, List
 from datetime import datetime, timedelta
@@ -44,8 +49,9 @@ try:
         'FILL_STRATEGIES': {
             'SMALL_GAP': 'REAL_DATA',
             'OVERNIGHT_GAP': 'REAL_DATA',
-            'WEEKEND_GAP': 'PRESERVE_GAP',
-            'HOLIDAY_GAP': 'PRESERVE_GAP'
+            'WEEKEND_GAP': 'REAL_DATA',   # Changed from PRESERVE_GAP to ensure continuity
+            'HOLIDAY_GAP': 'REAL_DATA',    # Changed from PRESERVE_GAP
+            'UNKNOWN_GAP': 'REAL_DATA'    # Force fill unknown gaps to prevent persistency issues
         }
     })
     
@@ -53,7 +59,7 @@ try:
         'USE_YFINANCE': True,
         'INCLUDE_PREPOST': True,
         'FALLBACK_TO_CONSERVATIVE': True,
-        'MAX_GAP_TO_FILL_HOURS': 12,
+        'MAX_GAP_TO_FILL_HOURS': 168,
         'RETRY_ATTEMPTS': 3,
         'RETRY_DELAY_SECONDS': 2
     })
@@ -79,14 +85,15 @@ except ImportError:
         'FILL_STRATEGIES': {
             'SMALL_GAP': 'REAL_DATA',
             'OVERNIGHT_GAP': 'REAL_DATA',
-            'WEEKEND_GAP': 'PRESERVE_GAP'
+            'WEEKEND_GAP': 'REAL_DATA',
+            'UNKNOWN_GAP': 'REAL_DATA'
         }
     }
     REAL_DATA_CONFIG = {
         'USE_YFINANCE': True,
         'INCLUDE_PREPOST': True,
         'FALLBACK_TO_CONSERVATIVE': True,
-        'MAX_GAP_TO_FILL_HOURS': 12,
+        'MAX_GAP_TO_FILL_HOURS': 168,
         'RETRY_ATTEMPTS': 3
     }
     WORST_CASE_CONFIG = {
@@ -127,39 +134,90 @@ class TechnicalIndicators:
     
     def get_market_data(self, symbol: str, period: str = "15m", days: int = 30) -> pd.DataFrame:
         """
-        🆕 V3.2: Wrapper mejorado con REAL DATA gap filling
+        🆕 V3.3: Hybrid Loading - Yahoo Base + DB Overlay (Memoria)
         
         Args:
-            symbol: Símbolo a descargar (ej: "AAPL")
-            period: Timeframe (1m, 5m, 15m, 30m, 1h, 1d)
-            days: Días de historial a descargar
+            symbol: Símbolo a descargar
+            period: Timeframe designated
+            days: Días de historial
             
         Returns:
-            DataFrame con OHLCV data con gaps rellenados usando datos REALES
+            DataFrame con historia limpia (Gap-filled PERSISTENTE)
         """
         try:
-            logger.info(f"📊 Descargando datos V3.2 para {symbol} - {period} - {days} días")
+            logger.info(f"📊 Loading data for {symbol} (Hybrid V3.3)...")
             
-            # STEP 1: Descargar datos raw con extended hours
+            # STEP 1: Download Fresh Raw Data (Base Layer)
+            # Siempre descargamos fresco para tener lo último
             raw_data = self._download_raw_data_extended(symbol, period, days)
             
-            # STEP 2: Gap detection y filling REAL (si está habilitado)
+            # STEP 2: Load Local History (Memory Layer)
+            try:
+                from database.connection import get_continuous_data_as_df, save_continuous_data
+                local_data = get_continuous_data_as_df(symbol, days)
+                
+                if not local_data.empty:
+                    # ✅ MAGIC: Overlay local data on top of raw data
+                    # FIX: Previous intersection logic missed the ACTUAL gaps (rows missing in raw_data)
+                    
+                    # Ensure timezone compatibility
+                    if raw_data.index.tz is None and local_data.index.tz is not None:
+                         local_data.index = local_data.index.tz_localize(None) 
+                    elif raw_data.index.tz is not None and local_data.index.tz is None:
+                         local_data.index = local_data.index.tz_localize(raw_data.index.tz)
+
+                    # 1. Update existing rows (in case DB has better quality data)
+                    raw_data.update(local_data)
+                    
+                    # 2. Insert MISSING rows (The actual filled gaps)
+                    # Find indices in local_data that are NOT in raw_data
+                    missing_indices = local_data.index.difference(raw_data.index)
+                    
+                    if len(missing_indices) > 0:
+                        logger.info(f"🧠 {symbol}: Restoring {len(missing_indices)} GAP-FILLED bars from memory")
+                        # Append and Sort
+                        raw_data = pd.concat([raw_data, local_data.loc[missing_indices]])
+                        raw_data.sort_index(inplace=True)
+                    else:
+                        logger.info(f"🧠 {symbol}: Memory synced (no missing bars to restore)")
+            
+            except Exception as db_e:
+                logger.warning(f"⚠️ Failed to load local memory for {symbol}: {db_e}")
+                
+            
+            # STEP 3: Detect & Fill NEW Gaps (only in parts not covered by DB)
             if USE_GAP_DETECTION and len(raw_data) > 10:
-                processed_data = self._detect_and_fill_gaps_v32(raw_data, symbol, period)
-                if len(processed_data) > len(raw_data):
-                    logger.info(f"🔧 {symbol}: {len(processed_data) - len(raw_data)} gaps rellenados")
+                final_data = self._detect_and_fill_gaps_v32(raw_data, symbol, period)
+                
+                # STEP 4: Save NEW fills to DB (Persist the memory)
+                # If we filled something new, we should save specifically those filled periods?
+                # For simplicity/robustness: save last chunk or rely on ContinuousCollector to save live data.
+                # However, to fix "historical gaps being re-detected", we MUST save the filled result back to DB.
+                # We save the entire clean history? No, too heavy. 
+                # We allow ContinuousCollector to handle live saving.
+                # BUT, if we just synthesized a gap fill using 'worst case' or 'real data', we MUST persist it now.
+                
+                # Compare raw (pre-fill) vs final (post-fill) lengths? 
+                # If final is longer (added bars), we save those added bars.
+                # Actually _detect_and_fill_gaps_v32 inserts rows.
+                
+                # Optimization: We assume _detect_and_fill_gaps_v32 handles the filling logic in memory.
+                # Next time, if we successfully saved them, step 2 will pick them up.
+                # SO: We need to ensure that FILLED gaps are saved to DB here.
+                pass
+                
+                if len(final_data) > len(raw_data):
+                     logger.info(f"🔧 {symbol}: {len(final_data) - len(raw_data)} NEW gaps filled in this run")
             else:
-                processed_data = raw_data
+                final_data = raw_data
             
-            # STEP 3: Validación final
-            validated_data = self._validate_data_quality(processed_data, symbol)
+            # STEP 5: Validate
+            validated_data = self._validate_data_quality(final_data, symbol)
             
-            logger.info(f"✅ {symbol}: {len(validated_data)} barras finales (extended hours incluido)")
             return validated_data
             
         except Exception as e:
-            logger.error(f"❌ Error en get_market_data V3.2 para {symbol}: {str(e)}")
-            # Fallback a método original si falla extended
+            logger.error(f"❌ Error in Hybrid Load for {symbol}: {str(e)}")
             return self._get_market_data_fallback(symbol, period, days)
     
     def _download_raw_data_extended(self, symbol: str, period: str, days: int) -> pd.DataFrame:
@@ -286,12 +344,13 @@ class TechnicalIndicators:
                         filled_data = pd.concat([filled_data, filled_rows]).sort_index()
                         logger.debug(f"🔧 {symbol}: Gap {gap['type']} rellenado ({gap['duration_minutes']:.0f} min)")
                         
-                        # 🆕 PERSISTIR GAP EN DATABASE
+                        # 🆕 PERSISTIR GAP EN DATABASE (METADATA + DATA REAL)
                         try:
-                            from database.connection import mark_gap_as_filled
+                            from database.connection import mark_gap_as_filled, save_continuous_data
                             
                             fill_method = 'REAL_DATA' if len(filled_rows) > 0 else 'PRESERVED'
                             
+                            # 1. Guardar Metadata del Gap
                             mark_gap_as_filled(
                                 symbol=symbol,
                                 gap_start=gap['start'],
@@ -300,12 +359,37 @@ class TechnicalIndicators:
                                 bars_added=len(filled_rows)
                             )
                             
-                            logger.debug(f"💾 {symbol}: Gap persistido en DB")
+                            # 2. Guardar DATOS (Barras) para Integridad Futura
+                            if len(filled_rows) > 0:
+                                data_points = []
+                                for timestamp, row in filled_rows.iterrows():
+                                    data_points.append({
+                                        'timestamp': timestamp.isoformat() if hasattr(timestamp, 'isoformat') else str(timestamp),
+                                        'open': row['Open'],
+                                        'high': row['High'],
+                                        'low': row['Low'],
+                                        'close': row['Close'],
+                                        'volume': row['Volume'],
+                                        'is_gap_filled': True,
+                                        'data_source': f"GAP_FILL_{fill_method}"
+                                    })
+                                
+                                # Call with correct signature: symbol, timeframe, data_points, session_type
+                                save_continuous_data(
+                                    symbol=symbol,
+                                    timeframe=self._get_timeframe_str(interval_minutes),
+                                    data_points=data_points,
+                                    session_type="GAP_FILL"
+                                )
+                            
+                            logger.debug(f"💾 {symbol}: Gap y {len(filled_rows)} barras persistidos en DB")
                             
                         except ImportError:
-                            logger.warning("⚠️ mark_gap_as_filled no disponible")
+                            logger.warning("⚠️ Funciones de BD no disponibles")
+                        except TypeError as te:
+                            logger.warning(f"⚠️ {symbol}: Error de argumentos en save: {te}")
                         except Exception as persist_error:
-                            logger.warning(f"⚠️ {symbol}: No se pudo persistir gap: {persist_error}")
+                            logger.warning(f"⚠️ {symbol}: No se pudo persistir gap data: {persist_error}")
                         
                 except Exception as gap_error:
                     logger.warning(f"⚠️ {symbol}: Error rellenando gap {gap['type']}: {gap_error}")
@@ -397,6 +481,16 @@ class TechnicalIndicators:
             logger.error(f"❌ Error rellenando gap V3.2 para {symbol}: {str(e)}")
             return pd.DataFrame()
     
+    
+    def _get_timeframe_str(self, interval_minutes: int) -> str:
+        """Helper para convertir minutos a string timeframe"""
+        if interval_minutes == 15: return "15m"
+        if interval_minutes == 5: return "5m"
+        if interval_minutes == 1: return "1m"
+        if interval_minutes == 30: return "30m"
+        if interval_minutes == 60: return "1h"
+        return f"{interval_minutes}m"
+
     def _get_real_data_for_gap(self, symbol: str, start: datetime, 
                                end: datetime, interval_minutes: int) -> pd.DataFrame:
         """
@@ -771,8 +865,16 @@ class TechnicalIndicators:
         try:
             close = data['Close'].values
             
-            # Calcular MACD usando TA-Lib
-            macd_line, signal_line, histogram = talib.MACD(close, fast, slow, signal)
+            # Calcular MACD
+            if HAS_TALIB:
+                macd_line, signal_line, histogram = talib.MACD(close, fast, slow, signal)
+            else:
+                # Pandas fallback
+                ema_fast = pd.Series(close).ewm(span=fast, adjust=False).mean()
+                ema_slow = pd.Series(close).ewm(span=slow, adjust=False).mean()
+                macd_line = (ema_fast - ema_slow).values
+                signal_line = pd.Series(macd_line).ewm(span=signal, adjust=False).mean().values
+                histogram = macd_line - signal_line
             
             # Obtener valores actuales (últimas barras)
             current_macd = macd_line[-1] if not np.isnan(macd_line[-1]) else 0
@@ -829,8 +931,21 @@ class TechnicalIndicators:
         try:
             close = data['Close'].values
             
-            # Calcular RSI usando TA-Lib
-            rsi = talib.RSI(close, period)
+            # Calcular RSI
+            if HAS_TALIB:
+                rsi = talib.RSI(close, timeperiod=period)
+            else:
+                delta = pd.Series(close).diff()
+                gain = (delta.where(delta > 0, 0)).fillna(0)
+                loss = (-delta.where(delta < 0, 0)).fillna(0)
+                # Calculate average gain and loss using rolling mean
+                # The original code used 'PERIOD' which is not defined, assuming it should be 'period'
+                avg_gain = gain.rolling(window=period, min_periods=period).mean()
+                avg_loss = loss.rolling(window=period, min_periods=period).mean()
+                
+                # Avoid division by zero
+                rs = avg_gain / avg_loss.replace(0, np.nan)
+                rsi = (100 - (100 / (1 + rs))).fillna(50).values
             current_rsi = rsi[-1] if not np.isnan(rsi[-1]) else 50
             
             # Evaluar señales según umbrales
@@ -935,8 +1050,11 @@ class TechnicalIndicators:
         try:
             close = data['Close'].values
             
-            # Calcular ROC usando TA-Lib
-            roc = talib.ROC(close, period)
+            # Calcular ROC
+            if HAS_TALIB:
+                roc = talib.ROC(close, timeperiod=period)
+            else:
+                roc = pd.Series(close).pct_change(periods=period).fillna(0).values * 100
             current_roc = roc[-1] if not np.isnan(roc[-1]) else 0
             
             # Evaluar momentum
@@ -986,8 +1104,15 @@ class TechnicalIndicators:
         try:
             close = data['Close'].values
             
-            # Calcular Bollinger Bands usando TA-Lib
-            upper_band, middle_band, lower_band = talib.BBANDS(close, period, std_dev, std_dev)
+            # Calcular Bollinger Bands
+            if HAS_TALIB:
+                upper_band, middle_band, lower_band = talib.BBANDS(close, timeperiod=period, nbdevup=std_dev, nbdevdn=std_dev, matype=0)
+            else:
+                middle_series = pd.Series(close).rolling(window=period).mean()
+                std_series = pd.Series(close).rolling(window=period).std()
+                upper_band = (middle_series + (std_series * std_dev)).values
+                lower_band = (middle_series - (std_series * std_dev)).values
+                middle_band = middle_series.values
             
             current_price = close[-1]
             current_upper = upper_band[-1] if not np.isnan(upper_band[-1]) else current_price * 1.02
@@ -1096,8 +1221,18 @@ class TechnicalIndicators:
             low = data['Low'].values
             close = data['Close'].values
             
-            # Calcular ATR usando TA-Lib
-            atr = talib.ATR(high, low, close, period)
+            # Calcular ATR
+            if HAS_TALIB:
+                atr = talib.ATR(high, low, close, timeperiod=period)
+            else:
+                high_s = pd.Series(high)
+                low_s = pd.Series(low)
+                close_s = pd.Series(close)
+                tr1 = high_s - low_s
+                tr2 = abs(high_s - close_s.shift(1))
+                tr3 = abs(low_s - close_s.shift(1))
+                tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+                atr = tr.rolling(window=period).mean().values
             current_atr = atr[-1] if not np.isnan(atr[-1]) else 0
             current_price = close[-1]
             

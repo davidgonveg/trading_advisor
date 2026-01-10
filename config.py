@@ -208,7 +208,7 @@ CONTINUOUS_DATA_CONFIG = {
     'AUTO_FILL_GAPS': True,
     'MAX_GAP_HOURS': 4,  # gaps > 4h se consideran overnight
     'FORWARD_FILL_OVERNIGHT': False,  # 🔧 CAMBIADO: No usar forward fill
-    'PRESERVE_WEEKEND_GAPS': True,  # ✅ CORRECTO: preservar gaps reales
+    'PRESERVE_WEEKEND_GAPS': False,  # ✅ CORRECTO: forzar relleno para persistencia
     'QUALITY_CHECK_BEFORE_BACKTEST': True
 }
 
@@ -226,8 +226,9 @@ GAP_DETECTION_CONFIG = {
     'FILL_STRATEGIES': {
         'SMALL_GAP': 'REAL_DATA',        # ✅ Intentar datos reales primero
         'OVERNIGHT_GAP': 'REAL_DATA',    # ✅ CRÍTICO: datos reales para stops
-        'WEEKEND_GAP': 'PRESERVE_GAP',   # ✅ NO rellenar (mercado cerrado)
-        'HOLIDAY_GAP': 'PRESERVE_GAP'    # ✅ NO rellenar (mercado cerrado)
+        'WEEKEND_GAP': 'REAL_DATA',   # ✅ Rellenar para mantener estado
+        'HOLIDAY_GAP': 'REAL_DATA',    # ✅ Rellenar para mantener estado
+        'UNKNOWN_GAP': 'REAL_DATA'     # ✅ Rellenar siempre
     },
     
     # 🆕 CONFIGURACIÓN PARA DESCARGA DE DATOS REALES
@@ -235,7 +236,7 @@ GAP_DETECTION_CONFIG = {
         'USE_YFINANCE': True,
         'INCLUDE_PREPOST': True,              # ✅ Extended hours
         'FALLBACK_TO_CONSERVATIVE': True,     # Si falla, usar worst-case
-        'MAX_GAP_TO_FILL_HOURS': 12,         # No rellenar gaps > 12h
+        'MAX_GAP_TO_FILL_HOURS': 168,         # Permitir gaps de 1 semana (weekends)
         'RETRY_ATTEMPTS': 3,                  # Reintentos si falla API
         'RETRY_DELAY_SECONDS': 2,            # Delay entre reintentos
         'USE_WORST_CASE_ON_FAIL': True       # Usar worst-case si falla todo

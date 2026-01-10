@@ -16,7 +16,11 @@ FILOSOFÍA: Cada señal es única, cada target debe ser único.
 
 import numpy as np
 import pandas as pd
-import talib
+try:
+    import talib
+    HAS_TALIB = True
+except ImportError:
+    HAS_TALIB = False
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
 import logging
