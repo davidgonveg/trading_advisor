@@ -5,6 +5,7 @@ from datetime import timedelta
 
 from analysis.scanner import Scanner
 from analysis.risk import RiskManager
+from analysis.indicators import TechnicalIndicators
 from analysis.signal import Signal
 from trading.manager import TradeManager, TradePlan
 from backtesting.account import Account
@@ -15,6 +16,7 @@ class BacktestEngine:
     def __init__(self, initial_capital: float = 10000.0):
         self.account = Account(initial_capital)
         self.scanner = Scanner()
+        self.indicators = TechnicalIndicators()
         self.risk_manager = RiskManager()
         self.trade_manager = TradeManager()
         
@@ -25,6 +27,10 @@ class BacktestEngine:
     def load_data(self, data_map: Dict[str, pd.DataFrame]):
         """Load 1H data"""
         self.market_data = data_map
+
+    def load_daily_data(self, daily_map: Dict[str, pd.DataFrame]):
+        """Load Daily data"""
+        self.daily_data = daily_map
 
     def run(self, start_date=None, end_date=None, data_manager=None):
         """
@@ -37,20 +43,33 @@ class BacktestEngine:
         # 1. Generate Signals for all symbols
         all_signals: List[Signal] = []
         
-        for symbol, df in self.market_data.items():
+        for symbol, df_raw in self.market_data.items():
             logger.info(f"Scanning {symbol}...")
             
             # Fetch Daily Data for this symbol
             df_daily = self.daily_data.get(symbol, pd.DataFrame())
             
+            # CALCULATE INDICATORS
+            # The Scanner expects a DataFrame with columns: RSI, ADX, BB_*, etc.
+            # We calculate them on the full dataset at once (vectorized) for speed
+            try:
+                df = self.indicators.calculate_all(df_raw)
+                # Update market data with analyzed version so 'process_candle' has access if needed?
+                # Actually process_candle uses OHLC which are preserved.
+                self.market_data[symbol] = df # Save back
+            except Exception as e:
+                logger.error(f"Failed to calculate indicators for {symbol}: {e}")
+                continue
+
             # Run Scanner
             try:
-                import traceback
+                # Passing df_daily for SMA trend filter
                 signals = self.scanner.find_signals(symbol, df, df_daily) 
                 all_signals.extend(signals)
             except Exception as e:
                 logger.error(f"Failed to scan {symbol}: {e}")
-                logger.error(traceback.format_exc())
+                # import traceback
+                # logger.error(traceback.format_exc())
             
         # Sort signals by time
         all_signals.sort(key=lambda s: s.timestamp)

@@ -115,24 +115,26 @@ class TechnicalIndicators:
         if 'Volume' not in df.columns:
             return pd.Series(np.nan, index=df.index)
             
+        # Session VWAP (Resets at the start of each day)
+        # 1. Calculate Typical Price
         typical_price = (df['High'] + df['Low'] + df['Close']) / 3
-        # Cumulative VWAP usually resets daily? 
-        # For indicators on continuous timeframe, standard is rolling or cumulative.
-        # Simple implementation: Cumulative from start of series (or window?)
-        # Standard Intraday VWAP resets at market open.
-        # Here we implement a generic cumulative or window?
-        # Let's do a simple rolling VWAP for trend analysis or just full cumulative.
-        # Strategy usually needs Anchor VWAP or session VWAP.
-        # Implementing Rolling VWAP (window=period) might be better for continuous?
-        # No, VWAP is usually Session based.
-        # Let's approximate by grouping by day?
-        # COMPLEXITY: Continuous data spans days.
-        # Let's use simple rolling for now to match legacy behavior roughly or better session-based.
         
-        # Legacy implementation was cumulative.
-        cumulative_pv = (typical_price * df['Volume']).cumsum()
-        cumulative_volume = df['Volume'].cumsum()
-        return cumulative_pv / cumulative_volume
+        # 2. Calculate PV (Price * Volume)
+        pv = typical_price * df['Volume']
+        
+        # 3. Group by Date and calculate Cumulative Sums
+        # This requires the index to be a DatetimeIndex
+        df_temp = pd.DataFrame(index=df.index)
+        df_temp['pv'] = pv
+        df_temp['vol'] = df['Volume']
+        df_temp['date'] = df.index.date
+        
+        # Group by date and cumsum
+        # We use transform to keep the original index structure
+        df_temp['cum_pv'] = df_temp.groupby('date')['pv'].cumsum()
+        df_temp['cum_vol'] = df_temp.groupby('date')['vol'].cumsum()
+        
+        return df_temp['cum_pv'] / df_temp['cum_vol']
 
     def sma(self, series: pd.Series, period: int) -> pd.Series:
         if HAS_TALIB:

@@ -71,11 +71,14 @@ def run_live_loop():
         
         for symbol in SYMBOLS:
             try:
-                # A. Update Data
+                # A. Update Data (Hourly and Daily)
                 data_mgr.update_data(symbol)
+                data_mgr.update_daily_data(symbol)
                 
                 # B. Get Data
                 df_raw = data_mgr.get_latest_data(symbol)
+                df_daily = data_mgr.get_latest_daily_data(symbol)
+                
                 if df_raw.empty:
                     logger.warning(f"Skipping {symbol}: No data.")
                     continue
@@ -88,7 +91,8 @@ def run_live_loop():
                 
                 # E. Scan
                 # Only scan the LATEST candle in live mode to avoid spamming historical signals
-                signals = scanner.find_signals(symbol, df_analyzed, scan_latest=True)
+                # Pass df_daily for Trend Filter
+                signals = scanner.find_signals(symbol, df_analyzed, df_daily=df_daily, scan_latest=True)
                 
                 if signals:
                     logger.info(f"SIGNALS FOUND FOR {symbol}: {len(signals)}")
@@ -112,13 +116,17 @@ def run_live_loop():
         
         logger.info("--- CYCLE COMPLETE ---")
         
-        # Determine sleep time (Next Hour Mark)
-        # Sleep 60 seconds for now to verify loop, or calculate next hour.
-        # For production: Sleep until next XX:05 or similar.
-        # We will sleep 10m for simplicity or use logic.
+        # Smart Sleep: Wait until next hour mark + 10 seconds buffer
+        now = datetime.now()
+        next_hour = (now + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
+        sleep_seconds = (next_hour - now).total_seconds() + 10
         
-        logger.info("Sleeping... (Press Ctrl+C to stop)")
-        time.sleep(60 * 60) # 1 Hour
+        # Safety check for negative sleep (if cycle took > 1 hour)
+        if sleep_seconds <= 0:
+            sleep_seconds = 60 # Default short sleep
+            
+        logger.info(f"Sleeping {sleep_seconds:.0f} seconds until {next_hour}...")
+        time.sleep(sleep_seconds)
 
 def run_scan():
     """
@@ -156,10 +164,44 @@ def main():
     elif args.mode == 'scan':
         run_scan()
     elif args.mode == 'backtest':
-        print("Backtest mode not fully linked yet in main.py. Use legacy or wait for update.")
-        # from backtesting.engine import BacktestEngine
-        # engine = BacktestEngine()
-        # engine.run()
+        logger.info("--- STARTING BACKTEST MODE ---")
+        from backtesting.engine import BacktestEngine
+        
+        # 1. Load Data
+        data_mgr = DataManager()
+        market_data = {}
+        daily_data = {}
+        
+        print("Loading Historical Data...")
+        for symbol in SYMBOLS:
+            try:
+                # Ensure we have data (Optional: could force update)
+                # data_mgr.update_data(symbol) 
+                
+                df_hourly = data_mgr.get_latest_data(symbol, days=365) # 1 Year
+                df_daily = data_mgr.get_latest_daily_data(symbol, days=365)
+                
+                if not df_hourly.empty:
+                    market_data[symbol] = df_hourly
+                    daily_data[symbol] = df_daily
+                    print(f"Loaded {symbol}: {len(df_hourly)} hours, {len(df_daily)} days.")
+                else:
+                    print(f"Warning: No data for {symbol}")
+            except Exception as e:
+                logger.error(f"Error loading {symbol}: {e}")
+                
+        # 2. Init Engine
+        engine = BacktestEngine(initial_capital=10000.0)
+        engine.load_data(market_data)
+        engine.load_daily_data(daily_data)
+        
+        # 3. Run
+        report = engine.run()
+        
+        print("\n--- BACKTEST RESULTS ---")
+        print(f"Final Equity: ${report['final_equity']:.2f}")
+        print(f"Trades: {len(report['trades'])}")
+        print("------------------------")
 
 if __name__ == "__main__":
     main()

@@ -107,6 +107,66 @@ class DataManager:
             
         self.db.save_bulk_candles(symbol, "1h", candles)
         logger.info(f"Stored {len(candles)} candles for {symbol}")
+
+    def get_latest_daily_data(self, symbol: str, days: int = 730) -> pd.DataFrame:
+        """
+        Get daily data for analysis (Trend Filter).
+        """
+        df = self.db.load_market_data(symbol, "1d")
+        
+        if df.empty:
+            logger.info(f"No local DAILY data for {symbol}, initializing fetch...")
+            self.update_daily_data(symbol)
+            df = self.db.load_market_data(symbol, "1d")
+            
+        return df
+
+    def update_daily_data(self, symbol: str):
+        """
+        Fetches latest DAILY data from Provider and updates DB.
+        """
+        logger.info(f"Updating DAILY data for {symbol}...")
+        
+        # Logic: Find last DB timestamp for DAILY
+        # We need a way to check last Daily timestamp.
+        # Assuming load_market_data works for "1d", we can just check max index.
+        df_old = self.db.load_market_data(symbol, "1d")
+        last_ts = df_old.index.max().to_pydatetime() if not df_old.empty else None
+        
+        start_date = None
+        days_back = 365 * 2 # 2 Years history for daily
+        
+        if last_ts:
+            start_date = (last_ts - timedelta(days=1)).strftime('%Y-%m-%d')
+            days_back = 0
+            
+        df_new = self.provider.fetch_data(
+            symbol, 
+            "1d", 
+            start_date=start_date, 
+            days_back=days_back if not start_date else 0
+        )
+        
+        if df_new is None or df_new.empty:
+            logger.warning(f"No new DAILY data fetched for {symbol}")
+            return
+            
+        # Save
+        candles = []
+        for ts, row in df_new.iterrows():
+            c = Candle(
+                timestamp=ts,
+                open=row['Open'],
+                high=row['High'],
+                low=row['Low'],
+                close=row['Close'],
+                volume=row['Volume']
+            )
+            candles.append(c)
+            
+        self.db.save_bulk_candles(symbol, "1d", candles)
+        logger.info(f"Stored {len(candles)} DAILY candles for {symbol}")
+
         
     def resolve_gaps(self, symbol: str):
         """

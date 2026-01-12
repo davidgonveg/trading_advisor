@@ -139,10 +139,59 @@ class Scanner:
         else:
             start_idx = 1
             
+        # --- PREPARE DAILY SMA LOOKUP ---
+        # Strategy requires comparing price to Daily SMA 50.
+        # We need to map each Hourly timestamp to the RELEVANT Daily SMA (Prior Day Close).
+        
+        daily_sma_series = None
+        if df_daily is not None and not df_daily.empty:
+            # 1. Calc SMA 50 if not present
+            if 'SMA_50' not in df_daily.columns:
+                # We do a quick calc here to avoid dependency circularity or use simple rolling
+                daily_sma_series = df_daily['Close'].rolling(window=50).mean()
+            else:
+                daily_sma_series = df_daily['SMA_50']
+                
+            # 2. Reindex to match hourly timestamps (Forward Fill)
+            # This is tricky: For 10:00 AM today, we want YESTERDAY's SMA? 
+            # Or Today's (LIVE) SMA?
+            # Strategy: "Tendencia macro". Usually prior close is safer (stable).
+            # But standard indicators often use "Current Daily SMA" (updates tick by tick).
+            # Given we are in "Scanner", let's use the LATEST AVAILABLE closed daily candle logic logic via reindex(method='ffill').
+            # If df_daily index is dates (00:00), ffill will propagate yesterday's value until a new date appears.
+            # However, if we run this at 15:00, and today's valid entry in df_daily is 00:00, we get today's open?
+            # Let's assume df_daily has Date index.
+            
+            # Efficient Lookup:
+            # Reindex daily series to hourly timestamps using ffill
+            # This fills "Today 10am" with "Today 00:00" value? 
+            # If "Today 00:00" represents the CLOSE of today (which it shouldn't if it's forming), 
+            # standard daily data usually has Today's row updating.
+            # Backtest data usually has Today's row FINALIZED. 
+            # To avoid peek-ahead in backtest, we must shift daily data by 1 day?
+            # i.e., at 2023-01-05, we see data of 2023-01-04.
+            
+            # SAFE APPROACH: Use shift(1) on daily data before reindexing.
+            # This guarantees we only use fully closed prior candles.
+            shifted_daily = daily_sma_series.shift(1)
+            
+            # Resample daily to hourly to match the hourly index
+            # This creates a series aligned with scan timestamps
+            # We reindex using 'ffill' to propagate the last daily value forward
+            sma_reindexed = shifted_daily.reindex(df.index, method='ffill')
+        else:
+            if scan_latest: # Warn only if we are live
+                logger.warning(f"No Daily Data provided for {symbol}. Falling back to Hourly SMA (Strategy Divergence!)")
+            sma_reindexed = df.get('SMA_50', pd.Series([0]*len(df), index=df.index))
+            
         for i in range(start_idx, len(df)):
             current = df.iloc[i]
             prev = df.iloc[i-1]
             ts = timestamps[i]
+            
+            # Get Daily SMA for this specific timestamp
+            # If we failed to build reindexed, default to 0
+            sma_50_val = sma_reindexed.iloc[i] if daily_sma_series is not None else current.get('SMA_50', 0)
             
             # --- FILTER CHECK ---
             # 1. ADX
@@ -158,7 +207,7 @@ class Scanner:
             # SMA Trend Filter (Daily) - Using hourly SMA50 as proxy if separate daily not passed, 
             # OR better: if 'SMA_50' in dataframe is actually required to be Daily SMA mapped to hourly.
             # Assuming 'SMA_50' column IS the daily 50SMA (mapped) as per Strategy requirements.
-            pass_sma_long = current['Close'] > current['SMA_50'] 
+            pass_sma_long = current['Close'] > sma_50_val
             
             vwap_val = current.get('VWAP')
             if vwap_val is None: vwap_val = float('inf')
@@ -168,7 +217,7 @@ class Scanner:
             pass_rsi_short = current['RSI'] > self.cfg['RSI_OVERBOUGHT']
             pass_rsiturn_short = current['RSI'] < prev['RSI']
             pass_bb_short = current['Close'] >= current['BB_Upper']
-            pass_sma_short = current['Close'] < current['SMA_50'] 
+            pass_sma_short = current['Close'] < sma_50_val 
             
             vwap_val_short = current.get('VWAP')
             if vwap_val_short is None: vwap_val_short = 0
@@ -238,7 +287,7 @@ class Scanner:
                             "rsi": float(current['RSI']),
                             "adx": float(current['ADX']),
                             "bb_lower": float(current['BB_Lower']),
-                            "sma_50": float(current['SMA_50']) if not pd.isna(current['SMA_50']) else 0.0
+                            "sma_50": float(sma_50_val)
                         }
                     )
                     signals.append(sig)
@@ -260,7 +309,7 @@ class Scanner:
                             "rsi": float(current['RSI']),
                             "adx": float(current['ADX']),
                             "bb_upper": float(current['BB_Upper']),
-                            "sma_50": float(current['SMA_50']) if not pd.isna(current['SMA_50']) else 0.0
+                            "sma_50": float(sma_50_val)
                         }
                     )
                     signals.append(sig)
