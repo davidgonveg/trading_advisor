@@ -104,6 +104,52 @@ class Database:
                 status TEXT -- OPEN, CLOSED
             )
             ''')
+
+            # 4. Alerts (Generated Signals with Targets)
+            # Comprehensive record of every signal sent to user
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS alerts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME NOT NULL,
+                symbol TEXT NOT NULL,
+                signal_type TEXT NOT NULL,
+                price REAL NOT NULL,
+                
+                -- Targets
+                sl_price REAL,
+                tp1_price REAL,
+                tp2_price REAL,
+                tp3_price REAL,
+                
+                -- Context
+                atr REAL,
+                adx REAL,
+                rsi REAL,
+                
+                status TEXT DEFAULT 'SENT', -- SENT, CANCELLED (by logic)
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            ''')
+            
+            # 5. Alert Performance (Tracking Outcome)
+            # Did the alert trigger a trade? Did it hit TP/SL?
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS alert_performance (
+                alert_id INTEGER PRIMARY KEY,
+                triggered BOOLEAN DEFAULT 0,
+                entry_time DATETIME,
+                entry_price REAL,
+                
+                outcome TEXT, -- TP1, TP2, TP3, SL, TIME_STOP, NONE
+                pnl_r_multiple REAL, -- Result in R units
+                
+                max_favorable_excursion REAL,
+                max_adverse_excursion REAL,
+                
+                closed_at DATETIME,
+                FOREIGN KEY(alert_id) REFERENCES alerts(id)
+            )
+            ''')
             
             conn.commit()
             logger.info("Database schema initialized.")
@@ -144,7 +190,7 @@ class Database:
             data = [
                 (
                     f"{symbol}_{timeframe}_{c.timestamp.isoformat()}",
-                    symbol, timeframe, c.timestamp,
+                    symbol, timeframe, c.timestamp.isoformat(), # FIXED: Explicit string conversion
                     c.open, c.high, c.low, c.close, c.volume, filled
                 )
                 for c, filled in zip(candles, is_filled_list)
@@ -188,7 +234,7 @@ class Database:
                 def to_val(v): return None if pd.isna(v) else float(v)
                 
                 data.append((
-                    fid, symbol, timeframe, ts,
+                    fid, symbol, timeframe, ts.isoformat(), # FIXED: Explicit string conversion
                     to_val(rsi), to_val(bbu), to_val(bbm), to_val(bbl),
                     to_val(adx), to_val(atr), to_val(vwap), to_val(sma50), to_val(vsma20)
                 ))
@@ -203,5 +249,75 @@ class Database:
             
         except Exception as e:
             logger.error(f"Error saving indicators: {e}")
+        finally:
+            conn.close()
+
+    def load_market_data(self, symbol: str, timeframe: str) -> pd.DataFrame:
+        """Load market data as DataFrame."""
+        conn = self.get_connection()
+        try:
+            query = """
+                SELECT timestamp, open, high, low, close, volume, is_filled 
+                FROM market_data 
+                WHERE symbol = ? AND timeframe = ? 
+                ORDER BY timestamp ASC
+            """
+            df = pd.read_sql_query(query, conn, params=(symbol, timeframe))
+            if not df.empty:
+                # Use format='mixed' to handle potential variations or explicit ISO parsing
+                df['timestamp'] = pd.to_datetime(df['timestamp'], utc=True, format='mixed')
+                df.set_index('timestamp', inplace=True)
+                
+                # Rename columns to standard Capitalized format
+                df.rename(columns={
+                    'open': 'Open',
+                    'high': 'High',
+                    'low': 'Low',
+                    'close': 'Close',
+                    'volume': 'Volume'
+                }, inplace=True)
+            return df
+        except Exception as e:
+            logger.error(f"Error loading market data {symbol} {timeframe}: {e}")
+            return pd.DataFrame()
+        finally:
+            conn.close()
+
+    def load_indicators(self, symbol: str, timeframe: str) -> pd.DataFrame:
+        """Load indicators as DataFrame."""
+        conn = self.get_connection()
+        try:
+            query = """
+                SELECT timestamp, rsi, bb_upper, bb_middle, bb_lower, adx, atr, vwap, sma_50, volume_sma_20 
+                FROM indicators 
+                WHERE symbol = ? AND timeframe = ? 
+                ORDER BY timestamp ASC
+            """
+            df = pd.read_sql_query(query, conn, params=(symbol, timeframe))
+            if not df.empty:
+                df['timestamp'] = pd.to_datetime(df['timestamp'], utc=True, format='mixed')
+            
+            # Rename columns to match what Strategy expects (Capitalized?)
+            # Strategy expects: 'RSI', 'BB_Upper', 'ADX', 'SMA_50' etc.
+            # DB columns are lowercase.
+            rename_map = {
+                'rsi': 'RSI',
+                'bb_upper': 'BB_Upper',
+                'bb_middle': 'BB_Middle',
+                'bb_lower': 'BB_Lower',
+                'adx': 'ADX',
+                'atr': 'ATR',
+                'vwap': 'VWAP',
+                'sma_50': 'SMA_50',
+                'volume_sma_20': 'Volume_SMA_20'
+            }
+            df.rename(columns=rename_map, inplace=True)
+            
+            if not df.empty:
+                df.set_index('timestamp', inplace=True)
+            return df
+        except Exception as e:
+            logger.error(f"Error loading indicators {symbol} {timeframe}: {e}")
+            return pd.DataFrame()
         finally:
             conn.close()

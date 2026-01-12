@@ -18,6 +18,10 @@ LOG_DIR = BASE_DIR / "logs"
 DATA_DIR = BASE_DIR / "data"
 
 # Ensure directories exist
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+DATABASE_PATH = DATA_DIR / "storage" / "trading.db"
 LOG_DIR.mkdir(exist_ok=True)
 DATA_DIR.mkdir(exist_ok=True)
 
@@ -27,8 +31,8 @@ ALPHA_VANTAGE_API_KEY = os.getenv('ALPHA_VANTAGE_API_KEY')
 POLYGON_API_KEY = os.getenv('POLYGON_API_KEY')
 
 # Telegram Credentials
-TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
+TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_TOKEN') or os.getenv('TELEGRAM_BOT_TOKEN')
+TELEGRAM_CHAT_ID = os.getenv('CHAT_ID') or os.getenv('TELEGRAM_CHAT_ID')
 
 # System Configuration
 SYSTEM_CONFIG = {
@@ -65,7 +69,7 @@ DATABASE_PATH = DATA_DIR / "storage" / "trading.db"
 # Strategy Configuration (Mean Reversion Selectiva)
 STRATEGY_CONFIG = {
     # Indicators
-    "RSI_PERIOD": 14,
+    "RSI_PERIOD": 7,  # UPDATED: Matches documentation
     "RSI_OVERSOLD": 35,
     "RSI_OVERBOUGHT": 65,
     "RSI_EXIT_LONG": 75,
@@ -75,7 +79,7 @@ STRATEGY_CONFIG = {
     "BB_DEV": 2.0,
     
     "ADX_PERIOD": 14,
-    "ADX_MAX_THRESHOLD": 22, # Market must be ranging
+    "ADX_MAX_THRESHOLD": 22, # UPDATED: Matches documentation (Strict)
     "ADX_CANCEL_THRESHOLD": 3, # If ADX rises > 3 pts, cancel pending orders
     
     "SMA_TREND_PERIOD": 50, # Daily timeframe

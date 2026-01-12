@@ -45,18 +45,19 @@ project_root/
     *   **Patterns**: Candle pattern recognition (`analysis/patterns.py`).
     *   **Multi-Timeframe Logic**: Verified Daily SMA50 merging.
 
-4.  **Execution Layer (Phase 4)**:
+5.  **Execution Layer (Phase 4)**:
     *   **Risk**: `analysis/risk.py` for ATR-based position sizing.
     *   **Trade Manager**: `trading/manager.py` converts Signals to Plans (Entries, TPs, SL).
     *   **Alerts**: `alerts/telegram.py` for real-time notifications.
+    *   **Live Loop**: `main.py` live mode fully operational with scanner optimization and startup checks.
 
-5.  **Strategy Alignment**:
+6.  **Strategy Alignment**:
     *   Universe restricted to strategy requirements: `SPY`, `QQQ`, `IWM`, `XLF`, `XLE`, `XLK`, `SMH`, `GLD`, `TLT`, `EEM`.
     *   Timeframes: 1H (Trading) + 1D (Trend Filter).
 
 ### ⏳ In Progress
 
-*   **Backtesting**: Calibration of scanner sensitivity.
+*   **Backtesting**: Implementation of dynamic order cancellation logic.
 *   **Execution Database**: Persisting Trade Plans to `trades` table.
 
 ## 🛠️ Operational Scripts

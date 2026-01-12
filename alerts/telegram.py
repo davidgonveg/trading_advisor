@@ -3,7 +3,7 @@ import logging
 import requests
 import os
 from typing import Optional
-from config.settings import SYSTEM_CONFIG
+from config.settings import SYSTEM_CONFIG, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 
 logger = logging.getLogger("core.alerts.telegram")
 
@@ -12,8 +12,8 @@ class TelegramBot:
     Simple Telegram Bot wrapper for sending notifications.
     """
     def __init__(self):
-        self.token = os.getenv("TELEGRAM_BOT_TOKEN")
-        self.chat_id = os.getenv("TELEGRAM_CHAT_ID")
+        self.token = TELEGRAM_BOT_TOKEN
+        self.chat_id = TELEGRAM_CHAT_ID
         self.enabled = bool(self.token and self.chat_id)
         
         if not self.enabled:

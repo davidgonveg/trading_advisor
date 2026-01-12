@@ -1,0 +1,181 @@
+import pandas as pd
+import logging
+from datetime import datetime, timedelta
+from typing import Optional, Dict
+
+from config.settings import DATA_CONFIG, STRATEGY_CONFIG
+from data.storage.database import Database
+from data.providers.yfinance_provider import YFinanceProvider
+from data.quality.gap_detector import GapDetector
+from data.interfaces import Candle
+
+# Lazy import to avoid circular dependency if any
+# from analysis.indicators import Indicators # Assuming this exists or we use TA-Lib wrapper
+
+logger = logging.getLogger("core.data.manager")
+
+class DataManager:
+    """
+    Orchestrates Data Flow:
+    Provider -> Quality Check -> Storage -> Analysis
+    """
+    
+    def __init__(self):
+        self.db = Database()
+        self.provider = YFinanceProvider()
+        self.gap_detector = GapDetector(expected_interval_minutes=60) # 1H
+        
+        # Cache for simple access? 
+        # Better to hit DB for reliability in this architecture.
+        
+    def get_latest_data(self, symbol: str, days: int = 60) -> pd.DataFrame:
+        """
+        Get data for analysis from DB.
+        """
+        # We assume data is already in DB (synced via update_data)
+        # But we verify fresh data if needed?
+        # For simplicity, we read DB.
+        
+        # Logic: 
+        # 1. Load from DB.
+        # 2. If empty or old, trigger fetch.
+        
+        # Try loading again
+        df = self.db.load_market_data(symbol, "1h")
+        
+        if df.empty:
+            logger.info(f"No local data for {symbol}, initializing fetch...")
+            # If load from DB fails (e.g. save failed), we might want to return 
+            # the fetched data directly if we had it. 
+            # But update_data returns None.
+            # Let's modify update_data to optionally return the DF?
+            # Or just trigger update and re-load.
+            self.update_data(symbol)
+            df = self.db.load_market_data(symbol, "1h")
+            
+        return df
+
+    def update_data(self, symbol: str):
+        """
+        Fetches latest data from Provider and updates DB.
+        """
+        logger.info(f"Updating data for {symbol}...")
+        
+        # 1. Fetch
+        # Default to BACKFILL_DAYS if empty, or small window if updating.
+        # Logic: Find last DB timestamp.
+        
+        last_ts = self._get_last_timestamp(symbol)
+        
+        start_date = None
+        days_back = DATA_CONFIG['HISTORY_DAYS']
+        
+        if last_ts:
+            # Fetch from last known to now
+            # YFinance expects string or datetime.
+            # Add a buffer
+            start_date = (last_ts - timedelta(hours=24)).strftime('%Y-%m-%d')
+            days_back = 0 # Use explicit dates
+            
+        df_new = self.provider.fetch_data(
+            symbol, 
+            "1h", 
+            start_date=start_date, 
+            days_back=days_back if not start_date else 0
+        )
+        
+        if df_new is None or df_new.empty:
+            logger.warning(f"No new data fetched for {symbol}")
+            return
+            
+        # 2. Save
+        # Convert DF to Candles? 
+        # Or bulk insert directly if DB supported it. 
+        # Current DB.save_bulk_candles expects List[Candle].
+        
+        candles = []
+        for ts, row in df_new.iterrows():
+            c = Candle(
+                timestamp=ts,
+                open=row['Open'],
+                high=row['High'],
+                low=row['Low'],
+                close=row['Close'],
+                volume=row['Volume']
+            )
+            candles.append(c)
+            
+        self.db.save_bulk_candles(symbol, "1h", candles)
+        logger.info(f"Stored {len(candles)} candles for {symbol}")
+        
+    def resolve_gaps(self, symbol: str):
+        """
+        Checks for gaps and fills them (Forward Fill).
+        """
+        df = self.db.load_market_data(symbol, "1h")
+        if df.empty:
+            return
+            
+        gaps = self.gap_detector.detect_gaps(df, symbol)
+        
+        if not gaps:
+            logger.info(f"No gaps detected for {symbol}.")
+            return
+            
+        logger.info(f"Found {len(gaps)} gaps for {symbol}. Filling...")
+        
+        filled_candles = []
+        
+        for gap in gaps:
+            if not gap.is_fillable:
+                logger.warning(f"Gap too large to fill safely: {gap.duration_minutes} min at {gap.start_time}")
+                continue
+                
+            # Logic: Forward Fill
+            # Create candles every hour between start and end.
+            # Use 'gap_start' close price for all OHL.
+            
+            # Find the candle BEFORE the gap to get values
+            try:
+                # Assuming index is unique
+                start_val = df.loc[gap.start_time] # This exists
+                
+                fill_price = start_val['Close']
+                fill_vol = 0 # No volume on filled candles
+                
+                # Iterate hours
+                curr = gap.start_time + timedelta(hours=1)
+                while curr < gap.end_time:
+                    # Don't overwrite existing?
+                    # Gaps are by definition missing rows.
+                    
+                    c = Candle(
+                        timestamp=curr,
+                        open=fill_price,
+                        high=fill_price,
+                        low=fill_price,
+                        close=fill_price,
+                        volume=fill_vol
+                    )
+                    filled_candles.append(c)
+                    curr += timedelta(hours=1)
+                    
+            except KeyError:
+                logger.error(f"Could not find start candle for gap at {gap.start_time}")
+                continue
+                
+        if filled_candles:
+            self.db.save_bulk_candles(symbol, "1h", filled_candles, is_filled_list=[True]*len(filled_candles))
+            logger.info(f"Filled {len(filled_candles)} missing hours for {symbol}")
+
+    def _get_last_timestamp(self, symbol: str) -> Optional[datetime]:
+        # Simple query to DB or loading DF
+        # Optimize later with SQL `SELECT MAX(timestamp)...`
+        # Current DB implementation only has `load_market_data`.
+        # We'll stick to loading DF for now (cache issue?)
+        # For performance, adding `get_last_timestamp` to DB is better.
+        # But let's use what we have.
+        df = self.db.load_market_data(symbol, "1h")
+        if not df.empty:
+            return df.index.max().to_pydatetime()
+        return None

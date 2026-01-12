@@ -19,8 +19,10 @@ class Scanner:
         self.cfg = STRATEGY_CONFIG
 
     def find_signals(self, 
+                     symbol: str, 
                      df_hourly: pd.DataFrame, 
-                     symbol: str) -> List[Signal]:
+                     df_daily: pd.DataFrame = None,
+                     scan_latest: bool = False) -> List[Signal]:
         """
         Scans a dataframe (Hourly) for entry signals.
         Expects df_hourly to already include technical indicators columns:
@@ -44,11 +46,28 @@ class Scanner:
         # To avoid re-scanning old data in live mode, caller handles slicing.
         # Here we scan ALL rows provided.
         
+        # DEBUG: Check for duplicate columns
+        # print(f"Scanner scanning {symbol}. Columns: {df.columns.tolist()}")
+        if len(df.columns) != len(set(df.columns)):
+            logger.error(f"DUPLICATE COLUMNS DETECTED for {symbol}: {df.columns.tolist()}")
+            # Determine which are dupes
+            from collections import Counter
+            counts = Counter(df.columns)
+            dupes = [k for k, v in counts.items() if v > 1]
+            logger.error(f"Dupes: {dupes}")
+            
         for idx, row in df.iterrows():
             try:
-                # SKIP if any required indicator is NaN
-                if pd.isna(row['RSI']) or pd.isna(row['SMA_50']) or pd.isna(row['ADX']):
-                    continue
+                try:
+                    # SKIP if any required indicator is NaN
+                    if pd.isna(row['RSI']) or pd.isna(row['SMA_50']) or pd.isna(row['ADX']):
+                        continue
+                except ValueError:
+                    logger.error(f"CRASH IN ROW CHECK at {idx}")
+                    logger.error(f"Row Index: {row.index}")
+                    logger.error(f"RSI: {row['RSI']} Type: {type(row['RSI'])}")
+                    logger.error(f"SMA_50: {row['SMA_50']} Type: {type(row['SMA_50'])}")
+                    raise
                     
                 # 1. Common Conditions
                 
@@ -106,64 +125,142 @@ class Scanner:
 
         # Re-implementation with Index Looping for lookback
         timestamps = df.index
-        for i in range(1, len(df)):
+        
+        # Decision Logger
+        decision_logger = logging.getLogger("scanner_decisions")
+        
+        # Determine Loop Range
+        # If scanning latest, we only check the last row.
+        # We start at 1 because we need i-1 for previous values.
+        if scan_latest:
+            start_idx = len(df) - 1
+            if start_idx < 1: # Need at least 2 rows
+                return signals
+        else:
+            start_idx = 1
+            
+        for i in range(start_idx, len(df)):
             current = df.iloc[i]
             prev = df.iloc[i-1]
+            ts = timestamps[i]
             
-            # Common Filtering (Performance Opt)
-            if current['ADX'] >= self.cfg['ADX_MAX_THRESHOLD']:
-                continue
+            # --- FILTER CHECK ---
+            # 1. ADX
+            pass_adx = current['ADX'] < self.cfg['ADX_MAX_THRESHOLD']
+            
+            # 2. Volume
+            pass_vol = current['Volume'] > current.get('Volume_SMA_20', 0)
+            
+            # 3. Long Inds
+            pass_rsi_long = current['RSI'] < self.cfg['RSI_OVERSOLD']
+            pass_rsiturn_long = current['RSI'] > prev['RSI']
+            pass_bb_long = current['Close'] <= current['BB_Lower']
+            # SMA Trend Filter (Daily) - Using hourly SMA50 as proxy if separate daily not passed, 
+            # OR better: if 'SMA_50' in dataframe is actually required to be Daily SMA mapped to hourly.
+            # Assuming 'SMA_50' column IS the daily 50SMA (mapped) as per Strategy requirements.
+            pass_sma_long = current['Close'] > current['SMA_50'] 
+            
+            vwap_val = current.get('VWAP')
+            if vwap_val is None: vwap_val = float('inf')
+            pass_vwap_long = current['Close'] < vwap_val
+            
+            # 4. Short Inds
+            pass_rsi_short = current['RSI'] > self.cfg['RSI_OVERBOUGHT']
+            pass_rsiturn_short = current['RSI'] < prev['RSI']
+            pass_bb_short = current['Close'] >= current['BB_Upper']
+            pass_sma_short = current['Close'] < current['SMA_50'] 
+            
+            vwap_val_short = current.get('VWAP')
+            if vwap_val_short is None: vwap_val_short = 0
+            pass_vwap_short = current['Close'] > vwap_val_short
+            
+            # Aggregates
+            context_ok = pass_adx and pass_vol
+            long_setup = pass_rsi_long and pass_rsiturn_long and pass_bb_long and pass_sma_long and pass_vwap_long
+            short_setup = pass_rsi_short and pass_rsiturn_short and pass_bb_short and pass_sma_short and pass_vwap_short
+            
+            # Log Logic: Log if Context OK OR Indicators OK (Close calls)
+            if context_ok or long_setup or short_setup:
+                # Check Patterns
+                has_bull_pat = self.pattern_recognizer.check_bullish_reversal(current)
+                has_bear_pat = self.pattern_recognizer.check_bearish_reversal(current)
                 
-            if current['Volume'] <= current.get('Volume_SMA_20', 0):
-                continue
+                # Detailed Log Line
+                # Format: TIMESTAMP | SYM | TYPE | ADX:OK | VOL:OK | RSI:30(OK) | BB:OK | PAT:FAIL | DECISION:REJECTED
+                
+                # Determine "Potential Type"
+                p_type = "LONG" if (long_setup or pass_rsi_long) else ("SHORT" if (short_setup or pass_rsi_short) else "NONE")
+                
+                msg = f"{ts} | {symbol} | {p_type} | ADX={current['ADX']:.1f}({'OK' if pass_adx else 'FAIL'}) | VOL={'OK' if pass_vol else 'FAIL'} | "
+                
+                if p_type == "LONG":
+                    msg += f"RSI={current['RSI']:.1f}({'OK' if pass_rsi_long else 'FAIL'}) | BB={'OK' if pass_bb_long else 'FAIL'} | SMA={'OK' if pass_sma_long else 'FAIL'} | "
+                    msg += f"PAT={'OK' if has_bull_pat else 'FAIL'}"
+                    status = "ACCEPTED" if (context_ok and long_setup and has_bull_pat) else "REJECTED"
+                elif p_type == "SHORT":
+                     msg += f"RSI={current['RSI']:.1f}({'OK' if pass_rsi_short else 'FAIL'}) | BB={'OK' if pass_bb_short else 'FAIL'} | SMA={'OK' if pass_sma_short else 'FAIL'} | "
+                     msg += f"PAT={'OK' if has_bear_pat else 'FAIL'}"
+                     status = "ACCEPTED" if (context_ok and short_setup and has_bear_pat) else "REJECTED"
+                else:
+                    msg += "Inds=FAIL"
+                    status = "REJECTED"
+                    
+                decision_logger.info(f"{msg} -> {status}")
 
-            # --- LONG ---
-            if (current['RSI'] < self.cfg['RSI_OVERSOLD'] and
-                current['RSI'] > prev['RSI'] and # Turn Up
-                current['Close'] <= current['BB_Lower'] and
-                current['Close'] < current.get('VWAP', float('inf')) and
-                current['Close'] > current['SMA_50']):
-                
-                # Pattern Check
-                if self.pattern_recognizer.check_bullish_reversal(current):
-                    # Found Signal
+            # --- LONG EXECUTION ---
+            if context_ok and long_setup:
+                # Pattern Check DISABLED by User Request
+                # if self.pattern_recognizer.check_bullish_reversal(current):
+                if True:
+                    # DEBUG: Ensure Scalars
+                    # import pandas as pd <-- Removed to avoid UnboundLocalError
+                    vals_to_check = {
+                        "Close": current['Close'],
+                        "ATR": current['ATR'],
+                        "RSI": current['RSI'],
+                        "ADX": current['ADX']
+                    }
+                    for k, v in vals_to_check.items():
+                        if isinstance(v, (pd.Series, pd.DataFrame)):
+                            logger.error(f"CRITICAL: {k} is a Series/DF! {v}")
+                            # Force conversion to scalar if possible (e.g. unique value)
+                            # But better to crash with info
+                            raise ValueError(f"{k} IS A SERIES: {v}")
+
+                    logger.info(f"SIGNAL FOUND: LONG at {ts}")
                     sig = Signal(
                         symbol=symbol,
-                        timestamp=timestamps[i],
+                        timestamp=ts,
                         type=SignalType.LONG,
-                        price=current['Close'],
-                        atr_value=current['ATR'],
+                        price=float(current['Close']), # Force float
+                        atr_value=float(current['ATR']),
                         metadata={
-                            "rsi": current['RSI'],
-                            "adx": current['ADX'],
-                            "bb_lower": current['BB_Lower'],
-                            "sma_50": current['SMA_50']
+                            "rsi": float(current['RSI']),
+                            "adx": float(current['ADX']),
+                            "bb_lower": float(current['BB_Lower']),
+                            "sma_50": float(current['SMA_50']) if not pd.isna(current['SMA_50']) else 0.0
                         }
                     )
                     signals.append(sig)
-                    continue # One signal per candle max (mutually exclusive usually)
+                    continue 
 
-            # --- SHORT ---
-            if (current['RSI'] > self.cfg['RSI_OVERBOUGHT'] and
-                current['RSI'] < prev['RSI'] and # Turn Down
-                current['Close'] >= current['BB_Upper'] and
-                current['Close'] > current.get('VWAP', 0) and
-                current['Close'] < current['SMA_50']):
-                
-                # Pattern Check
-                if self.pattern_recognizer.check_bearish_reversal(current):
+            # --- SHORT EXECUTION ---
+            if context_ok and short_setup:
+                # Pattern Check DISABLED by User Request
+                # if self.pattern_recognizer.check_bearish_reversal(current):
+                if True:
                     # Found Signal
                     sig = Signal(
                         symbol=symbol,
-                        timestamp=timestamps[i],
+                        timestamp=ts,
                         type=SignalType.SHORT,
-                        price=current['Close'],
-                        atr_value=current['ATR'],
+                        price=float(current['Close']),
+                        atr_value=float(current['ATR']),
                         metadata={
-                            "rsi": current['RSI'],
-                            "adx": current['ADX'],
-                            "bb_upper": current['BB_Upper'],
-                            "sma_50": current['SMA_50']
+                            "rsi": float(current['RSI']),
+                            "adx": float(current['ADX']),
+                            "bb_upper": float(current['BB_Upper']),
+                            "sma_50": float(current['SMA_50']) if not pd.isna(current['SMA_50']) else 0.0
                         }
                     )
                     signals.append(sig)

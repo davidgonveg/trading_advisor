@@ -28,6 +28,7 @@ class TradePlan:
     total_size: int
     entry_orders: List[TradeOrder]
     stop_loss_price: float
+    stop_loss_order: TradeOrder  # NEW: Actual SL order
     take_profits: List[TradeOrder]
     risk_amount: float
     
@@ -47,7 +48,7 @@ class TradeManager:
         self.cfg = STRATEGY_CONFIG
         self.db = Database() # For persistence of trades
         
-    def create_trade_plan(self, signal: Signal, capital: float = 10000.0) -> Optional[TradePlan]:
+    def create_trade_plan(self, signal: Signal, size: int) -> Optional[TradePlan]:
         """
         Converts a raw Signal into an executable Trade Plan.
         """
@@ -62,7 +63,8 @@ class TradeManager:
             return None
             
         # Total Max Position Size
-        total_qty = self.risk_manager.calculate_size(price, atr, capital)
+        # total_qty = self.risk_manager.calculate_size(price, atr, capital)
+        total_qty = size
         
         if total_qty < 1:
             logger.warning(f"Calculated size is 0 for {signal.symbol}. Too risky or low capital.")
@@ -101,6 +103,18 @@ class TradeManager:
         orders.append(TradeOrder(signal.symbol, "LIMIT", "BUY" if direction > 0 else "SELL", e2_price, q2, tag="E2"))
         orders.append(TradeOrder(signal.symbol, "LIMIT", "BUY" if direction > 0 else "SELL", e3_price, q3, tag="E3"))
         
+        # Stop Loss Order
+        # For LONG: SELL STOP below entry
+        # For SHORT: BUY STOP above entry
+        sl_order = TradeOrder(
+            signal.symbol, 
+            "STOP", 
+            "SELL" if direction > 0 else "BUY", 
+            sl_price, 
+            total_qty,  # SL covers entire position
+            tag="SL"
+        )
+        
         # Take Profits (Based on Avg Entry expected? Use E1 for now)
         # TP1: 1.5 ATR
         # TP2: 2.5 ATR
@@ -112,18 +126,21 @@ class TradeManager:
         
         tps = []
         # Quantity distribution for TPs
-        # TP1 50%, TP2 30%, TP3 20% OF THE EXECUTED SIZE.
-        # This is dynamic.
-        # But we can plan the levels.
-        tps.append(TradeOrder(signal.symbol, "LIMIT", "SELL" if direction > 0 else "BUY", tp1_price, 0, tag="TP1")) # Qty unknown
-        tps.append(TradeOrder(signal.symbol, "LIMIT", "SELL" if direction > 0 else "BUY", tp2_price, 0, tag="TP2"))
-        tps.append(TradeOrder(signal.symbol, "LIMIT", "SELL" if direction > 0 else "BUY", tp3_price, 0, tag="TP3"))
+        # TP1 50%, TP2 30%, TP3 20% OF THE TOTAL SIZE
+        tp1_qty = int(total_qty * 0.50)
+        tp2_qty = int(total_qty * 0.30)
+        tp3_qty = total_qty - tp1_qty - tp2_qty  # Remainder
+        
+        tps.append(TradeOrder(signal.symbol, "LIMIT", "SELL" if direction > 0 else "BUY", tp1_price, tp1_qty, tag="TP1"))
+        tps.append(TradeOrder(signal.symbol, "LIMIT", "SELL" if direction > 0 else "BUY", tp2_price, tp2_qty, tag="TP2"))
+        tps.append(TradeOrder(signal.symbol, "LIMIT", "SELL" if direction > 0 else "BUY", tp3_price, tp3_qty, tag="TP3"))
         
         plan = TradePlan(
             signal=signal,
             total_size=total_qty,
             entry_orders=orders,
             stop_loss_price=sl_price,
+            stop_loss_order=sl_order,
             take_profits=tps,
             risk_amount= (total_qty * abs(price - sl_price)) # Approx risk
         )

@@ -57,6 +57,7 @@ cache/
 # Logs detallados
 *.log
 logs/
+logs/archive/
 database/logs/
 
 # Archivos temporales de análisis

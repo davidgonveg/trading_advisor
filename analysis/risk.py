@@ -54,6 +54,13 @@ class RiskManager:
         if capital is None:
             capital = self.default_capital
             
+        # DEBUG TYPES
+        import pandas as pd
+        if isinstance(price, (pd.Series, pd.DataFrame)) or isinstance(atr, (pd.Series, pd.DataFrame)):
+            logger.error(f"RISK INPUT ERROR: Price type {type(price)}, ATR type {type(atr)}")
+            logger.error(f"Price: {price}")
+            logger.error(f"ATR: {atr}")
+            
         if atr <= 0 or price <= 0:
             return 0
             
