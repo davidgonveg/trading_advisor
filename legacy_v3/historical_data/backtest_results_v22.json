@@ -1,0 +1,406 @@
+{
+  "summary": {
+    "initial_capital": 10000,
+    "final_capital": 11751.791548177946,
+    "total_trades": 8,
+    "active_trades": 0
+  },
+  "trades": [
+    {
+      "trade_id": 1,
+      "symbol": "MSFT",
+      "direction": "SHORT",
+      "signal_time": "2024-12-17T10:15:00",
+      "status": "CLOSED_WIN",
+      "total_pnl": 944.9465424526207,
+      "max_favorable": 719.8868979456032,
+      "max_adverse": -133.79667508536636
+    },
+    {
+      "trade_id": 2,
+      "symbol": "TSLA",
+      "direction": "SHORT",
+      "signal_time": "2024-12-17T10:15:00",
+      "status": "CLOSED_LOSS",
+      "total_pnl": -123.6310053957477,
+      "max_favorable": 120.83538277658137,
+      "max_adverse": -123.10138714766488
+    },
+    {
+      "trade_id": 3,
+      "symbol": "NVDA",
+      "direction": "LONG",
+      "signal_time": "2024-12-17T12:00:00",
+      "status": "CLOSED_WIN",
+      "total_pnl": 304.15657945532536,
+      "max_favorable": 379.7368277263544,
+      "max_adverse": -52.70108810308525
+    },
+    {
+      "trade_id": 4,
+      "symbol": "AAPL",
+      "direction": "SHORT",
+      "signal_time": "2024-12-17T12:30:00",
+      "status": "CLOSED_LOSS",
+      "total_pnl": 144.1123142289592,
+      "max_favorable": 237.92560136402275,
+      "max_adverse": -87.07348954506871
+    },
+    {
+      "trade_id": 5,
+      "symbol": "TSLA",
+      "direction": "SHORT",
+      "signal_time": "2024-12-18T13:45:00",
+      "status": "CLOSED_WIN",
+      "total_pnl": 205.62673415864333,
+      "max_favorable": 163.5045119231527,
+      "max_adverse": -1.3114340502172825
+    },
+    {
+      "trade_id": 6,
+      "symbol": "AAPL",
+      "direction": "SHORT",
+      "signal_time": "2024-12-23T10:15:00",
+      "status": "CLOSED_LOSS",
+      "total_pnl": -185.77016784226026,
+      "max_favorable": 17.229240436795664,
+      "max_adverse": -185.77016784226026
+    },
+    {
+      "trade_id": 7,
+      "symbol": "AAPL",
+      "direction": "SHORT",
+      "signal_time": "2024-12-24T12:30:00",
+      "status": "CLOSED_LOSS",
+      "total_pnl": -282.7692987667804,
+      "max_favorable": 0.0,
+      "max_adverse": -282.7692987667804
+    },
+    {
+      "trade_id": 8,
+      "symbol": "AAPL",
+      "direction": "SHORT",
+      "signal_time": "2024-12-26T09:45:00",
+      "status": "CLOSED_WIN",
+      "total_pnl": 745.1198498871813,
+      "max_favorable": 622.3965606035646,
+      "max_adverse": -36.44561625651198
+    }
+  ],
+  "equity_curve": [
+    {
+      "timestamp": "2024-12-16 09:30:00",
+      "capital": 10000,
+      "unrealized_pnl": 0.0,
+      "total_value": 10000.0
+    },
+    {
+      "timestamp": "2024-12-16 12:00:00",
+      "capital": 10000,
+      "unrealized_pnl": 0.0,
+      "total_value": 10000.0
+    },
+    {
+      "timestamp": "2024-12-16 14:30:00",
+      "capital": 10000,
+      "unrealized_pnl": 0.0,
+      "total_value": 10000.0
+    },
+    {
+      "timestamp": "2024-12-17 10:30:00",
+      "capital": 10000,
+      "unrealized_pnl": -5.799284659650537,
+      "total_value": 9994.20071534035
+    },
+    {
+      "timestamp": "2024-12-17 13:00:00",
+      "capital": 10000,
+      "unrealized_pnl": -58.89512206443403,
+      "total_value": 9941.104877935566
+    },
+    {
+      "timestamp": "2024-12-17 15:30:00",
+      "capital": 10000,
+      "unrealized_pnl": -166.02073885846468,
+      "total_value": 9833.979261141536
+    },
+    {
+      "timestamp": "2024-12-18 11:30:00",
+      "capital": 10022.275196665902,
+      "unrealized_pnl": 32.27289298515032,
+      "total_value": 10054.548089651053
+    },
+    {
+      "timestamp": "2024-12-18 14:00:00",
+      "capital": 9898.644191270154,
+      "unrealized_pnl": 428.5464423310981,
+      "total_value": 10327.190633601253
+    },
+    {
+      "timestamp": "2024-12-19 10:00:00",
+      "capital": 10481.112908013743,
+      "unrealized_pnl": 407.9864152140148,
+      "total_value": 10889.099323227758
+    },
+    {
+      "timestamp": "2024-12-19 12:30:00",
+      "capital": 10481.112908013743,
+      "unrealized_pnl": 492.8966384820171,
+      "total_value": 10974.009546495761
+    },
+    {
+      "timestamp": "2024-12-19 15:00:00",
+      "capital": 10481.112908013743,
+      "unrealized_pnl": 494.4903322125745,
+      "total_value": 10975.603240226317
+    },
+    {
+      "timestamp": "2024-12-20 11:00:00",
+      "capital": 10481.112908013743,
+      "unrealized_pnl": 546.2756734153963,
+      "total_value": 11027.388581429139
+    },
+    {
+      "timestamp": "2024-12-20 13:30:00",
+      "capital": 10481.112908013743,
+      "unrealized_pnl": 496.6032580792198,
+      "total_value": 10977.716166092963
+    },
+    {
+      "timestamp": "2024-12-23 09:30:00",
+      "capital": 10481.112908013743,
+      "unrealized_pnl": 654.3832363276242,
+      "total_value": 11135.496144341367
+    },
+    {
+      "timestamp": "2024-12-23 12:00:00",
+      "capital": 10626.147115264183,
+      "unrealized_pnl": 549.1062938386091,
+      "total_value": 11175.253409102792
+    },
+    {
+      "timestamp": "2024-12-23 14:30:00",
+      "capital": 10667.727829114338,
+      "unrealized_pnl": 556.6951087601261,
+      "total_value": 11224.422937874464
+    },
+    {
+      "timestamp": "2024-12-24 10:30:00",
+      "capital": 10481.957661272078,
+      "unrealized_pnl": 479.26258260736506,
+      "total_value": 10961.220243879443
+    },
+    {
+      "timestamp": "2024-12-24 13:00:00",
+      "capital": 10481.957661272078,
+      "unrealized_pnl": 329.92567889238313,
+      "total_value": 10811.88334016446
+    },
+    {
+      "timestamp": "2024-12-26 11:30:00",
+      "capital": 10199.188362505298,
+      "unrealized_pnl": 409.29799611345663,
+      "total_value": 10608.486358618755
+    },
+    {
+      "timestamp": "2024-12-26 14:00:00",
+      "capital": 10199.188362505298,
+      "unrealized_pnl": 481.97721669520695,
+      "total_value": 10681.165579200504
+    },
+    {
+      "timestamp": "2024-12-27 10:00:00",
+      "capital": 10199.188362505298,
+      "unrealized_pnl": 836.0935031768292,
+      "total_value": 11035.281865682127
+    },
+    {
+      "timestamp": "2024-12-27 12:30:00",
+      "capital": 10386.408309570203,
+      "unrealized_pnl": 718.4427509424041,
+      "total_value": 11104.851060512607
+    },
+    {
+      "timestamp": "2024-12-27 15:00:00",
+      "capital": 10386.408309570203,
+      "unrealized_pnl": 679.4879233515003,
+      "total_value": 11065.896232921703
+    },
+    {
+      "timestamp": "2024-12-30 11:00:00",
+      "capital": 10386.408309570203,
+      "unrealized_pnl": 881.835584440907,
+      "total_value": 11268.24389401111
+    },
+    {
+      "timestamp": "2024-12-30 13:30:00",
+      "capital": 10386.408309570203,
+      "unrealized_pnl": 833.384472397256,
+      "total_value": 11219.792781967459
+    },
+    {
+      "timestamp": "2024-12-31 09:30:00",
+      "capital": 10386.408309570203,
+      "unrealized_pnl": 854.3209587134993,
+      "total_value": 11240.729268283701
+    },
+    {
+      "timestamp": "2024-12-31 12:00:00",
+      "capital": 10386.408309570203,
+      "unrealized_pnl": 877.493075255555,
+      "total_value": 11263.901384825758
+    },
+    {
+      "timestamp": "2024-12-31 14:30:00",
+      "capital": 10386.408309570203,
+      "unrealized_pnl": 915.9590862477819,
+      "total_value": 11302.367395817984
+    },
+    {
+      "timestamp": "2025-01-02 10:30:00",
+      "capital": 10386.408309570203,
+      "unrealized_pnl": 1124.930759454934,
+      "total_value": 11511.339069025136
+    },
+    {
+      "timestamp": "2025-01-02 13:00:00",
+      "capital": 10386.408309570203,
+      "unrealized_pnl": 1268.8092944124535,
+      "total_value": 11655.217603982655
+    },
+    {
+      "timestamp": "2025-01-02 15:30:00",
+      "capital": 10386.408309570203,
+      "unrealized_pnl": 1226.2597337497116,
+      "total_value": 11612.668043319914
+    },
+    {
+      "timestamp": "2025-01-03 11:30:00",
+      "capital": 10386.408309570203,
+      "unrealized_pnl": 1225.3002756999845,
+      "total_value": 11611.708585270188
+    },
+    {
+      "timestamp": "2025-01-03 14:00:00",
+      "capital": 10386.408309570203,
+      "unrealized_pnl": 1221.7542278609178,
+      "total_value": 11608.16253743112
+    },
+    {
+      "timestamp": "2025-01-06 10:00:00",
+      "capital": 10386.408309570203,
+      "unrealized_pnl": 1125.0081639068442,
+      "total_value": 11511.416473477047
+    },
+    {
+      "timestamp": "2025-01-06 12:30:00",
+      "capital": 10386.408309570203,
+      "unrealized_pnl": 1174.3062967559526,
+      "total_value": 11560.714606326155
+    },
+    {
+      "timestamp": "2025-01-06 15:00:00",
+      "capital": 10386.408309570203,
+      "unrealized_pnl": 1229.070046547777,
+      "total_value": 11615.47835611798
+    },
+    {
+      "timestamp": "2025-01-07 11:00:00",
+      "capital": 10386.408309570203,
+      "unrealized_pnl": 1108.0249644048315,
+      "total_value": 11494.433273975033
+    },
+    {
+      "timestamp": "2025-01-07 13:30:00",
+      "capital": 10386.408309570203,
+      "unrealized_pnl": 1217.096133537439,
+      "total_value": 11603.504443107642
+    },
+    {
+      "timestamp": "2025-01-08 09:30:00",
+      "capital": 10386.408309570203,
+      "unrealized_pnl": 1219.8251196406268,
+      "total_value": 11606.23342921083
+    },
+    {
+      "timestamp": "2025-01-08 12:00:00",
+      "capital": 10386.408309570203,
+      "unrealized_pnl": 1180.8121260685798,
+      "total_value": 11567.220435638783
+    },
+    {
+      "timestamp": "2025-01-08 14:30:00",
+      "capital": 10386.408309570203,
+      "unrealized_pnl": 1176.4121626535127,
+      "total_value": 11562.820472223715
+    },
+    {
+      "timestamp": "2025-01-10 10:30:00",
+      "capital": 10386.408309570203,
+      "unrealized_pnl": 1313.1761619645954,
+      "total_value": 11699.584471534798
+    },
+    {
+      "timestamp": "2025-01-10 13:00:00",
+      "capital": 10386.408309570203,
+      "unrealized_pnl": 1288.7859243458695,
+      "total_value": 11675.194233916072
+    },
+    {
+      "timestamp": "2025-01-10 15:30:00",
+      "capital": 10386.408309570203,
+      "unrealized_pnl": 1290.1843804271443,
+      "total_value": 11676.592689997347
+    },
+    {
+      "timestamp": "2025-01-13 11:30:00",
+      "capital": 10386.408309570203,
+      "unrealized_pnl": 1448.35314054821,
+      "total_value": 11834.761450118413
+    },
+    {
+      "timestamp": "2025-01-13 14:00:00",
+      "capital": 10386.408309570203,
+      "unrealized_pnl": 1380.9000790331215,
+      "total_value": 11767.308388603324
+    },
+    {
+      "timestamp": "2025-01-14 10:00:00",
+      "capital": 10386.408309570203,
+      "unrealized_pnl": 1289.9948918249602,
+      "total_value": 11676.403201395162
+    },
+    {
+      "timestamp": "2025-01-14 12:30:00",
+      "capital": 10386.408309570203,
+      "unrealized_pnl": 1341.5893389703442,
+      "total_value": 11727.997648540546
+    },
+    {
+      "timestamp": "2025-01-14 15:00:00",
+      "capital": 10386.408309570203,
+      "unrealized_pnl": 1430.1085680375159,
+      "total_value": 11816.516877607719
+    }
+  ],
+  "metrics": {
+    "total_signals": 8,
+    "total_trades": 8,
+    "trades_entered": 25,
+    "trades_won": 5,
+    "trades_lost": 3,
+    "win_rate": 62.5,
+    "profit_factor": 3.958255487220201,
+    "max_drawdown": 7.351322744308971,
+    "max_drawdown_date": "2024-12-24 15:45:00",
+    "sharpe_ratio": 1.0040150279610742,
+    "total_return": 1751.7915481779455,
+    "total_return_pct": 17.517915481779454,
+    "largest_win": 944.9465424526207,
+    "largest_loss": -282.7692987667804,
+    "average_win": 468.79240403654603,
+    "average_loss": -197.39015733492946,
+    "total_slippage": 117.34441997913476,
+    "total_commissions": 2.73475350384431
+  }
+}

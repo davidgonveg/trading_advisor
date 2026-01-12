@@ -1,0 +1,72 @@
+{
+  "META": {
+    "symbol": "META",
+    "direction": "LONG",
+    "entry_time": "2026-01-09T07:15:00+00:00",
+    "entry_price": 644.75,
+    "current_price": 653.01,
+    "unrealized_pnl_pct": 1.2811167119038374,
+    "deterioration_count": 0,
+    "exit_alerts_sent": 0,
+    "last_evaluation": "2026-01-10T00:45:00+00:00",
+    "entry_signal_strength": 0,
+    "entry_confidence": "UNKNOWN",
+    "strategy_type": null
+  },
+  "^GSPC": {
+    "symbol": "^GSPC",
+    "direction": "LONG",
+    "entry_time": "2026-01-08T14:30:00+00:00",
+    "entry_price": 6903.69,
+    "current_price": 6966.28,
+    "unrealized_pnl_pct": 0.9066166064814635,
+    "deterioration_count": 0,
+    "exit_alerts_sent": 0,
+    "last_evaluation": "2026-01-10T00:45:00+00:00",
+    "entry_signal_strength": 63,
+    "entry_confidence": "MEDIUM",
+    "strategy_type": "POSITION"
+  },
+  "AAPL": {
+    "symbol": "AAPL",
+    "direction": "LONG",
+    "entry_time": "2026-01-09T02:30:00+00:00",
+    "entry_price": 259.1,
+    "current_price": 259.3692,
+    "unrealized_pnl_pct": 0.1038981088382691,
+    "deterioration_count": 0,
+    "exit_alerts_sent": 0,
+    "last_evaluation": "2026-01-10T00:45:00+00:00",
+    "entry_signal_strength": 55,
+    "entry_confidence": "MEDIUM",
+    "strategy_type": "POSITION"
+  },
+  "NVDA": {
+    "symbol": "NVDA",
+    "direction": "LONG",
+    "entry_time": "2026-01-09T03:15:00+00:00",
+    "entry_price": 185.03,
+    "current_price": 184.9701,
+    "unrealized_pnl_pct": -0.03237312868183481,
+    "deterioration_count": 0,
+    "exit_alerts_sent": 0,
+    "last_evaluation": "2026-01-10T00:45:00+00:00",
+    "entry_signal_strength": 55,
+    "entry_confidence": "MEDIUM",
+    "strategy_type": "POSITION"
+  },
+  "MSFT": {
+    "symbol": "MSFT",
+    "direction": "LONG",
+    "entry_time": "2026-01-09T09:00:00+00:00",
+    "entry_price": 476.6,
+    "current_price": 479.0,
+    "unrealized_pnl_pct": 0.5035669324380985,
+    "deterioration_count": 0,
+    "exit_alerts_sent": 0,
+    "last_evaluation": "2026-01-10T00:45:00+00:00",
+    "entry_signal_strength": 55,
+    "entry_confidence": "MEDIUM",
+    "strategy_type": "POSITION"
+  }
+}

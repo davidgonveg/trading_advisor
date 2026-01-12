@@ -1,205 +1,80 @@
-# 📈 Sistema de Trading Automatizado v2.0
+# Smart Trading Advisor (Rebuild V4)
 
-## 🎯 Descripción del Proyecto
+A modular, automated trading system designed for the US Stock Market, specifically aligned with the **Mean Reversion Selectiva** strategy. It focuses on data integrity (gap handling), extended hours trading, and robust signal generation for Tier 1 ETFs (SPY, QQQ, IWM).
 
-Sistema automatizado en Python que detecta señales de trading de alta calidad basadas en múltiples indicadores técnicos y envía alertas inteligentes por Telegram para operaciones de daytrading/scalping en acciones.
+## 🏗️ Architecture "Rebuild V4"
 
-## 🔧 Características Principales
-
-### 📊 Indicadores Técnicos Implementados
-- **MACD (12,26,9)** - Detección de cambios de tendencia
-- **RSI (14)** - Zonas de sobreventa/sobrecompra  
-- **VWAP** - Referencia de valor institucional
-- **ROC/Momentum (10)** - Confirmación de fuerza direccional
-- **Bollinger Bands (20,2)** - Zonas de valor extremo
-- **Oscilador de Volumen (5,20)** - Confirmación institucional
-- **ATR (14)** - Cálculo de stops dinámicos
-
-### 🎯 Sistema de Señales
-- **Timeframe**: 15 minutos
-- **Puntuación dinámica**: 0-100 puntos por señal
-- **Filtros de calidad**: Múltiples confirmaciones requeridas
-- **Gestión de riesgo**: Entradas y salidas escalonadas
-
-### 📱 Alertas Inteligentes
-- **Notificaciones por Telegram** con niveles de entrada y salida
-- **Cálculo automático** de posiciones escalonadas
-- **Información completa**: Precios, stops, take profits y tamaños
-
-## 🏗️ Estructura del Proyecto
+This project has been rebuilt from scratch to improve maintainability, scalability, and data reliability.
 
 ```
-trading_system/
-│
-├── main.py                  # 🚀 Archivo principal - Coordinador del sistema
-├── config.py               # ⚙️ Configuración - Parámetros y ajustes
-├── indicators.py           # 📊 Indicadores - Cálculo de señales técnicas
-├── scanner.py              # 🔍 Scanner - Evaluación y puntuación de señales
-├── telegram_bot.py         # 📱 Telegram - Envío de alertas formateadas
-├── position_calculator.py  # 💰 Posiciones - Cálculo de niveles y tamaños
-├── requirements.txt        # 📦 Dependencias del proyecto
-├── .env                    # 🔐 Variables de entorno (tokens, IDs)
-├── .gitignore             # 🚫 Archivos a ignorar en git
-└── README.md              # 📋 Documentación del proyecto
+project_root/
+├── config/           # Centralized configuration (settings.py)
+├── core/             # Core utilities (logger.py)
+├── data/             # Data Layer (Robust & Gap-Free)
+│   ├── providers/    # API clients (YFinance, TwelveData) with Failover
+│   ├── storage/      # SQLite Database (trading.db)
+│   └── quality/      # Data Quality Engine (Gap Detection & Repair)
+├── analysis/         # Analysis Layer
+│   └── indicators.py # Technical Analysis (RSI, BB, ADX, VWAP, ATR)
+├── scripts/          # Operational Scripts (Backfill, Deployment)
+├── legacy_v3/        # Archived previous version
+└── tests/            # Unit and Integration tests
 ```
 
-## 🎲 Estrategia de Trading
+## 🚀 Status (Jan 11, 2026)
 
-### 📈 Condiciones para Señal LARGO
-1. **MACD**: Cruce hacia arriba (histogram > 0)
-2. **RSI**: < 40 (zona de sobreventa)
-3. **Precio vs VWAP**: Cerca del VWAP (±0.5%)
-4. **ROC**: > +1.5% (momentum alcista)
-5. **Bollinger Bands**: Precio en zona inferior
-6. **Volumen**: Oscilador > +50% (preferible)
+### ✅ Completed Modules
 
-### 📉 Condiciones para Señal CORTO
-1. **MACD**: Cruce hacia abajo (histogram < 0)
-2. **RSI**: > 60 (zona de sobrecompra)
-3. **Precio vs VWAP**: Alejado del VWAP (>+1.0%)
-4. **ROC**: < -1.5% (momentum bajista)
-5. **Bollinger Bands**: Precio en zona superior
-6. **Volumen**: Oscilador > +50% (preferible)
+1.  **Foundation**:
+    *   Modular stucture with centralized `config` and `core` logging.
+    *   Virtual environment `trading_env` standardized.
 
-### 🎯 Sistema de Puntuación
-- **🟢 Entrada Completa (≥100 pts)**: 5/5 señales + volumen fuerte
-- **🟡 Entrada Parcial (70-99 pts)**: 4/5 señales + momentum building
-- **🔴 No Operar (<70 pts)**: Insuficientes confirmaciones
+2.  **Data Layer (Phase 2)**:
+    *   **Providers**: implemented `YFinanceProvider` and `TwelveDataProvider` with a `DataProviderFactory` that handles failover automatically.
+    *   **Storage**: SQLite database (`data/storage/trading.db`) storing `market_data` (OHLCV) and `indicators`.
+    *   **Data Quality**:
+        *   `GapDetector`: Identifies data gaps (Small, Overnight, Weekend).
+        *   `GapRepair`: Fills gaps using interpolation (small) or forward-fill/fetch (large) to ensure continuous data streams required for backtesting.
+        *   `ContinuousCollector`: Service for real-time data ingestion and repair.
 
-## 💰 Gestión de Posiciones
+3.  **Analysis Layer (Phase 3)**:
+    *   **Indicators**: Implemented specialized `analysis/indicators.py` supporting:
+        *   RSI, Bollinger Bands, ADX, ATR, VWAP.
+        *   Dual-mode calculation (Pandas or TA-Lib).
+    *   **Scanner**: Implemented `analysis/scanner.py` with full "Mean Reversion Selectiva" logic.
+    *   **Patterns**: Candle pattern recognition (`analysis/patterns.py`).
+    *   **Multi-Timeframe Logic**: Verified Daily SMA50 merging.
 
-### 📊 Entradas Escalonadas
-- **Entrada 1 (40%)**: Señal completa confirmada
-- **Entrada 2 (30%)**: Precio -0.5 ATR (largos) / +0.5 ATR (cortos)
-- **Entrada 3 (30%)**: Precio -1.0 ATR (largos) / +1.0 ATR (cortos)
+4.  **Execution Layer (Phase 4)**:
+    *   **Risk**: `analysis/risk.py` for ATR-based position sizing.
+    *   **Trade Manager**: `trading/manager.py` converts Signals to Plans (Entries, TPs, SL).
+    *   **Alerts**: `alerts/telegram.py` for real-time notifications.
 
-### 🎯 Salidas Escalonadas
-- **TP1 (25%)**: 1.5R - Asegurar ganancia inicial
-- **TP2 (25%)**: 2.5R - Capitalizar momentum
-- **TP3 (25%)**: 4.0R - Aprovechar movimientos extendidos
-- **TP4 (25%)**: Trailing stop desde 4R
+5.  **Strategy Alignment**:
+    *   Universe restricted to strategy requirements: `SPY`, `QQQ`, `IWM`, `XLF`, `XLE`, `XLK`, `SMH`, `GLD`, `TLT`, `EEM`.
+    *   Timeframes: 1H (Trading) + 1D (Trend Filter).
 
-### 🛡️ Gestión de Riesgo
-- **Riesgo máximo**: 1.5% del capital por operación
-- **Stop loss**: 1 ATR desde precio de entrada
-- **R:R objetivo**: Mínimo 1:4, promedio 1:5+
+### ⏳ In Progress
 
-## ⏰ Filtros Temporales
+*   **Backtesting**: Calibration of scanner sensitivity.
+*   **Execution Database**: Persisting Trade Plans to `trades` table.
 
-### ✅ Sesiones de Alta Probabilidad
-- **Mañana**: 09:45 - 11:30 AM
-- **Tarde**: 14:00 - 15:30 PM
+## 🛠️ Operational Scripts
 
-### ❌ Horarios a Evitar
-- **Apertura volátil**: 09:30 - 09:45 AM
-- **Almuerzo**: 11:30 - 14:00 PM
-- **Cierre**: 15:30 - 16:00 PM
+*   `python scripts/backfill_data.py`: Fetches max history (730 days 1H, 5yr 1D).
+*   `python scripts/verify_data_integrity.py`: Audits data ranges and quality.
+*   `python scripts/calculate_history.py`: Populates `trading.db` with indicators.
+*   `python scripts/test_scanner.py`: Runs the scanner logic on historical data.
+*   `python scripts/test_trade_manager.py`: Verifies position sizing and order generation.
 
-## 🚀 Instalación y Configuración
+## 💾 Database Schema
 
-### 1. Clonar el Repositorio
+*   **market_data**: `symbol`, `timeframe`, `timestamp`, `open`, `high`, `low`, `close`, `volume`, `is_filled`.
+*   **indicators**: `rsi`, `bb_upper`, `bb_middle`, `bb_lower`, `adx`, `atr`, `vwap`, `sma_50` (Daily/Hourly mixed), `volume_sma_20`.
+
+## 🧪 Testing
+
+Run the test suite to verify integrity:
 ```bash
-git clone [URL_DEL_REPOSITORIO]
-cd trading_system
+python -m unittest discover tests
 ```
-
-### 2. Instalar Dependencias
-```bash
-pip install -r requirements.txt
-```
-
-### 3. Configurar Variables de Entorno
-Crear archivo `.env` con:
-```env
-TELEGRAM_TOKEN=tu_token_de_telegram
-CHAT_ID=tu_chat_id
-```
-
-### 4. Configurar Parámetros
-Editar `config.py` con tus preferencias:
-- Símbolos a escanear
-- Parámetros de indicadores
-- Configuración de riesgo
-
-### 5. Ejecutar el Sistema
-```bash
-python main.py
-```
-
-## 📱 Configuración de Telegram
-
-### Crear Bot de Telegram
-1. Hablar con [@BotFather](https://t.me/BotFather)
-2. Usar comando `/newbot`
-3. Seguir instrucciones y copiar el token
-4. Obtener tu Chat ID hablando con [@userinfobot](https://t.me/userinfobot)
-
-### Formato de Alertas
-```
-🟢 SEÑAL DETECTADA - AAPL
-📊 Tipo: LONG | Confianza: 85/100
-
-💰 ENTRADAS ESCALONADAS:
-• Entrada 1 (40%): $150.25
-• Entrada 2 (30%): $149.75  
-• Entrada 3 (30%): $149.25
-
-🎯 SALIDAS ESCALONADAS:
-• TP1 (25%): $152.50
-• TP2 (25%): $154.00
-• TP3 (25%): $156.75
-• TP4 (25%): Trailing desde $158.25
-
-🛡️ Stop Loss: $148.75
-
-📊 INDICADORES:
-MACD: ✅ | RSI: 35 ✅ | VWAP: ✅ | ROC: +2.1% ✅ | BB: ✅ | VOL: +65% ✅
-```
-
-## 🔧 Tecnologías Utilizadas
-
-- **Python 3.10+**
-- **yfinance** - Datos de mercado en tiempo real
-- **pandas & numpy** - Procesamiento de datos
-- **ta-lib** - Indicadores técnicos
-- **python-telegram-bot** - Alertas por Telegram
-- **schedule** - Programación de tareas
-
-## 📊 Símbolos Monitoreados
-
-Por defecto, el sistema monitorea:
-- **SPY** - S&P 500 ETF
-- **QQQ** - Nasdaq 100 ETF
-- **AAPL** - Apple Inc.
-- **NVDA** - NVIDIA Corporation
-- **AMD** - Advanced Micro Devices
-- **TSLA** - Tesla Inc.
-
-## 🎯 Objetivos de Performance
-
-- **Señales por día**: 3-5 de alta calidad
-- **Tasa de éxito objetivo**: 65-75%
-- **R:R promedio**: 1:4.5
-- **Drawdown máximo**: 8-12%
-- **ROI anual objetivo**: 25-35%
-
-## 📝 Logs y Monitoreo
-
-El sistema genera logs detallados en:
-- **Consola**: Output en tiempo real
-- **Archivo**: `trading_system.log`
-- **Telegram**: Alertas de señales detectadas
-
-## ⚠️ Disclaimer
-
-Este sistema es solo para fines educativos e informativos. No constituye asesoramiento financiero. Operar en los mercados financieros conlleva riesgo de pérdida. Siempre realiza tu propia investigación y considera consultar con un asesor financiero antes de tomar decisiones de inversión.
-
-## 📞 Soporte
-
-Para reportar problemas o sugerir mejoras, crear un issue en el repositorio o contactar al desarrollador.
-
----
-
-**🚀 ¡Listo para automatizar tu trading!** 
-
-*Sistema desarrollado para traders que buscan señales de alta calidad con gestión de riesgo profesional.*

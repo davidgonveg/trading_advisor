@@ -1,0 +1,950 @@
+#!/usr/bin/env python3
+"""
+🚪 EXIT MANAGEMENT SYSTEM - TRADING AUTOMATIZADO V2.2
+===================================================
+
+🔧 CHANGELOG V2.2:
+- ✅ FIXED: Añadido current_price al dataclass ExitSignal
+- ✅ FIXED: current_price pasado al crear ExitSignal
+- ✅ Soluciona error: 'ExitSignal' object has no attribute 'current_price'
+
+Sistema inteligente que reevalúa posiciones activas y detecta:
+- Deterioro severo de condiciones técnicas
+- Cambios de momentum que invalidan la tesis original
+- Señales de salida anticipada antes del stop loss
+- Confluencias técnicas negativas
+
+LÓGICA DE EXIT MANAGEMENT:
+- Solo evalúa símbolos con posiciones activas
+- Busca deterioro SEVERO (no oscilaciones normales)
+- Genera alertas de "EXIT URGENTE" o "EXIT RECOMENDADO"
+- Mantiene histórico de decisiones para aprendizaje
+"""
+
+import logging
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass
+from enum import Enum
+import json
+import os
+import pytz
+
+# Importar módulos del sistema
+from analysis.scanner import TradingSignal, SignalScanner
+from analysis.indicators import TechnicalIndicators
+from data.manager import DataManager # 🆕 V3.3
+from execution.position_calculator import PositionPlan
+
+import config
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+class ExitUrgency(Enum):
+    """Niveles de urgencia para salidas"""
+    NO_EXIT = "NO_EXIT"
+    EXIT_WATCH = "EXIT_WATCH"           # Vigilar - condiciones se deterioran
+    EXIT_RECOMMENDED = "EXIT_RECOMMENDED"  # Salida recomendada - condiciones malas
+    EXIT_URGENT = "EXIT_URGENT"         # Salida urgente - condiciones críticas
+
+@dataclass
+class ActivePosition:
+    """Representa una posición activa en seguimiento"""
+    symbol: str
+    direction: str  # 'LONG' or 'SHORT'
+    entry_signal: TradingSignal
+    entry_time: datetime
+    entry_price: float
+    position_plan: PositionPlan
+    
+    # Estado de la posición
+    current_price: float = 0.0
+    unrealized_pnl_pct: float = 0.0
+    days_held: int = 0
+    
+    # Seguimiento de deterioro
+    deterioration_count: int = 0  # Veces que ha mostrado deterioro
+    last_evaluation: Optional[datetime] = None
+    exit_alerts_sent: int = 0
+
+@dataclass
+class ExitSignal:
+    """Señal de salida con análisis completo"""
+    symbol: str
+    urgency: ExitUrgency
+    exit_score: int  # Puntuación negativa (0-100, 100=salir ya)
+    position: ActivePosition
+    
+    # Razones técnicas específicas
+    technical_reasons: List[str]
+    momentum_change: float  # % cambio en momentum desde entrada
+    trend_reversal: bool
+    volume_divergence: bool
+    
+    # Recomendación
+    recommended_action: str
+    exit_percentage: int  # % de posición a cerrar
+    
+    # Timestamp y contexto
+    timestamp: datetime
+    current_indicators: Dict
+    current_price: float = 0.0  # 🔧 FIX V2.2: Añadido para telegram_bot.py
+
+class ExitManager:
+    """
+    Gestor principal de salidas inteligentes
+    """
+    
+    def __init__(self, positions_file: str = "active_positions.json", data_manager=None, time_provider=None):
+        """Inicializar el exit manager"""
+        self.positions_file = positions_file
+        self.active_positions: Dict[str, ActivePosition] = {}
+        
+        # Inyección de dependencias
+        from utils.time_provider import RealTimeProvider
+        self.time_provider = time_provider or RealTimeProvider()
+        
+        # Componentes
+        # Nota: Scanner también debería recibir time_provider si se instancia aquí, 
+        # pero ExitManager usa scanner? Sí, self.scanner = SignalScanner().
+        # Deberíamos inyectarlo también o crearlo con el provider.
+        from analysis.scanner import SignalScanner
+        self.scanner = SignalScanner(data_manager=data_manager, time_provider=self.time_provider)
+        
+        self.indicators = TechnicalIndicators()
+        
+        if data_manager:
+            self.data_manager = data_manager
+        else:
+            self.data_manager = DataManager(vars(config)) # 🆕 V3.3
+        
+        # Configurar timezone para operaciones de fecha
+        self.market_tz = pytz.timezone(config.MARKET_TIMEZONE)
+        self.utc_tz = pytz.UTC
+        
+        # Configuración de deterioro
+        self.deterioration_thresholds = {
+            'MILD': 60,      # Puntuación 60-69: Deterioro leve
+            'MODERATE': 70,  # Puntuación 70-79: Deterioro moderado
+            'SEVERE': 80,    # Puntuación 80-89: Deterioro severo
+            'CRITICAL': 90   # Puntuación 90+: Deterioro crítico
+        }
+        
+        # Cargar posiciones existentes
+        self.load_positions()
+        
+        logger.info("🚪 Exit Manager V2.2 inicializado")
+        logger.info(f"📊 Posiciones activas cargadas: {len(self.active_positions)}")
+    
+    def _get_current_time(self) -> datetime:
+        """Obtener tiempo actual con timezone consistente"""
+        return self.time_provider.now(self.utc_tz)
+    
+    def _ensure_timezone_aware(self, dt: datetime) -> datetime:
+        """Asegurar que datetime tiene timezone"""
+        if dt.tzinfo is None:
+            # Si no tiene timezone, asumir que es market timezone
+            return self.market_tz.localize(dt).astimezone(self.utc_tz)
+        else:
+            # Si ya tiene timezone, convertir a UTC
+            return dt.astimezone(self.utc_tz)
+    
+    def _calculate_days_held(self, entry_time: datetime) -> int:
+        """Calcular días transcurridos con timezone awareness"""
+        try:
+            current_time = self._get_current_time()
+            entry_time_utc = self._ensure_timezone_aware(entry_time)
+            delta = current_time - entry_time_utc
+            return delta.days
+        except Exception as e:
+            logger.error(f"❌ Error calculando días: {e}")
+            return 0
+    
+    def add_position(self, signal: TradingSignal, entry_price: float) -> bool:
+        """
+        Añadir nueva posición para seguimiento
+        
+        Args:
+            signal: Señal original de entrada
+            entry_price: Precio real de entrada
+            
+        Returns:
+            True si se añadió correctamente
+        """
+        try:
+            if not signal.position_plan:
+                logger.error(f"❌ {signal.symbol}: Sin plan de posición")
+                return False
+            
+            # Asegurar timezone en entry_time
+            entry_time = self._ensure_timezone_aware(signal.timestamp)
+            
+            position = ActivePosition(
+                symbol=signal.symbol,
+                direction=signal.signal_type,
+                entry_signal=signal,
+                entry_time=entry_time,
+                entry_price=entry_price,
+                position_plan=signal.position_plan,
+                current_price=entry_price,
+                last_evaluation=self._get_current_time()
+            )
+            
+            self.active_positions[signal.symbol] = position
+            self.save_positions()
+            
+            logger.info(f"✅ {signal.symbol}: Posición añadida para seguimiento")
+            logger.info(f"   Dirección: {signal.signal_type}")
+            logger.info(f"   Precio entrada: ${entry_price:.2f}")
+            logger.info(f"   Estrategia: {signal.position_plan.strategy_type}")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Error añadiendo posición {signal.symbol}: {e}")
+            return False
+    
+    def remove_position(self, symbol: str, reason: str = "Manual") -> bool:
+        """Remover posición del seguimiento"""
+        try:
+            if symbol in self.active_positions:
+                position = self.active_positions[symbol]
+                days_held = self._calculate_days_held(position.entry_time)
+                
+                logger.info(f"🚪 {symbol}: Posición removida - {reason}")
+                logger.info(f"   Tiempo mantenida: {days_held} días")
+                logger.info(f"   Alertas de exit enviadas: {position.exit_alerts_sent}")
+                
+                del self.active_positions[symbol]
+                self.save_positions()
+                return True
+            else:
+                logger.warning(f"⚠️ {symbol}: No está en seguimiento")
+                return False
+                
+        except Exception as e:
+            logger.error(f"❌ Error removiendo posición {symbol}: {e}")
+            return False
+    
+    def evaluate_exit_for_long(self, position: ActivePosition, indicators: Dict) -> Tuple[int, List[str]]:
+        """
+        Evaluar deterioro para posición LONG
+        
+        Busca condiciones que invaliden la tesis alcista original:
+        - MACD girando bajista con fuerza
+        - RSI en sobrecompra extrema (>75) y divergencia
+        - Precio alejándose mucho del VWAP (>2%)
+        - ROC volviéndose fuertemente negativo
+        - Bollinger Bands: precio en zona superior con rechazo
+        - Volumen confirmando la distribución
+        """
+        try:
+            deterioration_score = 0
+            reasons = []
+            
+            # 1. MACD - ¿Girando bajista?
+            macd_data = indicators.get('macd', {})
+            if macd_data.get('bearish_cross', False):
+                deterioration_score += 25
+                reasons.append("🔴 MACD: Cruce bajista confirmado")
+            elif macd_data.get('histogram', 0) < -0.01:
+                deterioration_score += 15
+                reasons.append("📉 MACD: Histogram fuertemente negativo")
+            
+            # 2. RSI - ¿Sobrecompra extrema?
+            rsi_data = indicators.get('rsi', {})
+            rsi_value = rsi_data.get('rsi', 50)
+            
+            if rsi_value > 80:
+                deterioration_score += 25
+                reasons.append(f"🔴 RSI: Sobrecompra extrema ({rsi_value:.1f})")
+            elif rsi_value > 75:
+                deterioration_score += 15
+                reasons.append(f"⚠️ RSI: Sobrecompra severa ({rsi_value:.1f})")
+            
+            # 3. VWAP - ¿Muy alejado por arriba?
+            vwap_data = indicators.get('vwap', {})
+            vwap_deviation = vwap_data.get('deviation_pct', 0)
+            
+            if vwap_deviation > 3.0:
+                deterioration_score += 20
+                reasons.append(f"📊 VWAP: Precio muy alejado (+{vwap_deviation:.1f}%)")
+            elif vwap_deviation > 2.0:
+                deterioration_score += 10
+                reasons.append(f"⚠️ VWAP: Precio alejado (+{vwap_deviation:.1f}%)")
+            
+            # 4. ROC - ¿Momentum bajista?
+            roc_data = indicators.get('roc', {})
+            roc_value = roc_data.get('roc', 0)
+            
+            if roc_value < -2.5:
+                deterioration_score += 25
+                reasons.append(f"🔴 ROC: Momentum bajista fuerte ({roc_value:.1f}%)")
+            elif roc_value < -1.0:
+                deterioration_score += 15
+                reasons.append(f"📉 ROC: Momentum bajista ({roc_value:.1f}%)")
+            
+            # 5. Bollinger Bands - ¿Rechazo en zona alta?
+            bb_data = indicators.get('bollinger', {})
+            bb_position = bb_data.get('bb_position', 0.5)
+            
+            if bb_position > 0.9:
+                deterioration_score += 20
+                reasons.append("🔴 BB: Precio en banda superior - posible rechazo")
+            elif bb_position > 0.8:
+                deterioration_score += 10
+                reasons.append("⚠️ BB: Precio en zona alta")
+            
+            # 6. Volumen - ¿Distribución?
+            vol_data = indicators.get('volume_osc', {})
+            vol_oscillator = vol_data.get('volume_oscillator', 0)
+            
+            current_price = indicators.get('current_price', position.current_price)
+            price_change_pct = ((current_price - position.entry_price) / position.entry_price) * 100
+            
+            if vol_oscillator > 50 and price_change_pct < -1.0:
+                deterioration_score += 15
+                reasons.append("📊 VOLUME: Alto volumen con precio bajando (distribución)")
+            
+            return deterioration_score, reasons
+            
+        except Exception as e:
+            logger.error(f"❌ Error evaluando LONG exit: {e}")
+            return 0, [f"Error en evaluación: {str(e)}"]
+    
+    def evaluate_exit_for_short(self, position: ActivePosition, indicators: Dict) -> Tuple[int, List[str]]:
+        """
+        Evaluar deterioro para posición SHORT
+        
+        Busca condiciones que invaliden la tesis bajista original:
+        - MACD girando alcista con fuerza
+        - RSI en sobreventa extrema (<25) y divergencia alcista
+        - Precio volviendo hacia VWAP desde zona alta
+        - ROC volviéndose fuertemente positivo
+        - Bollinger Bands: precio en zona inferior con rebote
+        - Volumen confirmando la acumulación
+        """
+        try:
+            deterioration_score = 0
+            reasons = []
+            
+            # 1. MACD - ¿Girando alcista?
+            macd_data = indicators.get('macd', {})
+            if macd_data.get('bullish_cross', False):
+                deterioration_score += 25
+                reasons.append("🟢 MACD: Cruce alcista confirmado")
+            elif macd_data.get('histogram', 0) > 0.01:
+                deterioration_score += 15
+                reasons.append("📈 MACD: Histogram fuertemente positivo")
+            
+            # 2. RSI - ¿Sobreventa extrema con divergencia?
+            rsi_data = indicators.get('rsi', {})
+            rsi_value = rsi_data.get('rsi', 50)
+            
+            if rsi_value < 20:
+                deterioration_score += 25
+                reasons.append(f"🟢 RSI: Sobreventa extrema ({rsi_value:.1f})")
+            elif rsi_value < 25:
+                deterioration_score += 15
+                reasons.append(f"⚠️ RSI: Sobreventa severa ({rsi_value:.1f})")
+            
+            # 3. VWAP - ¿Volviendo hacia VWAP?
+            vwap_data = indicators.get('vwap', {})
+            vwap_deviation = vwap_data.get('deviation_pct', 0)
+            
+            if -1.0 < vwap_deviation < 1.0:
+                deterioration_score += 20
+                reasons.append(f"📊 VWAP: Precio volviendo al VWAP ({vwap_deviation:+.1f}%)")
+            elif vwap_deviation < -2.0:
+                deterioration_score += 15
+                reasons.append(f"🟢 VWAP: Precio muy por debajo ({vwap_deviation:+.1f}%) - posible rebote")
+            
+            # 4. ROC - ¿Momentum alcista?
+            roc_data = indicators.get('roc', {})
+            roc_value = roc_data.get('roc', 0)
+            
+            if roc_value > 2.5:
+                deterioration_score += 25
+                reasons.append(f"🟢 ROC: Momentum alcista fuerte (+{roc_value:.1f}%)")
+            elif roc_value > 1.0:
+                deterioration_score += 15
+                reasons.append(f"📈 ROC: Momentum alcista (+{roc_value:.1f}%)")
+            
+            # 5. Bollinger Bands - ¿Rebote desde zona baja?
+            bb_data = indicators.get('bollinger', {})
+            bb_position = bb_data.get('bb_position', 0.5)
+            
+            if bb_position < 0.1:
+                deterioration_score += 20
+                reasons.append("🟢 BB: Precio en banda inferior - posible rebote")
+            elif bb_position < 0.2:
+                deterioration_score += 10
+                reasons.append("⚠️ BB: Precio en zona baja")
+            
+            # 6. Volumen - ¿Acumulación?
+            vol_data = indicators.get('volume_osc', {})
+            vol_oscillator = vol_data.get('volume_oscillator', 0)
+            
+            current_price = indicators.get('current_price', position.current_price)
+            price_change_pct = ((current_price - position.entry_price) / position.entry_price) * 100
+            
+            if vol_oscillator > 50 and price_change_pct > 1.0:
+                deterioration_score += 15
+                reasons.append("📊 VOLUME: Alto volumen con precio subiendo (acumulación)")
+            
+            return deterioration_score, reasons
+            
+        except Exception as e:
+            logger.error(f"❌ Error evaluando SHORT exit: {e}")
+            return 0, [f"Error en evaluación: {str(e)}"]
+    
+    def calculate_momentum_change(self, position: ActivePosition, current_roc: float) -> float:
+        """Calcular cambio de momentum desde la entrada"""
+        try:
+            original_roc = position.entry_signal.indicator_scores.get('ROC', 0)
+            
+            if position.direction == 'LONG':
+                if original_roc >= 18:
+                    original_roc_value = 2.5
+                elif original_roc >= 15:
+                    original_roc_value = 1.8
+                elif original_roc >= 10:
+                    original_roc_value = 1.0
+                else:
+                    original_roc_value = 0.5
+            else:  # SHORT
+                if original_roc >= 18:
+                    original_roc_value = -2.5
+                elif original_roc >= 15:
+                    original_roc_value = -1.8
+                elif original_roc >= 10:
+                    original_roc_value = -1.0
+                else:
+                    original_roc_value = -0.5
+            
+            if original_roc_value != 0:
+                momentum_change = ((current_roc - original_roc_value) / abs(original_roc_value)) * 100
+            else:
+                momentum_change = 0
+            
+            return momentum_change
+            
+        except Exception as e:
+            logger.error(f"❌ Error calculando cambio momentum: {e}")
+            return 0
+
+    def add_position_from_signal(self, signal, plan) -> bool:
+        """
+        Registrar nueva posición desde señal del scanner
+        
+        Args:
+            signal: TradingSignal del scanner
+            plan: PositionPlan del position_calculator
+            
+        Returns:
+            True si se registró exitosamente
+        """
+        try:
+            # Asegurar timezone en entry_time para backtesting
+            entry_time = self._ensure_timezone_aware(signal.timestamp)
+            
+            # Crear registro de posición activa usando dataclase Correcta
+            # Nota: ActivePosition definition (lines 52-70) NO tiene campo 'status' en la version actual que lei.
+            # Lo omitire.
+            
+            position = ActivePosition(
+                symbol=signal.symbol,
+                direction=signal.signal_type,
+                entry_signal=signal,
+                entry_time=entry_time,
+                entry_price=plan.entries[0].price if plan.entries else signal.current_price,
+                position_plan=plan,
+                current_price=signal.current_price,
+                last_evaluation=self._get_current_time()
+            )
+            
+            if signal.symbol not in self.active_positions:
+                self.active_positions[signal.symbol] = position
+                self.save_positions()
+                logger.info(f"✅ {signal.symbol}: Posición añadida para seguimiento (Backtest)")
+                return True
+            else:
+                logger.warning(f"⚠️ {signal.symbol} ya tiene posición activa")
+                return False
+                
+        except Exception as e:
+            logger.error(f"❌ Error registrando posición: {e}")
+            return False
+    
+    def detect_trend_reversal(self, position: ActivePosition, indicators: Dict) -> bool:
+        """Detectar si hay reversión de tendencia clara"""
+        try:
+            macd_data = indicators.get('macd', {})
+            rsi_data = indicators.get('rsi', {})
+            roc_data = indicators.get('roc', {})
+            
+            if position.direction == 'LONG':
+                macd_bearish = macd_data.get('bearish_cross', False) or macd_data.get('histogram', 0) < -0.01
+                rsi_high = rsi_data.get('rsi', 50) > 70
+                roc_negative = roc_data.get('roc', 0) < -1.0
+                
+                return macd_bearish and (rsi_high or roc_negative)
+            
+            else:  # SHORT
+                macd_bullish = macd_data.get('bullish_cross', False) or macd_data.get('histogram', 0) > 0.01
+                rsi_low = rsi_data.get('rsi', 50) < 30
+                roc_positive = roc_data.get('roc', 0) > 1.0
+                
+                return macd_bullish and (rsi_low or roc_positive)
+                
+        except Exception as e:
+            logger.error(f"❌ Error detectando reversal: {e}")
+            return False
+    
+    def detect_volume_divergence(self, position: ActivePosition, indicators: Dict) -> bool:
+        """Detectar divergencia de volumen preocupante"""
+        try:
+            vol_data = indicators.get('volume_osc', {})
+            vol_oscillator = vol_data.get('volume_oscillator', 0)
+            
+            current_price = indicators.get('current_price', position.current_price)
+            price_change_pct = ((current_price - position.entry_price) / position.entry_price) * 100
+            
+            if position.direction == 'LONG':
+                return vol_oscillator > 50 and price_change_pct < -2.0
+            else:  # SHORT
+                return vol_oscillator > 50 and price_change_pct > 2.0
+                
+        except Exception as e:
+            logger.error(f"❌ Error detectando divergencia volumen: {e}")
+            return False
+    
+    def evaluate_position(self, symbol: str) -> Optional[ExitSignal]:
+        """
+        Evaluar una posición específica para posible salida
+        """
+        try:
+            if symbol not in self.active_positions:
+                return None
+            
+            position = self.active_positions[symbol]
+            
+            logger.info(f"🔍 Evaluando exit para {symbol} ({position.direction})")
+            
+            # Obtener indicadores actuales via DataManager y Calculate
+            market_data = self.data_manager.get_data(symbol, "15m", 30)
+            if market_data is None or market_data.empty:
+                logger.warning(f"⚠️ {symbol}: No hay datos para evaluar exit")
+                return None
+                
+            indicators = self.indicators.calculate_all_indicators(market_data, symbol)
+
+            
+            # Actualizar precio actual
+            position.current_price = indicators['current_price']
+            position.last_evaluation = self._get_current_time()
+            
+            # Calcular PnL actual
+            if position.direction == 'LONG':
+                position.unrealized_pnl_pct = ((position.current_price - position.entry_price) / position.entry_price) * 100
+            else:  # SHORT
+                position.unrealized_pnl_pct = ((position.entry_price - position.current_price) / position.entry_price) * 100
+            
+            # Evaluar deterioro según dirección
+            if position.direction == 'LONG':
+                exit_score, reasons = self.evaluate_exit_for_long(position, indicators)
+            else:
+                exit_score, reasons = self.evaluate_exit_for_short(position, indicators)
+            
+            # Si no hay deterioro significativo, no generar señal
+            if exit_score < self.deterioration_thresholds['MILD']:
+                logger.debug(f"✅ {symbol}: Sin deterioro significativo ({exit_score} pts)")
+                return None
+            
+            # Determinar urgencia
+            if exit_score >= self.deterioration_thresholds['CRITICAL']:
+                urgency = ExitUrgency.EXIT_URGENT
+                exit_percentage = 100
+                recommended_action = "SALIR INMEDIATAMENTE - Deterioro crítico"
+            elif exit_score >= self.deterioration_thresholds['SEVERE']:
+                urgency = ExitUrgency.EXIT_URGENT
+                exit_percentage = 75
+                recommended_action = "SALIR URGENTE - Reducir posición significativamente"
+            elif exit_score >= self.deterioration_thresholds['MODERATE']:
+                urgency = ExitUrgency.EXIT_RECOMMENDED
+                exit_percentage = 50
+                recommended_action = "SALIDA RECOMENDADA - Reducir posición a la mitad"
+            else:  # MILD
+                urgency = ExitUrgency.EXIT_WATCH
+                exit_percentage = 0
+                recommended_action = "VIGILAR DE CERCA - Condiciones se deterioran"
+            
+            # Calcular métricas adicionales
+            current_roc = indicators.get('roc', {}).get('roc', 0)
+            momentum_change = self.calculate_momentum_change(position, current_roc)
+            trend_reversal = self.detect_trend_reversal(position, indicators)
+            volume_divergence = self.detect_volume_divergence(position, indicators)
+            
+            # Incrementar contador de deterioro si es necesario
+            if urgency in [ExitUrgency.EXIT_RECOMMENDED, ExitUrgency.EXIT_URGENT]:
+                position.deterioration_count += 1
+            
+            # 🔧 FIX V2.2: Crear señal de exit CON current_price
+            exit_signal = ExitSignal(
+                symbol=symbol,
+                urgency=urgency,
+                exit_score=exit_score,
+                position=position,
+                technical_reasons=reasons,
+                momentum_change=momentum_change,
+                trend_reversal=trend_reversal,
+                volume_divergence=volume_divergence,
+                recommended_action=recommended_action,
+                exit_percentage=exit_percentage,
+                timestamp=self._get_current_time(),
+                current_indicators=indicators,
+                current_price=position.current_price  # 🔧 FIX V2.2: AÑADIDO
+            )
+            
+            logger.info(f"🚪 {symbol}: Exit evaluado - {urgency.value} ({exit_score} pts)")
+            logger.info(f"   PnL actual: {position.unrealized_pnl_pct:+.1f}%")
+            logger.info(f"   Recomendación: {recommended_action}")
+            
+            return exit_signal
+            
+        except Exception as e:
+            logger.error(f"❌ Error evaluando {symbol}: {e}")
+            return None
+    
+    def evaluate_all_positions(self) -> List[ExitSignal]:
+        """Evaluar todas las posiciones activas"""
+        try:
+            if not self.active_positions:
+                logger.info("📊 No hay posiciones activas para evaluar")
+                return []
+            
+            logger.info(f"🔍 Evaluando {len(self.active_positions)} posiciones activas...")
+            
+            exit_signals = []
+            
+            for symbol in list(self.active_positions.keys()):
+                try:
+                    exit_signal = self.evaluate_position(symbol)
+                    if exit_signal:
+                        exit_signals.append(exit_signal)
+                        
+                except Exception as e:
+                    logger.error(f"❌ Error evaluando {symbol}: {e}")
+                    continue
+            
+            # Ordenar por urgencia y score
+            exit_signals.sort(key=lambda x: (x.urgency.value, x.exit_score), reverse=True)
+            
+            logger.info(f"🚪 Evaluación completada: {len(exit_signals)} alertas de exit generadas")
+            
+            return exit_signals
+            
+        except Exception as e:
+            logger.error(f"❌ Error en evaluación general: {e}")
+            return []
+    
+    def save_positions(self):
+        """Guardar posiciones en archivo JSON"""
+        try:
+            positions_data = {}
+            
+            for symbol, position in self.active_positions.items():
+                positions_data[symbol] = {
+                    'symbol': position.symbol,
+                    'direction': position.direction,
+                    'entry_time': position.entry_time.isoformat(),
+                    'entry_price': position.entry_price,
+                    'current_price': position.current_price,
+                    'unrealized_pnl_pct': position.unrealized_pnl_pct,
+                    'deterioration_count': position.deterioration_count,
+                    'exit_alerts_sent': position.exit_alerts_sent,
+                    'last_evaluation': position.last_evaluation.isoformat() if position.last_evaluation else None,
+                    'entry_signal_strength': position.entry_signal.signal_strength if position.entry_signal else 0,
+                    'entry_confidence': position.entry_signal.confidence_level if position.entry_signal else 'UNKNOWN',
+                    'strategy_type': position.position_plan.strategy_type if position.position_plan else None
+                }
+            
+            with open(self.positions_file, 'w') as f:
+                json.dump(positions_data, f, indent=2)
+                
+        except Exception as e:
+            logger.error(f"❌ Error guardando posiciones: {e}")
+    
+    def load_positions(self):
+        """Cargar posiciones desde archivo JSON"""
+        try:
+            if not os.path.exists(self.positions_file):
+                return
+            
+            with open(self.positions_file, 'r') as f:
+                positions_data = json.load(f)
+            
+            for symbol, data in positions_data.items():
+                entry_time_str = data['entry_time']
+                if 'T' in entry_time_str:
+                    entry_time = datetime.fromisoformat(entry_time_str[:19])
+                else:
+                    entry_time = datetime.fromisoformat(entry_time_str)
+                
+                entry_time = self._ensure_timezone_aware(entry_time)
+                
+                position = ActivePosition(
+                    symbol=data['symbol'],
+                    direction=data['direction'],
+                    entry_signal=None,
+                    entry_time=entry_time,
+                    entry_price=data['entry_price'],
+                    position_plan=None,
+                    current_price=data.get('current_price', data['entry_price']),
+                    unrealized_pnl_pct=data.get('unrealized_pnl_pct', 0),
+                    deterioration_count=data.get('deterioration_count', 0),
+                    exit_alerts_sent=data.get('exit_alerts_sent', 0)
+                )
+                
+                if data.get('last_evaluation'):
+                    last_eval_str = data['last_evaluation']
+                    if 'T' in last_eval_str:
+                        last_eval = datetime.fromisoformat(last_eval_str[:19])
+                    else:
+                        last_eval = datetime.fromisoformat(last_eval_str)
+                    position.last_evaluation = self._ensure_timezone_aware(last_eval)
+                
+                self.active_positions[symbol] = position
+            
+            logger.info(f"📂 {len(self.active_positions)} posiciones cargadas desde {self.positions_file}")
+            
+        except Exception as e:
+            logger.error(f"❌ Error cargando posiciones: {e}")
+    
+    def get_positions_summary(self) -> Dict:
+        """Obtener resumen de posiciones activas"""
+        try:
+            if not self.active_positions:
+                return {'total_positions': 0}
+            
+            current_time = self._get_current_time()
+            
+            total_days = 0
+            total_positions = len(self.active_positions)
+            
+            for position in self.active_positions.values():
+                days_held = self._calculate_days_held(position.entry_time)
+                total_days += days_held
+            
+            avg_days_held = total_days / total_positions if total_positions > 0 else 0
+            
+            summary = {
+                'total_positions': total_positions,
+                'long_positions': sum(1 for p in self.active_positions.values() if p.direction == 'LONG'),
+                'short_positions': sum(1 for p in self.active_positions.values() if p.direction == 'SHORT'),
+                'positions_with_deterioration': sum(1 for p in self.active_positions.values() if p.deterioration_count > 0),
+                'avg_days_held': round(avg_days_held, 1),
+                'total_unrealized_pnl': sum(p.unrealized_pnl_pct for p in self.active_positions.values()),
+                'positions': {}
+            }
+            
+            for symbol, position in self.active_positions.items():
+                days_held = self._calculate_days_held(position.entry_time)
+                summary['positions'][symbol] = {
+                    'direction': position.direction,
+                    'entry_price': position.entry_price,
+                    'current_price': position.current_price,
+                    'unrealized_pnl_pct': position.unrealized_pnl_pct,
+                    'days_held': days_held,
+                    'deterioration_count': position.deterioration_count,
+                    'exit_alerts_sent': position.exit_alerts_sent
+                }
+            
+            return summary
+            
+        except Exception as e:
+            logger.error(f"❌ Error en resumen posiciones: {e}")
+            return {'error': str(e), 'total_positions': 0}
+
+
+# =============================================================================
+# 🧪 FUNCIONES DE TESTING Y DEMO
+# =============================================================================
+
+def test_exit_manager():
+    """Test básico del exit manager"""
+    print("🧪 TESTING EXIT MANAGER V2.2")
+    print("=" * 50)
+    
+    try:
+        exit_manager = ExitManager("test_positions.json")
+        
+        print("1. Estado inicial:")
+        summary = exit_manager.get_positions_summary()
+        print(f"   Posiciones activas: {summary['total_positions']}")
+        
+        print("\n2. Simulación de posición:")
+        print("   (Requiere señal real del scanner para test completo)")
+        
+        print("\n3. Evaluación de todas las posiciones:")
+        exit_signals = exit_manager.evaluate_all_positions()
+        print(f"   Señales de exit generadas: {len(exit_signals)}")
+        
+        print("\n✅ Test básico completado")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Error en test: {e}")
+        return False
+
+def demo_exit_manager_with_real_position():
+    """Demo con posición real simulada"""
+    print("🎯 DEMO EXIT MANAGER V2.2 CON POSICIÓN REAL")
+    print("=" * 60)
+    
+    try:
+        from analysis.scanner import SignalScanner, TradingSignal
+        from execution.position_calculator import PositionCalculator
+        
+        scanner = SignalScanner()
+        exit_manager = ExitManager("demo_positions.json")
+        
+        print("1. 🔍 Generando señal de entrada real...")
+        signal = scanner.scan_symbol("SPY")
+        
+        if signal:
+            print(f"   ✅ Señal generada: {signal.symbol} {signal.signal_type}")
+            print(f"   Fuerza: {signal.signal_strength}/100")
+            print(f"   Precio: ${signal.current_price:.2f}")
+            
+            print("\n2. 📊 Añadiendo posición al seguimiento...")
+            entry_price = signal.current_price
+            success = exit_manager.add_position(signal, entry_price)
+            
+            if success:
+                print(f"   ✅ Posición añadida correctamente")
+                
+                print("\n3. 🚪 Evaluando condiciones de salida...")
+                exit_signal = exit_manager.evaluate_position(signal.symbol)
+                
+                if exit_signal:
+                    print(f"   🚨 ALERTA EXIT: {exit_signal.urgency.value}")
+                    print(f"   Score deterioro: {exit_signal.exit_score}/100")
+                    print(f"   Precio actual: ${exit_signal.current_price:.2f}")  # 🔧 AHORA FUNCIONA
+                    print(f"   Recomendación: {exit_signal.recommended_action}")
+                    print(f"   Salir: {exit_signal.exit_percentage}% de la posición")
+                    
+                    print(f"\n   📋 Razones técnicas:")
+                    for i, reason in enumerate(exit_signal.technical_reasons, 1):
+                        print(f"   {i}. {reason}")
+                    
+                    print(f"\n   📈 Métricas adicionales:")
+                    print(f"   • Cambio momentum: {exit_signal.momentum_change:+.1f}%")
+                    print(f"   • Reversión de tendencia: {'✅ SÍ' if exit_signal.trend_reversal else '❌ NO'}")
+                    print(f"   • Divergencia volumen: {'✅ SÍ' if exit_signal.volume_divergence else '❌ NO'}")
+                    
+                else:
+                    print("   ✅ No hay condiciones de deterioro significativo")
+                
+                print("\n4. 📊 Resumen de posiciones:")
+                summary = exit_manager.get_positions_summary()
+                print(f"   Total posiciones: {summary['total_positions']}")
+                print(f"   LONG: {summary.get('long_positions', 0)}")
+                print(f"   SHORT: {summary.get('short_positions', 0)}")
+                print(f"   PnL total no realizado: {summary.get('total_unrealized_pnl', 0):+.1f}%")
+                
+                print("\n5. 🧹 Limpiando demo...")
+                exit_manager.remove_position(signal.symbol, "Demo completado")
+                
+            else:
+                print("   ❌ Error añadiendo posición")
+        else:
+            print("   📊 No hay señales disponibles para demo")
+            print("   💡 Esto es normal - el sistema es selectivo")
+        
+        print("\n✅ Demo completado exitosamente")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Error en demo: {e}")
+        return False
+
+if __name__ == "__main__":
+    print("🚪 EXIT MANAGER V2.2 - MODO TESTING")
+    print("=" * 50)
+    print("Selecciona un test:")
+    print("1. Test básico del exit manager")
+    print("2. Demo con posición real")
+    print("3. Mostrar posiciones activas")
+    print("4. Ejecutar evaluación completa")
+    print("")
+    
+    try:
+        choice = input("Elige una opción (1-4): ").strip()
+        print("")
+        
+        if choice == "1":
+            test_exit_manager()
+        
+        elif choice == "2":
+            demo_exit_manager_with_real_position()
+        
+        elif choice == "3":
+            exit_manager = ExitManager()
+            summary = exit_manager.get_positions_summary()
+            
+            print("📊 POSICIONES ACTIVAS:")
+            print("=" * 40)
+            
+            if summary['total_positions'] == 0:
+                print("No hay posiciones activas")
+            else:
+                print(f"Total: {summary['total_positions']}")
+                print(f"LONG: {summary.get('long_positions', 0)}")
+                print(f"SHORT: {summary.get('short_positions', 0)}")
+                print(f"Con deterioro: {summary.get('positions_with_deterioration', 0)}")
+                print(f"PnL total: {summary.get('total_unrealized_pnl', 0):+.1f}%")
+                print("")
+                
+                positions = summary.get('positions', {})
+                for symbol, pos_data in positions.items():
+                    print(f"{symbol} ({pos_data['direction']}):")
+                    print(f"  Entrada: ${pos_data['entry_price']:.2f}")
+                    print(f"  Actual: ${pos_data['current_price']:.2f}")
+                    print(f"  PnL: {pos_data['unrealized_pnl_pct']:+.1f}%")
+                    print(f"  Días: {pos_data['days_held']}")
+                    print(f"  Alertas exit: {pos_data['exit_alerts_sent']}")
+                    print("")
+        
+        elif choice == "4":
+            print("🔍 Ejecutando evaluación completa...")
+            exit_manager = ExitManager()
+            exit_signals = exit_manager.evaluate_all_positions()
+            
+            if exit_signals:
+                print(f"\n🚨 {len(exit_signals)} ALERTAS DE EXIT:")
+                print("=" * 50)
+                
+                for i, signal in enumerate(exit_signals, 1):
+                    print(f"{i}. {signal.symbol} - {signal.urgency.value}")
+                    print(f"   Score: {signal.exit_score}/100")
+                    print(f"   Precio: ${signal.current_price:.2f}")  # 🔧 AHORA FUNCIONA
+                    print(f"   PnL: {signal.position.unrealized_pnl_pct:+.1f}%")
+                    print(f"   Recomendación: Salir {signal.exit_percentage}%")
+                    print(f"   Razones principales:")
+                    for reason in signal.technical_reasons[:2]:
+                        print(f"     • {reason}")
+                    print("")
+            else:
+                print("✅ No hay alertas de exit en este momento")
+        
+        else:
+            print("❌ Opción no válida")
+            
+    except KeyboardInterrupt:
+        print("\n👋 Tests interrumpidos por el usuario")
+    except Exception as e:
+        print(f"❌ Error ejecutando tests: {e}")
+    
+    print("\n🏁 Tests completados!")

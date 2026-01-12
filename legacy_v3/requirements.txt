@@ -1,0 +1,38 @@
+# 📦 DEPENDENCIAS DEL SISTEMA DE TRADING AUTOMATIZADO V2.0
+
+# === DATOS DE MERCADO ===
+yfinance>=0.2.18              # Datos de Yahoo Finance en tiempo real
+requests>=2.31.0              # Para requests HTTP adicionales
+
+# === PROCESAMIENTO DE DATOS ===
+pandas>=2.0.0                 # Manipulación de datos financieros
+numpy>=1.24.0                 # Operaciones numéricas optimizadas
+
+# === INDICADORES TÉCNICOS ===
+TA-Lib>=0.4.28               # Librería completa de indicadores técnicos
+# Nota: TA-Lib requiere instalación especial, ver README para instrucciones
+
+# === TELEGRAM BOT ===
+python-telegram-bot>=20.7    # Bot de Telegram para alertas
+python-dotenv>=1.0.0         # Manejo de variables de entorno
+
+# === PROGRAMACIÓN DE TAREAS ===
+schedule>=1.2.0              # Programador de tareas simple
+APScheduler>=3.10.4          # Programador avanzado (alternativa)
+
+# === LOGGING Y MONITOREO ===
+colorlog>=6.7.0              # Logs con colores para mejor legibilidad
+
+# === UTILIDADES ===
+python-dateutil>=2.8.2      # Manejo avanzado de fechas
+pytz>=2023.3                 # Zonas horarias
+
+# === DESARROLLO Y TESTING ===
+pytest>=7.4.0               # Testing framework
+pytest-cov>=4.1.0           # Coverage de tests
+
+#Otras
+aiohttp
+tqdm
+matplotlib
+seaborn

@@ -1,70 +1,79 @@
 import yfinance as yf
 import pandas as pd
-from .base import DataProvider
 import logging
 from typing import Optional
+from datetime import timedelta
+from data.interfaces import IDataProvider
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("core.data.yfinance")
 
-class YFinanceProvider(DataProvider):
+class YFinanceProvider(IDataProvider):
     """
-    Primary Data Provider using Yahoo Finance (yfinance library).
-    Free, unlimited (soft limits), supports unlimited history.
+    Primary Data Provider using Yahoo Finance.
     """
     
-    def __init__(self, config=None):
-        super().__init__(config)
-
     @property
     def name(self) -> str:
         return "YFINANCE"
 
     @property
     def priority(self) -> int:
-        return 1  # Primary
+        return 1
 
-    def fetch_data(self, symbol: str, timeframe: str, start_date: str = None, end_date: str = None, days: int = None) -> Optional[pd.DataFrame]:
+    def fetch_data(self, 
+                   symbol: str, 
+                   timeframe: str, 
+                   start_date: Optional[str] = None, 
+                   end_date: Optional[str] = None, 
+                   days_back: int = 30) -> Optional[pd.DataFrame]:
         try:
-            logger.info(f"🌐 Fetching '{symbol}' from YFinance...")
+            logger.info(f"Fetching {symbol} from YFinance ({timeframe})...")
             
-            # Helper to map timeframe to period if days provided
-            period = f"{days}d" if days else None
-            
-            # yfinance logic
+            # Determine period argument if no specific dates
+            period = "1mo"
+            if days_back:
+                period = f"{days_back}d"
+                # yfinance valid periods: 1d,5d,1mo,3mo,6mo,1y,2y,5y,10y,ytd,max
+                # If custom days provided, we should prefer start/end method usually, 
+                # but 'Xd' works for some inputs. Better to force max or calc dates if critical.
+                # However, yf.download accepts start/end more reliably.
+                
             ticker = yf.Ticker(symbol)
             
-            # Use 'max' period if explicit dates not provided and days is generic
-            if not start_date and not period:
-                period = "1mo" # Default fallback
+            # Use 'max' if days > 60 and timeframe is small? 
+            # YF has limits on intraday data (60 days).
             
             df = ticker.history(
-                period=period,
+                period=period if not start_date else None,
                 interval=timeframe,
                 start=start_date,
                 end=end_date,
-                prepost=True, # Always fetch pre/post market
-                auto_adjust=False, # We want raw prices? Or adjusted? Usually raw for trading.
+                prepost=True,  # Extended hours
+                auto_adjust=False,
                 actions=False
             )
             
             if df.empty:
-                logger.warning(f"⚠️ YFinance returned empty data for {symbol}")
+                logger.warning(f"No data returned for {symbol}")
                 return None
-                
-            # Standardize columns
+            
+            # Standardize
             df.rename(columns={
                 "Open": "Open", "High": "High", "Low": "Low", 
                 "Close": "Close", "Volume": "Volume"
             }, inplace=True)
             
-            # Ensure index is datetime and standardized
-            if df.index.tz is None:
-                # Assuming UTC or Market Time? YF usually returns market time localized.
-                # If naive, localize to US/Eastern usually safe assumption for US stocks
-                df.index = df.index.tz_localize("US/Eastern")
+            required_cols = ["Open", "High", "Low", "Close", "Volume"]
             
-            return df[['Open', 'High', 'Low', 'Close', 'Volume']]
+            # Ensure index is standardized
+            if df.index.tz is None:
+                # Default to US/Eastern
+                df.index = df.index.tz_localize("US/Eastern")
+            else:
+                df.index = df.index.tz_convert("US/Eastern")
+                
+            return df[required_cols]
 
         except Exception as e:
-            logger.error(f"❌ YFinance fetch failed for {symbol}: {e}")
+            logger.error(f"YFinance fetch failed for {symbol}: {e}")
             return None

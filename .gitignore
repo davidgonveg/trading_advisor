@@ -43,6 +43,7 @@ htmlcov/
 
 
 # Base de datos SQLite
+*.db
 database/trading_data.db
 database/trading_data.db-journal
 database/trading_data.db-wal

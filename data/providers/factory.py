@@ -1,68 +1,46 @@
-from typing import List, Dict, Any, Optional
-from .base import DataProvider
-from .yfinance_provider import YFinanceProvider
-from .twelve_data_provider import TwelveDataProvider
-from .others import AlphaVantageProvider, PolygonProvider
 import logging
+import pandas as pd
+from typing import Optional, List
+from data.interfaces import IDataProvider
+from data.providers.yfinance_provider import YFinanceProvider
+from data.providers.twelvedata_provider import TwelveDataProvider
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("core.data.factory")
 
-class ProviderFactory:
+class DataProviderFactory:
     """
-    Factory to manage and retrieve data providers.
-    Implements the Failover Strategy.
+    Manages data providers.
+    Implements the Chain of Responsibility pattern for failover.
     """
     
-    def __init__(self, config: Dict[str, Any]):
-        self.config = config
-        self._providers: List[DataProvider] = []
-        self._initialize_providers()
-
-    def _initialize_providers(self):
-        """Initialize all enabled providers based on config/env"""
+    def __init__(self):
+        self.providers: List[IDataProvider] = []
+        self._register_defaults()
         
-        # 1. YFinance (Always Check First)
-        if self.config.get('REAL_DATA_CONFIG', {}).get('USE_YFINANCE', True):
-            self._providers.append(YFinanceProvider(self.config))
+    def _register_defaults(self):
+        # Register in order of priority (or sort later)
+        self.register(YFinanceProvider())
+        self.register(TwelveDataProvider())
         
-        # 2. Add others here based on API Keys availability in Config
-        if self.config.get('TWELVE_DATA_API_KEY'):
-            self._providers.append(TwelveDataProvider(self.config))
+        # Sort by priority (asc)
+        self.providers.sort(key=lambda p: p.priority)
         
-        if self.config.get('ALPHA_VANTAGE_API_KEY'):
-            self._providers.append(AlphaVantageProvider(self.config))
-            
-        if self.config.get('POLYGON_API_KEY'):
-            self._providers.append(PolygonProvider(self.config))
+    def register(self, provider: IDataProvider):
+        self.providers.append(provider)
         
-        # Sort by priority
-        self._providers.sort(key=lambda p: p.priority)
-        logger.info(f"🏭 ProviderFactory initialized with {len(self._providers)} providers: {[p.name for p in self._providers]}")
-
-    def get_provider(self, name: str = None) -> Optional[DataProvider]:
-        """Get a specific provider by name"""
-        if name:
-            for p in self._providers:
-                if p.name == name:
-                    return p
-            return None
-        return self._providers[0] if self._providers else None
-
-    def fetch_data_with_failover(self, symbol: str, timeframe: str, **kwargs) -> Optional[Any]:
+    def get_data(self, symbol: str, timeframe: str, **kwargs) -> Optional[pd.DataFrame]:
         """
-        Attempt to fetch data from providers in priority order.
+        Try to fetch data from registered providers in order.
         """
-        errors = []
-        for provider in self._providers:
+        for provider in self.providers:
             try:
                 data = provider.fetch_data(symbol, timeframe, **kwargs)
                 if data is not None and not data.empty:
-                    logger.info(f"✅ Data fetched successfully from {provider.name}")
+                    logger.info(f"✅ Data fetched from {provider.name}")
                     return data
             except Exception as e:
-                logger.warning(f"⚠️ {provider.name} failed: {e}")
-                errors.append(f"{provider.name}: {e}")
+                logger.warning(f"⚠️ Provider {provider.name} failed: {e}")
                 continue
-        
-        logger.error(f"❌ All providers failed for {symbol}. Errors: {errors}")
+                
+        logger.error(f"❌ All providers failed for {symbol}")
         return None
