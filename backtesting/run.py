@@ -18,7 +18,7 @@ logging.basicConfig(
 
 def main():
     # 1. Configuration
-    symbols = ["SPY", "QQQ", "IWM"] # Tier 1
+    symbols = ["SPY", "QQQ", "IWM", "XLF", "XLE", "XLK", "SMH"] # Tier 1 + Tier 2
     start_date = datetime(2023, 1, 1, tzinfo=timezone.utc)
     end_date = datetime(2025, 12, 31, tzinfo=timezone.utc) # Up to now
     initial_capital = 10000.0

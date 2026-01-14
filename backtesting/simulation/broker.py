@@ -124,10 +124,40 @@ class Broker:
         # Capital Check logic
         if order.side == OrderSide.BUY:
             required_cash = cost + commission
+            
             if self.cash < required_cash:
-                logger.warning(f"MARGIN CALL / INSUFFICIENT FUNDS: Needed {required_cash:.2f}, Has {self.cash:.2f}. Canceling Order {order.id}")
-                order.status = OrderStatus.REJECTED
-                return True # Treat as "handled" (removed from queue)
+                # BEST EFFORT FILL:
+                # Try to fill partial quantity with available cash
+                
+                # Estimate affordable qty: (Cash - MinComm) / (Price + CommPerShare)
+                # Formula: Cash = Q * Price + Max(MinComm, Q*CommPerShare)
+                # Approximation:
+                safe_cash = self.cash - self.min_commission
+                if safe_cash <= 0:
+                     logger.warning(f"MARGIN CALL / INSUFFICIENT FUNDS: Needed {required_cash:.2f}, Has {self.cash:.2f}. Canceling Order {order.id}")
+                     order.status = OrderStatus.REJECTED
+                     return True
+                     
+                max_affordable_qty = int(safe_cash / price)
+                
+                # Re-check with precise comm calculation
+                while max_affordable_qty > 0:
+                    test_cost = max_affordable_qty * price
+                    test_comm = max(self.min_commission, max_affordable_qty * self.commission_per_share)
+                    if (test_cost + test_comm) <= self.cash:
+                        break
+                    max_affordable_qty -= 1
+                    
+                if max_affordable_qty > 0:
+                    logger.warning(f"PARTIAL FILL {order.symbol}: Requested {order.quantity}, Funds for {max_affordable_qty}. Adjusting.")
+                    order.quantity = max_affordable_qty
+                    # Update Loop Variables
+                    cost = price * order.quantity
+                    commission = max(self.min_commission, order.quantity * self.commission_per_share)
+                else:
+                    logger.warning(f"MARGIN CALL / INSUFFICIENT FUNDS: Needed {required_cash:.2f}, Has {self.cash:.2f}. Canceling Order {order.id}")
+                    order.status = OrderStatus.REJECTED
+                    return True # Treat as "handled" (removed from queue)
         else:
             # Check for Sell availability (Long Only enforcement)
             current_pos_qty = self.positions.get(order.symbol, Position(symbol=order.symbol)).quantity
