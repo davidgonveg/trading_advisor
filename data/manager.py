@@ -59,7 +59,8 @@ class DataManager:
         """
         Fetches latest data from Provider and updates DB.
         """
-        logger.info(f"Updating data for {symbol}...")
+        # logger.info(f"Updating data for {symbol}...") # Too verbose
+        logger.debug(f"Checking data update for {symbol}...")
         
         # 1. Fetch
         # Default to BACKFILL_DAYS if empty, or small window if updating.
@@ -125,7 +126,8 @@ class DataManager:
         """
         Fetches latest DAILY data from Provider and updates DB.
         """
-        logger.info(f"Updating DAILY data for {symbol}...")
+        # logger.info(f"Updating DAILY data for {symbol}...") # Too verbose
+        logger.debug(f"Checking DAILY data update for {symbol}...")
         
         # Logic: Find last DB timestamp for DAILY
         # We need a way to check last Daily timestamp.

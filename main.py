@@ -86,8 +86,10 @@ def run_live_loop():
                 # C. Indicators
                 df_analyzed = indicators.calculate_all(df_raw)
                 
-                # D. Save Indicators (Optional, good for debugging)
-                db.save_indicators(symbol, "1h", df_analyzed)
+                # D. Save Indicators (Optimize: Only save last 48 hours)
+                # We calculate on full history for accuracy, but only persist recent changes.
+                rows_to_save = df_analyzed.iloc[-48:] 
+                db.save_indicators(symbol, "1h", rows_to_save)
                 
                 # E. Scan
                 # Only scan the LATEST candle in live mode to avoid spamming historical signals
