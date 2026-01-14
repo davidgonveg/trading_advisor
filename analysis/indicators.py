@@ -55,7 +55,7 @@ class TechnicalIndicators:
 
     def rsi(self, close: pd.Series, period: int = 14) -> pd.Series:
         if HAS_TALIB:
-            return pd.Series(talib.RSI(close.values, timeperiod=period), index=close.index)
+            return pd.Series(talib.RSI(close.values.astype(float), timeperiod=period), index=close.index)
         else:
             delta = close.diff()
             gain = (delta.where(delta > 0, 0)).fillna(0)
@@ -67,7 +67,7 @@ class TechnicalIndicators:
 
     def bbands(self, close: pd.Series, period: int = 20, dev: float = 2.0):
         if HAS_TALIB:
-            u, m, l = talib.BBANDS(close.values, timeperiod=period, nbdevup=dev, nbdevdn=dev, matype=0)
+            u, m, l = talib.BBANDS(close.values.astype(float), timeperiod=period, nbdevup=dev, nbdevdn=dev, matype=0)
             return pd.Series(u, index=close.index), pd.Series(m, index=close.index), pd.Series(l, index=close.index)
         else:
             m = close.rolling(window=period).mean()
@@ -78,7 +78,7 @@ class TechnicalIndicators:
             
     def adx(self, high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
         if HAS_TALIB:
-            return pd.Series(talib.ADX(high.values, low.values, close.values, timeperiod=period), index=close.index)
+            return pd.Series(talib.ADX(high.values.astype(float), low.values.astype(float), close.values.astype(float), timeperiod=period), index=close.index)
         else:
             # Simplified Pandas ADX (approximate)
             # True Range
@@ -103,7 +103,7 @@ class TechnicalIndicators:
 
     def atr(self, high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
         if HAS_TALIB:
-            return pd.Series(talib.ATR(high.values, low.values, close.values, timeperiod=period), index=close.index)
+            return pd.Series(talib.ATR(high.values.astype(float), low.values.astype(float), close.values.astype(float), timeperiod=period), index=close.index)
         else:
             tr1 = high - low
             tr2 = abs(high - close.shift(1))
@@ -138,5 +138,5 @@ class TechnicalIndicators:
 
     def sma(self, series: pd.Series, period: int) -> pd.Series:
         if HAS_TALIB:
-             return pd.Series(talib.SMA(series.values, timeperiod=period), index=series.index)
+             return pd.Series(talib.SMA(series.values.astype(float), timeperiod=period), index=series.index)
         return series.rolling(window=period).mean()
