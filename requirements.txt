@@ -1,0 +1,13 @@
+# Core Data Science & Trading
+pandas
+numpy
+yfinance
+
+# Utilities
+requests
+python-dotenv
+
+# Optional: TA-Lib
+# Note: Installing TA-Lib on Windows can be difficult. 
+# Providing you have the binary dependencies, you can uncomment the line below.
+# ta-lib

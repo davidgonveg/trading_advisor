@@ -79,7 +79,7 @@ STRATEGY_CONFIG = {
     "BB_DEV": 2.0,
     
     "ADX_PERIOD": 14,
-    "ADX_MAX_THRESHOLD": 22, # UPDATED: Matches documentation (Strict)
+    "ADX_MAX_THRESHOLD": 20, # UPDATED: v2.0 (Strict)
     "ADX_CANCEL_THRESHOLD": 3, # If ADX rises > 3 pts, cancel pending orders
     
     "SMA_TREND_PERIOD": 50, # Daily timeframe
@@ -87,6 +87,7 @@ STRATEGY_CONFIG = {
     
     # Time Rules
     "TIME_STOP_HOURS": 48,
+    "ENTRY_TIMEOUT_HOURS": 4, # UPDATED: v2.0 (4h timeout for Limit orders)
     "MIN_MARKET_HOUR": 15, # 15:30 CET approx (handled via UTC/Timezone conversion)
     "MAX_MARKET_HOUR": 21, # 22:00 CET
     
@@ -95,6 +96,7 @@ STRATEGY_CONFIG = {
     "ENTRY_3_ATR_DIST": 1.0,
     
     "SL_ATR_MULT": 2.0,
+    "SL_SECURE_ATR": 0.3, # New v2.0: SL distance after TP2
     
     "TP1_ATR_MULT": 1.5,
     "TP2_ATR_MULT": 2.5,

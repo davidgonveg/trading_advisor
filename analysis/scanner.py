@@ -245,11 +245,13 @@ class Scanner:
                 if p_type == "LONG":
                     msg += f"RSI={current['RSI']:.1f}({'OK' if pass_rsi_long else 'FAIL'}) | BB={'OK' if pass_bb_long else 'FAIL'} | SMA={'OK' if pass_sma_long else 'FAIL'} | "
                     msg += f"PAT={'OK' if has_bull_pat else 'FAIL'}"
-                    status = "ACCEPTED" if (context_ok and long_setup and has_bull_pat) else "REJECTED"
+                    # v2.0: Pattern is optional
+                    status = "ACCEPTED" if (context_ok and long_setup) else "REJECTED"
                 elif p_type == "SHORT":
                      msg += f"RSI={current['RSI']:.1f}({'OK' if pass_rsi_short else 'FAIL'}) | BB={'OK' if pass_bb_short else 'FAIL'} | SMA={'OK' if pass_sma_short else 'FAIL'} | "
                      msg += f"PAT={'OK' if has_bear_pat else 'FAIL'}"
-                     status = "ACCEPTED" if (context_ok and short_setup and has_bear_pat) else "REJECTED"
+                     # v2.0: Pattern is optional
+                     status = "ACCEPTED" if (context_ok and short_setup) else "REJECTED"
                 else:
                     msg += "Inds=FAIL"
                     status = "REJECTED"
