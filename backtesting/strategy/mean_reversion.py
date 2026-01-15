@@ -73,6 +73,16 @@ class MeanReversionStrategy(Strategy):
         
         if is_long:
             self.place_long_orders(ctx, symbol, row)
+        else:
+            # DEBUG: Log near-misses
+            if row['RSI'] < 40:
+                logging.getLogger('backtesting.strategy.mean_reversion').debug(
+                    f"{symbol} REJECT: RSI={row['RSI']:.1f}/{self.cfg['RSI_OVERSOLD']}, "
+                    f"RSI_Turn={row['RSI'] > prev['RSI']}, "
+                    f"BB_Cond={row['Close'] <= row['BB_lower']}, "
+                    f"ADX={row['ADX']:.1f}/{self.cfg['ADX_MAX_THRESHOLD']}, "
+                    f"Trend={is_uptrend}"
+                )
 
     def place_long_orders(self, ctx: TradingContext, symbol: str, row: pd.Series):
         # Price
@@ -311,19 +321,34 @@ class MeanReversionStrategy(Strategy):
             # So if TP1 hit, we respect it.
             if not meta['tp1_hit']:
                 if time_since_entry >= self.cfg['TIME_STOP_HOURS']:
-                    logger.info(f"TIME STOP {sym}: {time_since_entry:.1f}h. Closing Position.")
-                    # Close Market
-                    close_order = Order(
-                        id=f"{sym}_TIME_EXIT_{ctx.timestamp.timestamp()}",
-                        symbol=sym,
-                        side=OrderSide.SELL,
-                        order_type=OrderType.MARKET,
-                        quantity=pos.quantity,
-                        tag="TIME_STOP"
-                    )
-                    ctx.submit_order(close_order)
+                    # Check if we already have a pending TIME_EXIT order
+                    pending_exit = None
+                    for o in ctx.active_orders.values():
+                        if o.symbol == sym and o.tag == "TIME_STOP":
+                            pending_exit = o
+                            break
                     
-                    # Cancel all pending
-                    for oid, order in list(ctx.active_orders.items()):
-                        if order.symbol == sym:
-                            ctx.cancel_order(oid)
+                    if pending_exit:
+                         # Already trying to close, do nothing (wait for fill)
+                         logger.info(f"Waiting for TIME STOP fill for {sym}...")
+                    else:
+                        logger.info(f"TIME STOP {sym}: {time_since_entry:.1f}h. Closing Position.")
+                        
+                        # CRITICAL: Cancel ALL other pending orders FIRST to free up margin/state
+                        # This prevents "Margin Call" on the Sell order if broker is strict, 
+                        # and ensures we don't have dangling orders.
+                        for oid, order in list(ctx.active_orders.items()):
+                            if order.symbol == sym:
+                                logger.info(f"Canceling {order.tag} to force TIME EXIT for {sym}")
+                                ctx.cancel_order(oid)
+                        
+                        # Close Market
+                        close_order = Order(
+                            id=f"{sym}_TIME_EXIT_{ctx.timestamp.timestamp()}",
+                            symbol=sym,
+                            side=OrderSide.SELL,
+                            order_type=OrderType.MARKET,
+                            quantity=pos.quantity,
+                            tag="TIME_STOP"
+                        )
+                        ctx.submit_order(close_order)
