@@ -69,25 +69,28 @@ DATABASE_PATH = DATA_DIR / "storage" / "trading.db"
 # Strategy Configuration (Mean Reversion Selectiva)
 STRATEGY_CONFIG = {
     # Indicators
-    "RSI_PERIOD": 7,  # UPDATED: Matches documentation
-    "RSI_OVERSOLD": 35,
-    "RSI_OVERBOUGHT": 65,
-    "RSI_EXIT_LONG": 75,
-    "RSI_EXIT_SHORT": 25,
-    
+    "RSI_PERIOD": 7,  # Legacy (kept for reference)
+    "CRSI_PERIOD": 3,
+    "CRSI_STREAK": 2,
+    "CRSI_RANK": 100,
+    "CRSI_OVERSOLD": 10,
+    "CRSI_OVERBOUGHT": 90,
+    "CRSI_EXIT_LONG": 25,   # Cancellation trigger
+    "CRSI_EXIT_SHORT": 75,  # Cancellation trigger
+
     "BB_PERIOD": 20,
     "BB_DEV": 2.0,
     
     "ADX_PERIOD": 14,
-    "ADX_MAX_THRESHOLD": 20, # UPDATED: v2.0 (Strict)
-    "ADX_CANCEL_THRESHOLD": 3, # If ADX rises > 3 pts, cancel pending orders
+    "ADX_MAX_THRESHOLD": 30, # Used for Volume Regime
+    "ADX_CANCEL_THRESHOLD": 3, 
     
-    "SMA_TREND_PERIOD": 50, # Daily timeframe
+    "SMA_TREND_PERIOD": 200, # v3.1 Daily
     "VOLUME_SMA_PERIOD": 20,
     
     # Time Rules
-    "TIME_STOP_HOURS": 48,
-    "ENTRY_TIMEOUT_HOURS": 4, # UPDATED: v2.0 (4h timeout for Limit orders)
+    "TIME_STOP_HOURS": 120, # v3.1 (5 Days)
+    "ENTRY_TIMEOUT_HOURS": 4,
     "MIN_MARKET_HOUR": 15, # 15:30 CET approx (handled via UTC/Timezone conversion)
     "MAX_MARKET_HOUR": 21, # 22:00 CET
     

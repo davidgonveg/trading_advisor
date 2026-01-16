@@ -26,7 +26,7 @@ class Scanner:
         """
         Scans a dataframe (Hourly) for entry signals.
         Expects df_hourly to already include technical indicators columns:
-        [RSI, BB_Lower, BB_Upper, ADX, SMA_50, Volume_SMA_20, etc.]
+        [CRSI, BB_Lower, BB_Upper, ADX, SMA_200, Volume_SMA_20, etc.]
         """
         signals = []
         
@@ -60,25 +60,47 @@ class Scanner:
             try:
                 try:
                     # SKIP if any required indicator is NaN
-                    if pd.isna(row['RSI']) or pd.isna(row['SMA_50']) or pd.isna(row['ADX']):
+                    if pd.isna(row['CRSI']) or pd.isna(row['SMA_200']) or pd.isna(row['ADX']):
                         continue
                 except ValueError:
                     logger.error(f"CRASH IN ROW CHECK at {idx}")
                     logger.error(f"Row Index: {row.index}")
-                    logger.error(f"RSI: {row['RSI']} Type: {type(row['RSI'])}")
-                    logger.error(f"SMA_50: {row['SMA_50']} Type: {type(row['SMA_50'])}")
+                    logger.error(f"Row Index: {row.index}")
+                    logger.error(f"CRSI: {row['CRSI']} Type: {type(row['CRSI'])}")
+                    logger.error(f"SMA_200: {row['SMA_200']} Type: {type(row['SMA_200'])}")
                     raise
                     
                 # 1. Common Conditions
                 
-                # ADX Check (Market must be ranging < 22)
-                if row['ADX'] >= self.cfg['ADX_MAX_THRESHOLD']:
+                # 1. Common Conditions - DYNAMIC VOLUME FILTER (v3.1)
+                
+                # ADX Regime & Volume Multiplier
+                # Lateral (<20): 1.0x
+                # Neutral (20-30): 1.2x
+                # Tendencial (>30): 1.5x
+                
+                adx_val = row['ADX']
+                vol_mult = 1.0
+                if adx_val < 20:
+                    vol_mult = 1.0
+                elif adx_val < 30:
+                    vol_mult = 1.2
+                else: 
+                    vol_mult = 1.5
+                    
+                min_vol = row.get('Volume_SMA_20', 0) * vol_mult
+                if row['Volume'] < min_vol:
                     continue
                     
-                # Volume Check (Volume > SMA20)
-                # If volume is somehow 0 or nan, skip
-                if row['Volume'] <= row.get('Volume_SMA_20', 0):
-                    continue
+                # ADX Filter v3.1: 
+                # Tendencial (>30) ALLOWED if Pullback (Trend Following)??
+                # Strategy says: "ADX >= 30 + NO operar (if counter trend)"
+                # Actually Scanner checks for Reversion.
+                # v3.1 Table says: "ADX >= 30 + dirección favorable -> Pullback permitido"
+                # "ADX >= 30 + dirección contraria -> NO operar"
+                # Since we are implementing Reversion Strategy generally, checks below will handle direction.
+                # But here we just ensure we have data.
+
 
                 # 2. LONG Logic
                 # - RSI < 35
@@ -95,18 +117,19 @@ class Scanner:
                 # Let's rely on caller or use simple tracking.
                 
                 # Optimization: Check static levels first
+                # v3.1 Uses CRSI < 10 for LONG, > 90 for SHORT
                 is_long_candidate = (
-                    row['RSI'] < self.cfg['RSI_OVERSOLD'] and
+                    row['CRSI'] < 10 and
                     row['Close'] <= row['BB_Lower'] and
                     row['Close'] < row.get('VWAP', 999999) and
-                    row['Close'] > row['SMA_50']
+                    row['Close'] > row['SMA_200'] # Trend Filter (Price > SMA200)
                 )
                 
                 is_short_candidate = (
-                    row['RSI'] > self.cfg['RSI_OVERBOUGHT'] and
+                    row['CRSI'] > 90 and
                     row['Close'] >= row['BB_Upper'] and
                     row['Close'] > row.get('VWAP', 0) and
-                    row['Close'] < row['SMA_50']
+                    row['Close'] < row['SMA_200'] # Trend Filter
                 )
                 
                 if not (is_long_candidate or is_short_candidate):
@@ -145,12 +168,11 @@ class Scanner:
         
         daily_sma_series = None
         if df_daily is not None and not df_daily.empty:
-            # 1. Calc SMA 50 if not present
-            if 'SMA_50' not in df_daily.columns:
-                # We do a quick calc here to avoid dependency circularity or use simple rolling
-                daily_sma_series = df_daily['Close'].rolling(window=50).mean()
+            # 1. Calc SMA 200 if not present
+            if 'SMA_200' not in df_daily.columns:
+                daily_sma_series = df_daily['Close'].rolling(window=200).mean()
             else:
-                daily_sma_series = df_daily['SMA_50']
+                daily_sma_series = df_daily['SMA_200']
                 
             # 2. Reindex to match hourly timestamps (Forward Fill)
             # This is tricky: For 10:00 AM today, we want YESTERDAY's SMA? 
@@ -181,8 +203,8 @@ class Scanner:
             sma_reindexed = shifted_daily.reindex(df.index, method='ffill')
         else:
             if scan_latest: # Warn only if we are live
-                logger.warning(f"No Daily Data provided for {symbol}. Falling back to Hourly SMA (Strategy Divergence!)")
-            sma_reindexed = df.get('SMA_50', pd.Series([0]*len(df), index=df.index))
+                logger.warning(f"No Daily Data provided for {symbol}. Falling back to Hourly SMA 200 (Strategy Divergence!)")
+            sma_reindexed = df.get('SMA_200', pd.Series([0]*len(df), index=df.index))
             
         for i in range(start_idx, len(df)):
             current = df.iloc[i]
@@ -191,37 +213,58 @@ class Scanner:
             
             # Get Daily SMA for this specific timestamp
             # If we failed to build reindexed, default to 0
-            sma_50_val = sma_reindexed.iloc[i] if daily_sma_series is not None else current.get('SMA_50', 0)
+            sma_200_val = sma_reindexed.iloc[i] if daily_sma_series is not None else current.get('SMA_200', 0)
             
             # --- FILTER CHECK ---
-            # 1. ADX
-            pass_adx = current['ADX'] < self.cfg['ADX_MAX_THRESHOLD']
+            # 1. ADX - Now used for Volume Multiplier, but we also check if "Counter Trend" is allowed?
+            # Strategy: "ADX >= 30 + dirección contraria -> NO operar"
+            # If ADX >= 30, we must be careful.
+            # But the Strategy Table 4.2 says:
+            # - ADX < 20: Mean Reversion Optimal
+            # - ADX 20-30: Neutral (Standard)
+            # - ADX >= 30: Pullbacks Only (With Trend).
+            # If we are doing "Mean Reversion Selectiva", usually we enter AGAINST short-term move (CRSI extreme) 
+            # but IN FAVOR of Long-Term Trend (SMA 200).
+            # So if Price > SMA 200 (Uptrend) and CRSI < 10 (Dip), we are BUYING THE DIP (Pullback).
+            # This IS "Dirección Favorable".
+            # So actually, as long as we respect the SMA 200 Trend Filter, we are adhering to "Dirección Favorable".
+            # Thus, we don't need to block ADX > 30, as long as Trend Filter holds.
+            pass_adx = True # Handled by Trend Filter implication
             
-            # 2. Volume
-            pass_vol = current['Volume'] > current.get('Volume_SMA_20', 0)
+            # 2. Volume (Already checked above in optimization block for 'continue', but for logging...)
+            # We already skipped if fail.
+            pass_vol = True
             
             # 3. Long Inds
-            pass_rsi_long = current['RSI'] < self.cfg['RSI_OVERSOLD']
-            pass_rsiturn_long = current['RSI'] > prev['RSI']
+            pass_rsi_long = current['CRSI'] < 10
+            # pass_rsiturn_long = current['RSI'] > prev['RSI'] # Not required in v3.1 summary?
+            # Summary 6.1: 1. CRSI < 10. 2. Price <= BB lower. 3. Price > SMA 200. ...
+            # No explicit mention of "RSI Turn" or "CRSI Turn" in v3.1 text provided.
+            # "Todas deben cumplirse: 1. Connors RSI < 10 ..."
+            # So we remove the "Turn" requirement for CRSI?
+            # User said "Simplificación operativa".
+            # Let's assume strict list: 1-6. No turn mentioned.
+            
             pass_bb_long = current['Close'] <= current['BB_Lower']
-            # SMA Trend Filter (Daily) - Using hourly SMA50 as proxy if separate daily not passed, 
-            # OR better: if 'SMA_50' in dataframe is actually required to be Daily SMA mapped to hourly.
-            # Assuming 'SMA_50' column IS the daily 50SMA (mapped) as per Strategy requirements.
-            pass_sma_long = current['Close'] > sma_50_val
+            pass_sma_long = current['Close'] > sma_200_val
             
             vwap_val = current.get('VWAP')
             if vwap_val is None: vwap_val = float('inf')
-            pass_vwap_long = current['Close'] < vwap_val
-            
+            # VWAP "Opcional" in v3.1 summary (Table 3).
+            # Entry rules do NOT mention VWAP in 6.1 or 6.2.
+            # So we disable VWAP check for entry strictly.
+            # pass_vwap_long = current['Close'] < vwap_val 
+            pass_vwap_long = True
+
             # 4. Short Inds
-            pass_rsi_short = current['RSI'] > self.cfg['RSI_OVERBOUGHT']
-            pass_rsiturn_short = current['RSI'] < prev['RSI']
+            pass_rsi_short = current['CRSI'] > 90
             pass_bb_short = current['Close'] >= current['BB_Upper']
-            pass_sma_short = current['Close'] < sma_50_val 
+            pass_sma_short = current['Close'] < sma_200_val 
             
             vwap_val_short = current.get('VWAP')
             if vwap_val_short is None: vwap_val_short = 0
-            pass_vwap_short = current['Close'] > vwap_val_short
+            # pass_vwap_short = current['Close'] > vwap_val_short
+            pass_vwap_short = True
             
             # Aggregates
             context_ok = pass_adx and pass_vol
@@ -238,18 +281,26 @@ class Scanner:
                 # Format: TIMESTAMP | SYM | TYPE | ADX:OK | VOL:OK | RSI:30(OK) | BB:OK | PAT:FAIL | DECISION:REJECTED
                 
                 # Determine "Potential Type"
-                p_type = "LONG" if (long_setup or pass_rsi_long) else ("SHORT" if (short_setup or pass_rsi_short) else "NONE")
+                p_type = "LONG" if (pass_rsi_long) else ("SHORT" if (pass_rsi_short) else "NONE")
                 
-                msg = f"{ts} | {symbol} | {p_type} | ADX={current['ADX']:.1f}({'OK' if pass_adx else 'FAIL'}) | VOL={'OK' if pass_vol else 'FAIL'} | "
+                msg = f"{ts} | {symbol} | {p_type} | ADX={current['ADX']:.1f} | VOL={'OK' if pass_vol else 'FAIL'} | "
                 
                 if p_type == "LONG":
-                    msg += f"RSI={current['RSI']:.1f}({'OK' if pass_rsi_long else 'FAIL'}) | BB={'OK' if pass_bb_long else 'FAIL'} | SMA={'OK' if pass_sma_long else 'FAIL'} | "
+                    msg += f"CRSI={current['CRSI']:.1f}({'OK' if pass_rsi_long else 'FAIL'}) | BB={'OK' if pass_bb_long else 'FAIL'} | SMA={'OK' if pass_sma_long else 'FAIL'} | "
                     msg += f"PAT={'OK' if has_bull_pat else 'FAIL'}"
-                    # v2.0: Pattern is optional
+                    # v3.1: Pattern not strictly required in 6.1 list? 
+                    # "6. Vela 1H cerrada" implies implies just completion?
+                    # v1.0 had "Vela de reversión alcista presente"
+                    # v3.1 list: "6. Vela 1H cerrada". DOES NOT explicitly say "Reversal Pattern".
+                    # Review Summary: "Versión 3.1... Eliminación de decisiones discrecionales... 6. Vela 1H cerrada"
+                    # It likely means "Don't enter until candle closes", not "Must be Doji".
+                    # Simplification -> Remove Pattern Check?
+                    # Let's assume PATTERN IS REMOVED for strict simplified instructions.
                     status = "ACCEPTED" if (context_ok and long_setup) else "REJECTED"
                 elif p_type == "SHORT":
-                     msg += f"RSI={current['RSI']:.1f}({'OK' if pass_rsi_short else 'FAIL'}) | BB={'OK' if pass_bb_short else 'FAIL'} | SMA={'OK' if pass_sma_short else 'FAIL'} | "
+                     msg += f"CRSI={current['CRSI']:.1f}({'OK' if pass_rsi_short else 'FAIL'}) | BB={'OK' if pass_bb_short else 'FAIL'} | SMA={'OK' if pass_sma_short else 'FAIL'} | "
                      msg += f"PAT={'OK' if has_bear_pat else 'FAIL'}"
+                     status = "ACCEPTED" if (context_ok and short_setup) else "REJECTED"
                      # v2.0: Pattern is optional
                      status = "ACCEPTED" if (context_ok and short_setup) else "REJECTED"
                 else:
@@ -286,10 +337,13 @@ class Scanner:
                         price=float(current['Close']), # Force float
                         atr_value=float(current['ATR']),
                         metadata={
-                            "rsi": float(current['RSI']),
+                            "rsi": float(current.get('RSI', 0)), # Keep for reference/logs
+                            "crsi": float(current['CRSI']),
                             "adx": float(current['ADX']),
                             "bb_lower": float(current['BB_Lower']),
-                            "sma_50": float(sma_50_val)
+                            "bb_upper": float(current['BB_Upper']),
+                            "bb_middle": float(current['BB_Middle']), # For TP1
+                            "sma_200": float(sma_200_val)
                         }
                     )
                     signals.append(sig)
@@ -308,10 +362,13 @@ class Scanner:
                         price=float(current['Close']),
                         atr_value=float(current['ATR']),
                         metadata={
-                            "rsi": float(current['RSI']),
+                            "rsi": float(current.get('RSI', 0)),
+                            "crsi": float(current['CRSI']),
                             "adx": float(current['ADX']),
+                            "bb_lower": float(current['BB_Lower']),
                             "bb_upper": float(current['BB_Upper']),
-                            "sma_50": float(sma_50_val)
+                            "bb_middle": float(current['BB_Middle']),
+                            "sma_200": float(sma_200_val)
                         }
                     )
                     signals.append(sig)

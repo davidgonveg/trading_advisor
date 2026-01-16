@@ -49,9 +49,10 @@ class DatabaseFeed(DataFeed):
             # Load 1D (For Trend Filter)
             df_1d = self.db.load_market_data(sym, "1d")
             
-            # Pre-calculate Daily Indicators (SMA 50)
+            # Pre-calculate Daily Indicators (SMA 50, SMA 200)
             if not df_1d.empty:
                 df_1d['SMA_50'] = df_1d['Close'].rolling(window=50).mean()
+                df_1d['SMA_200'] = df_1d['Close'].rolling(window=200).mean() # v3.1
             
             self.daily_data_store[sym] = df_1d
 
@@ -110,7 +111,8 @@ class DatabaseFeed(DataFeed):
                         
                         # Populate Daily Indicators
                         current_daily_indicators[sym] = {
-                            'SMA_50': prev_row['SMA_50'] if not pd.isna(prev_row['SMA_50']) else 0.0
+                            'SMA_50': prev_row['SMA_50'] if not pd.isna(prev_row['SMA_50']) else 0.0,
+                            'SMA_200': prev_row['SMA_200'] if not pd.isna(prev_row['SMA_200']) else 0.0
                         }
             
             yield BarData(timestamp=ts, 

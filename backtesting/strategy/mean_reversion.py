@@ -57,31 +57,43 @@ class MeanReversionStrategy(Strategy):
         # 3. Price <= BB Lower
         # 4. ADX < 20 (v2.0)
         
-        # SMA 50 Check (Trend Filter)
+        # SMA 200 Check (Trend Filter v3.1)
         daily_stats = ctx.data.daily_indicators.get(symbol, {})
-        sma_50 = daily_stats.get('SMA_50', 0.0)
+        sma_200 = daily_stats.get('SMA_200', 0.0)
         
-        is_uptrend = row['Close'] > sma_50 if sma_50 > 0 else True # Fallback if no SMA yet
+        is_uptrend = row['Close'] > sma_200 if sma_200 > 0 else True # Fallback
+        
+        # Calculate Volume Mult based on ADX (v3.1)
+        
+        # Calculate Volume Mult based on ADX (v3.1)
+        adx_val = row['ADX']
+        vol_mult = 1.0
+        if adx_val < 20: vol_mult = 1.0
+        elif adx_val < 30: vol_mult = 1.2
+        else: vol_mult = 1.5
+        
+        vol_ok = row['Volume'] > (row.get('Volume_SMA_20', 0) * vol_mult)
         
         is_long = (
-            row['RSI'] < self.cfg['RSI_OVERSOLD'] and
-            row['RSI'] > prev['RSI'] and
-            row['Close'] <= row['BB_lower'] and 
-            row['ADX'] < self.cfg['ADX_MAX_THRESHOLD'] and
-            is_uptrend
+            row['CRSI'] < self.cfg['CRSI_OVERSOLD'] and
+            # row['CRSI'] > prev['CRSI'] and # Turn removed in v3.1 simplification
+            row['Close'] <= row['BB_Lower'] and 
+            # row['ADX'] < self.cfg['ADX_MAX_THRESHOLD'] and # Removed strict ADX max, replaced by regime vol check
+            is_uptrend and
+            vol_ok
         )
         
         if is_long:
             self.place_long_orders(ctx, symbol, row)
         else:
+
             # DEBUG: Log near-misses
-            if row['RSI'] < 40:
-                logging.getLogger('backtesting.strategy.mean_reversion').debug(
-                    f"{symbol} REJECT: RSI={row['RSI']:.1f}/{self.cfg['RSI_OVERSOLD']}, "
-                    f"RSI_Turn={row['RSI'] > prev['RSI']}, "
-                    f"BB_Cond={row['Close'] <= row['BB_lower']}, "
-                    f"ADX={row['ADX']:.1f}/{self.cfg['ADX_MAX_THRESHOLD']}, "
-                    f"Trend={is_uptrend}"
+            if row['CRSI'] < 25:
+                # logger.debug is not standard python logging level without setup, usually use info or debug
+                logger.info(
+                    f"{symbol} REJECT: CRSI={row['CRSI']:.1f}/{self.cfg['CRSI_OVERSOLD']}, "
+                    f"BB_Cond={row['Close'] <= row['BB_Lower']}, "
+                    f"ADX={row['ADX']:.1f}, VolOK={vol_ok}, Trend={is_uptrend}"
                 )
 
     def place_long_orders(self, ctx: TradingContext, symbol: str, row: pd.Series):
@@ -110,6 +122,16 @@ class MeanReversionStrategy(Strategy):
         
         sl_price = entry_price - stop_distance # Initial SL
         
+        # v3.1 Fixed Take Profits (calculated at Entry)
+        # TP1: BB Middle
+        # TP2: BB Upper (Opposite)
+        tp1_price = row['BB_Middle']
+        tp2_price = row['BB_Upper']
+        
+        # If BB Middle is below entry (impossible for Long at Lower Band usually, but check), clamp?
+        # Typically Entry <= Lower Band < Middle Band < Upper Band.
+        # So TP1 > Entry. Correct.
+        
         # LOG SIGNAL (Telegram Style)
         self.signal_logger.log_signal(
             timestamp=ctx.timestamp,
@@ -124,26 +146,30 @@ class MeanReversionStrategy(Strategy):
             e3_price=p_e3,
             e3_qty=int(qty_e3),
             atr=atr,
-            notes=f"RSI+BB+ADX. Trend(SMA50)={sma_50:.2f}" if 'sma_50' in locals() else "Trend OK"
+
+            notes=f"CRSI={row['CRSI']:.1f}. Trend(SMA200)={sma_200:.2f}" if 'sma_200' in locals() else "Trend OK"
         )
         
         # Store metadata for Management (Time Stop / TP)
-        # We assume E1 will fill next bar approx.
+        # v3.1: Store Fixed TP levels
         self.entry_tracker[symbol] = {
             'entry_time': ctx.timestamp,
             'atr': atr,
             'adx_entry': row['ADX'],
             'tp1_hit': False,
             'tp2_hit': False,
+            'tp1_price': tp1_price,
+            'tp2_price': tp2_price,
             'initial_sl': sl_price
         }
 
-        # E1 - Market
+        # E1 - Limit (v3.1 Fix: Avoid paying above TP if gap up)
         o1 = Order(
             id=f"{symbol}_E1_{ctx.timestamp.timestamp()}",
             symbol=symbol,
             side=OrderSide.BUY,
-            order_type=OrderType.MARKET,
+            order_type=OrderType.LIMIT,
+            price=p_e1,
             quantity=int(qty_e1), 
             tag="E1"
         )
@@ -191,8 +217,19 @@ class MeanReversionStrategy(Strategy):
         tracked_symbols = list(self.entry_tracker.keys())
         
         for sym in tracked_symbols:
+            pos = ctx.positions.get(sym)
+            is_in_position = (pos is not None and pos.quantity > 0)
+            
+            # Check for Pending E1 (Waiting for Entry)
+            has_pending_e1 = False
+            for order in ctx.active_orders.values():
+                if order.symbol == sym and order.tag == "E1":
+                    has_pending_e1 = True
+                    break
+
             # 1. CLEANUP ORPHAN ORDERS (Zombie protection)
-            if sym not in active_symbols:
+            # Only cleanup if NO Position AND NO Pending E1
+            if not is_in_position and not has_pending_e1:
                 # Position closed ( SL/TP hit )
                 # Cancel any pending orders (E2, E3) to prevent Zombie Re-entries
                 for oid, order in list(ctx.active_orders.items()):
@@ -203,11 +240,11 @@ class MeanReversionStrategy(Strategy):
                 del self.entry_tracker[sym]
                 continue
 
-            # 2. MANAGE ACTIVE TRADE
-            pos = ctx.positions[sym]
-            if pos.quantity == 0: continue
-            
+            # 2. MANAGE ACTIVE TRADE / PENDING ENTRY
+            # Use 'entry_tracker' meta for timeouts/cancellation rules
             meta = self.entry_tracker[sym]
+            
+
             current_price = ctx.data.get_price(sym)
             if not current_price: continue
             
@@ -222,17 +259,39 @@ class MeanReversionStrategy(Strategy):
             cancel_e3 = False
             cancel_all_pending = False
             
-            # Rule 4.3.1: ADX Spike > 3 pts -> Cancel E3
+            # Rule 4.3.1: ADX Spike > 3 pts -> Cancel E3 (unchanged)
             if current_adx > (meta['adx_entry'] + self.cfg['ADX_CANCEL_THRESHOLD']):
                 cancel_e3 = True
                 
-            # Rule 4.3.2: Timeout 4h for E2/E3 (Pending Limit Orders)
+            # Rule 4.3.2: Timeout 4h for E2/E3 (Pending Limit Orders) (unchanged)
             if time_since_entry >= self.cfg['ENTRY_TIMEOUT_HOURS']:
                 cancel_all_pending = True
                 
             # Rule 4.3.3: TP1 Hit -> Cancel pending (don't average down if winning)
             if meta['tp1_hit']:
                 cancel_all_pending = True
+
+            # v3.1 NEW CANCELLATION RULES
+            # 1. Alivio estadistico: CRSI > 25 (Long)
+            # 2. Reversion inicial: Close > BB Middle
+            
+            # Use df_curr last row
+            if not df_curr.empty:
+                # v3.1 CRITICAL FIX: Must calculate indicators to check CRSI/BB
+                try:
+                    df_curr = IndicatorCalculator.calculate(df_curr)
+                except Exception as e:
+                    logger.error(f"Indicator Calc Error {sym}: {e}")
+                    continue
+
+                last_row = df_curr.iloc[-1]
+                # if last_row.get('CRSI', 50) > 25: # v3.1 CRSI Exit Long threshold (Safe get)
+                #     cancel_all_pending = True
+                #     logger.info(f"Smart Cancel {sym}: CRSI > 25")
+                    
+                # if last_row['Close'] > last_row['BB_Middle']:
+                #      cancel_all_pending = True
+                #      logger.info(f"Smart Cancel {sym}: Price > BB Middle")
 
             # EXECUTE CANCELLATIONS
             for oid, order in list(ctx.active_orders.items()):
@@ -248,39 +307,57 @@ class MeanReversionStrategy(Strategy):
                          ctx.cancel_order(oid)
 
             # --- 3. SL RESIZING (Sync Qty) ---
-            sl_order = None
-            for o in ctx.active_orders.values():
-                if o.symbol == sym and o.tag == "SL":
-                    sl_order = o
-                    break
+            # Only resize SL if we have an active position
+            if is_in_position:
+                sl_order = None
+                for o in ctx.active_orders.values():
+                    if o.symbol == sym and o.tag == "SL":
+                        sl_order = o
+                        break
+                
+                if sl_order:
+                    if sl_order.quantity != pos.quantity:
+                        logger.info(f"Adjusting SL for {sym}: {sl_order.quantity} -> {pos.quantity}")
+                        ctx.cancel_order(sl_order.id)
+                        new_sl = Order(
+                            id=f"{sym}_SL_{ctx.timestamp.timestamp()}_UPDATE",
+                            symbol=sym,
+                            side=OrderSide.SELL,
+                            order_type=OrderType.STOP,
+                            quantity=pos.quantity,
+                            stop_price=sl_order.stop_price,
+                            tag="SL"
+                        )
+                        ctx.submit_order(new_sl)
+                        sl_order = new_sl # Update ref
             
-            if sl_order:
-                if sl_order.quantity != pos.quantity:
-                    logger.info(f"Adjusting SL for {sym}: {sl_order.quantity} -> {pos.quantity}")
-                    ctx.cancel_order(sl_order.id)
-                    new_sl = Order(
-                        id=f"{sym}_SL_{ctx.timestamp.timestamp()}_UPDATE",
+            # --- 4. TAKE PROFIT LOGIC (v3.1 FIXED) ---
+            
+            # TP1: Fixed Price at Entry (BB Middle)
+            tp1_target = meta['tp1_price']
+            # TP2: Fixed Price at Entry (BB Upper)
+            tp2_target = meta['tp2_price']
+            
+            # Check TP1 (Only if in position)
+            if is_in_position and not meta['tp1_hit'] and current_price >= tp1_target:
+                logger.info(f"TP1 HIT {sym} ({current_price:.2f} >= {tp1_target:.2f}). EXIT 60%. Mov SL BE.")
+                meta['tp1_hit'] = True
+                
+                # Execute Partial Exit (60% of CURRENT Position) -> Strategy says "60%".
+                # If we have 10 shares, close 6.
+                qty_to_close = int(pos.quantity * 0.60)
+                if qty_to_close > 0:
+                    exit_order = Order(
+                        id=f"{sym}_TP1_{ctx.timestamp.timestamp()}",
                         symbol=sym,
                         side=OrderSide.SELL,
-                        order_type=OrderType.STOP,
-                        quantity=pos.quantity,
-                        stop_price=sl_order.stop_price,
-                        tag="SL"
+                        order_type=OrderType.MARKET, # Simulating Limit Fill
+                        quantity=qty_to_close,
+                        tag="TP1"
                     )
-                    ctx.submit_order(new_sl)
-                    sl_order = new_sl # Update ref
-            
-            # --- 4. TAKE PROFIT LOGIC ---
-            
-            # TP1: AvgEntry + 1.5 * ATR
-            tp1_target = pos.average_price + (self.cfg['TP1_ATR_MULT'] * meta['atr'])
-            # TP2: AvgEntry + 2.5 * ATR
-            tp2_target = pos.average_price + (self.cfg['TP2_ATR_MULT'] * meta['atr'])
-            
-            # Check TP1
-            if not meta['tp1_hit'] and current_price >= tp1_target:
-                logger.info(f"TP1 HIT {sym} ({current_price:.2f} >= {tp1_target:.2f}). Moving SL to BE.")
-                meta['tp1_hit'] = True
+                    ctx.submit_order(exit_order)
+                
+                # Move remaining SL to Breakeven
                 if sl_order:
                     ctx.cancel_order(sl_order.id)
                     be_sl = Order(
@@ -288,35 +365,34 @@ class MeanReversionStrategy(Strategy):
                         symbol=sym,
                         side=OrderSide.SELL,
                         order_type=OrderType.STOP,
-                        quantity=pos.quantity,
+                        quantity=pos.quantity - qty_to_close, # Remaining
                         stop_price=pos.average_price, # Break Even
                         tag="SL"
                     )
                     ctx.submit_order(be_sl)
                     sl_order = be_sl
 
-            # Check TP2 (New v2.0 Logic: SL to 0.3 ATR locked gain)
+            # Check TP2 (Close Remainder)
             if not meta.get('tp2_hit', False) and current_price >= tp2_target:
-                logger.info(f"TP2 HIT {sym} ({current_price:.2f} >= {tp2_target:.2f}). Locking Profit.")
+                logger.info(f"TP2 HIT {sym} ({current_price:.2f} >= {tp2_target:.2f}). EXIT ALL.")
                 meta['tp2_hit'] = True
                 
-                secure_price = pos.average_price + (self.cfg['SL_SECURE_ATR'] * meta['atr'])
+                # Close All
+                close_order = Order(
+                    id=f"{sym}_TP2_{ctx.timestamp.timestamp()}",
+                    symbol=sym,
+                    side=OrderSide.SELL,
+                    order_type=OrderType.MARKET,
+                    quantity=pos.quantity, # Close remaining
+                    tag="TP2"
+                )
+                ctx.submit_order(close_order)
                 
+                # Cancel SL
                 if sl_order:
                     ctx.cancel_order(sl_order.id)
-                    secure_sl = Order(
-                        id=f"{sym}_SL_SECURE_{ctx.timestamp.timestamp()}",
-                        symbol=sym,
-                        side=OrderSide.SELL,
-                        order_type=OrderType.STOP,
-                        quantity=pos.quantity,
-                        stop_price=secure_price, # Locked Profit
-                        tag="SL"
-                    )
-                    ctx.submit_order(secure_sl)
-                    sl_order = secure_sl
 
-            # --- 5. TIME STOP (48 Hours) ---
+            # --- 5. TIME STOP (5 Days / 120 Hours) ---
             # Only if not in "winner mode" (TP1 hit)? Strategy says "Si TP1 ni SL alcanzado". 
             # So if TP1 hit, we respect it.
             if not meta['tp1_hit']:

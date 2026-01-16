@@ -47,9 +47,13 @@ class TechnicalIndicators:
         
         # SMA 50 (Daily logic usually applies to specific timeframe, but can calculate here)
         df['SMA_50'] = self.sma(df['Close'], 50)
+        df['SMA_200'] = self.sma(df['Close'], 200) # v3.1 Trend Filter
         
         # Volume SMA
         df['Volume_SMA_20'] = self.sma(df['Volume'], 20)
+        
+        # Connors RSI
+        df['CRSI'] = self.connors_rsi(df['Close'], 3, 2, 100)
         
         return df
 
@@ -140,3 +144,85 @@ class TechnicalIndicators:
         if HAS_TALIB:
              return pd.Series(talib.SMA(series.values.astype(float), timeperiod=period), index=series.index)
         return series.rolling(window=period).mean()
+
+    def streak(self, close: pd.Series) -> pd.Series:
+        """
+        Calculates the streak of consecutive days up or down.
+        Up days = +1, +2...
+        Down days = -1, -2...
+        Unchanged = 0
+        """
+        diff = close.diff().fillna(0)
+        
+        # We need to iterate or use a cumulative group approach
+        # Vectorized approach:
+        # Create a group id that increments when sign changes
+        
+        # 1. Sign of change
+        signs = np.sign(diff)
+        
+        # 2. Identify change of sign (where sign != prev_sign)
+        # We use (sign != sign.shift)
+        # Note: 0 is treated as its own sign, but CRSI usually treats 0 as breaking streak or sustaining?
+        # Standard Connors: Streak resets on 0? Or 0 continues?
+        # Usually: Close > Prev => Streak > 0. Close < Prev => Streak < 0. Close == Prev => Streak = 0.
+        
+        # Let's assume strict inequality.
+        
+        # Compare to prev value to efficiently group
+        # This is checking "start of new streak"
+        no_change = (diff == 0)
+        change_sign = (signs != signs.shift(1)) & (~no_change)
+        
+        stats = pd.DataFrame({'val': signs, 'change': change_sign})
+        stats['group'] = stats['change'].cumsum()
+        
+        # Now groupby group and cumsum the signs?
+        # If signs are +1, +1, +1 => cumsum is 1, 2, 3. Correct.
+        # If signs are -1, -1 => cumsum is -1, -2. Correct.
+        
+        streaks = stats.groupby('group')['val'].cumsum()
+        
+        # Where diff was 0, streak is 0
+        streaks[no_change] = 0
+        
+        return streaks
+
+    def connors_rsi(self, close: pd.Series, rsi_period=3, streak_period=2, rank_period=100) -> pd.Series:
+        """
+        Calculates Connors RSI (3,2,100).
+        CRSI = (RSI(3) + RSI(Streak, 2) + PercentRank(100)) / 3
+        """
+        # 1. RSI(Close, 3)
+        rsi_price = self.rsi(close, rsi_period)
+        
+        # 2. RSI(Streak, 2)
+        s = self.streak(close)
+        rsi_streak = self.rsi(s, streak_period)
+        
+        # 3. PercentRank(Return, 100)
+        # Percentage of correct values in the lookback period that are LESS than current value
+        # We use one-day return (pct_change or just diff?)
+        # Connors definition: "Percent Rank of the one-day return"
+        ret = close.pct_change().fillna(0)
+        
+        # Rolling Rank (Percent)
+        # Pandas rolling doesn't have 'rank'. using apply is slow but standard.
+        # Ensure we just rank the current value against the window.
+        
+        def calc_rank(x):
+            # x is the window (size 100) including current
+            # rank of the last item
+            current = x[-1]
+            # Count how many are strictly less than current
+            count = (x < current).sum()
+            # Connors formula usually: number of values < current / total values * 100
+            # Some defs use <=. Let's use < as typical percentile.
+            return (count / len(x)) * 100.0
+
+        # Optimization: scipy might be faster if imported, but let's stick to numpy/pandas
+        percent_rank = ret.rolling(window=rank_period).apply(calc_rank, raw=True)
+        
+        crsi = (rsi_price + rsi_streak + percent_rank) / 3.0
+        return crsi
+

@@ -3,7 +3,9 @@ import time
 import logging
 import sys
 from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone # Added timezone
 from pathlib import Path
+import pandas as pd # Added pandas for Timestamp
 
 # Setup Path to include root
 sys.path.append(str(Path(__file__).parent))
@@ -21,7 +23,10 @@ from data.manager import DataManager
 from analysis.scanner import Scanner
 from analysis.indicators import TechnicalIndicators
 from trading.manager import TradeManager
+from trading.manager import TradeManager
 from alerts.telegram import TelegramBot
+from backtesting.data.feed import DatabaseFeed # v3.1 fix
+from backtesting.strategy.mean_reversion import MeanReversionStrategy # v3.1 fix
 
 # Setup Logging
 logging.basicConfig(
@@ -158,6 +163,8 @@ def run_scan():
 def main():
     parser = argparse.ArgumentParser(description="Trading Advisor Main CLI")
     parser.add_argument('mode', choices=['live', 'scan', 'backtest'], help="Operating Mode")
+    parser.add_argument('--symbol', help="Specific symbol to run (optional)")
+    parser.add_argument('--days', type=int, default=365, help="Days of history to load (default: 365)")
     
     args = parser.parse_args()
     
@@ -166,44 +173,37 @@ def main():
     elif args.mode == 'scan':
         run_scan()
     elif args.mode == 'backtest':
-        logger.info("--- STARTING BACKTEST MODE ---")
-        from backtesting.engine import BacktestEngine
+        logger.info(f"--- STARTING BACKTEST MODE (Days={args.days}) ---")
+        from backtesting.simulation.engine import BacktestEngine
         
-        # 1. Load Data
-        data_mgr = DataManager()
-        market_data = {}
-        daily_data = {}
+        # 1. Setup Data Feed
+        db = Database()
+        target_symbols = [args.symbol] if args.symbol else SYMBOLS
         
-        print("Loading Historical Data...")
-        for symbol in SYMBOLS:
-            try:
-                # Ensure we have data (Optional: could force update)
-                # data_mgr.update_data(symbol) 
-                
-                df_hourly = data_mgr.get_latest_data(symbol, days=365) # 1 Year
-                df_daily = data_mgr.get_latest_daily_data(symbol, days=365)
-                
-                if not df_hourly.empty:
-                    market_data[symbol] = df_hourly
-                    daily_data[symbol] = df_daily
-                    print(f"Loaded {symbol}: {len(df_hourly)} hours, {len(df_daily)} days.")
-                else:
-                    print(f"Warning: No data for {symbol}")
-            except Exception as e:
-                logger.error(f"Error loading {symbol}: {e}")
-                
+        start_date = pd.Timestamp.now(tz='UTC') - pd.Timedelta(days=args.days)
+        end_date = pd.Timestamp.now(tz='UTC')
+        
+        print(f"Initializing Data Feed for {target_symbols} ({args.days} days)...")
+        feed = DatabaseFeed(db, target_symbols, start_date, end_date)
+        
         # 2. Init Engine
-        engine = BacktestEngine(initial_capital=10000.0)
-        engine.load_data(market_data)
-        engine.load_daily_data(daily_data)
+        engine = BacktestEngine(feed, initial_capital=10000.0)
         
-        # 3. Run
-        report = engine.run()
+        # 3. Setup Strategy
+        curr_strategy = MeanReversionStrategy(target_symbols)
+        engine.set_strategy(curr_strategy)
         
-        print("\n--- BACKTEST RESULTS ---")
-        print(f"Final Equity: ${report['final_equity']:.2f}")
-        print(f"Trades: {len(report['trades'])}")
-        print("------------------------")
+        # 4. Run
+        engine.run()
+        
+        # 5. Save Results
+        from backtesting.simulation.logger import TradeLogger
+        trade_logger = TradeLogger()
+        trade_logger.save_trades(engine.broker.trades)
+        curr_strategy.signal_logger.save_signals()
+        
+        logger.info("Saved backtest results to backtesting/results/trades.csv")
+
 
 if __name__ == "__main__":
     main()
