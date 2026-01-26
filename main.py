@@ -217,11 +217,18 @@ def main():
         
         # 5. Save Results
         from backtesting.simulation.logger import TradeLogger
+        from backtesting.simulation.analytics import BacktestAnalyzer
+        
         trade_logger = TradeLogger()
         trade_logger.save_trades(engine.broker.trades)
-        # curr_strategy.signal_logger.save_signals()
         
-        logger.info("Saved backtest results to backtesting/results/trades.csv")
+        if hasattr(curr_strategy, 'completed_trades'):
+            trade_logger.save_round_trips(curr_strategy.completed_trades)
+            # Deep Analysis
+            analyzer = BacktestAnalyzer(curr_strategy.completed_trades)
+            analyzer.print_report()
+            
+        logger.info("Saved backtest results to backtesting/results/")
 
 
 if __name__ == "__main__":

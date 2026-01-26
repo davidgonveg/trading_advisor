@@ -55,6 +55,8 @@ class RoundTrip:
             "direction": self.direction,
             "entry_time": self.entry_time,
             "exit_time": self.exit_time,
+            "hour": self.entry_time.hour if self.entry_time else None,
+            "weekday": self.entry_time.strftime('%A') if self.entry_time else None,
             "duration_h": round(self.duration_hours, 2),
             "qty": self.max_quantity,
             "entry_avg": round(self.avg_entry_price, 2),
@@ -81,3 +83,94 @@ class RoundTrip:
             base_dict[f"exit_{k}"] = v
             
         return base_dict
+
+class BacktestAnalyzer:
+    """
+    Analyzes backtest results (RoundTrips) to provide deep insights.
+    """
+    def __init__(self, round_trips: List[RoundTrip]):
+        self.round_trips = round_trips
+        
+    def get_summary(self) -> Dict[str, Any]:
+        if not self.round_trips:
+            return {"error": "No trades to analyze"}
+            
+        total_pnl = sum(t.net_pnl for t in self.round_trips)
+        wins = [t for t in self.round_trips if t.net_pnl > 0]
+        losses = [t for t in self.round_trips if t.net_pnl <= 0]
+        
+        win_rate = len(wins) / len(self.round_trips) if self.round_trips else 0
+        profit_factor = sum(w.net_pnl for w in wins) / abs(sum(l.net_pnl for l in losses)) if losses and sum(l.net_pnl for l in losses) != 0 else float('inf')
+        
+        return {
+            "total_trades": len(self.round_trips),
+            "total_pnl": round(total_pnl, 2),
+            "win_rate": round(win_rate * 100, 2),
+            "profit_factor": round(profit_factor, 2),
+            "avg_trade": round(total_pnl / len(self.round_trips), 2)
+        }
+        
+    def analyze_by(self, field: str) -> Dict[str, Dict[str, Any]]:
+        """
+        Group analysis by a specific field (e.g., 'symbol', 'hour', 'weekday').
+        """
+        stats = {}
+        
+        for t in self.round_trips:
+            # Get value for the field
+            if field == 'hour':
+                val = t.entry_time.hour
+            elif field == 'weekday':
+                val = t.entry_time.strftime('%A')
+            else:
+                val = getattr(t, field, "Unknown")
+                
+            if val not in stats:
+                stats[val] = {"count": 0, "pnl": 0.0, "wins": 0}
+                
+            stats[val]["count"] += 1
+            stats[val]["pnl"] += t.net_pnl
+            if t.net_pnl > 0:
+                stats[val]["wins"] += 1
+                
+        # Finalize stats
+        for val in stats:
+            stats[val]["win_rate"] = round(stats[val]["wins"] / stats[val]["count"] * 100, 2)
+            stats[val]["pnl"] = round(stats[val]["pnl"], 2)
+            stats[val]["avg_pnl"] = round(stats[val]["pnl"] / stats[val]["count"], 2)
+            
+        return stats
+
+    def print_report(self):
+        summary = self.get_summary()
+        if "error" in summary:
+            print(f"\n⚠️ {summary['error']}")
+            return
+            
+        print("\n" + "="*40)
+        print("📊 BACKTEST DEEP ANALYSIS REPORT")
+        print("="*40)
+        print(f"Total Trades:  {summary['total_trades']}")
+        print(f"Total Net PnL: ${summary['total_pnl']}")
+        print(f"Win Rate:      {summary['win_rate']}%")
+        print(f"Profit Factor: {summary['profit_factor']}")
+        print(f"Avg Trade:     ${summary['avg_trade']}")
+        
+        print("\n📈 PERFORMANCE BY SYMBOL:")
+        by_symbol = self.analyze_by('symbol')
+        for sym, data in sorted(by_symbol.items(), key=lambda x: x[1]['pnl'], reverse=True):
+            print(f"  {sym:5}: PnL: ${data['pnl']:8.2f} | WinRate: {data['win_rate']:6.2f}% | Count: {data['count']}")
+            
+        print("\n🕒 PERFORMANCE BY HOUR (UTC):")
+        by_hour = self.analyze_by('hour')
+        for hr, data in sorted(by_hour.items()):
+            print(f"  {hr:02}h: PnL: ${data['pnl']:8.2f} | WinRate: {data['win_rate']:6.2f}% | Count: {data['count']}")
+            
+        print("\n📅 PERFORMANCE BY DAY:")
+        by_day = self.analyze_by('weekday')
+        days_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        for day in days_order:
+            if day in by_day:
+                data = by_day[day]
+                print(f"  {day:9}: PnL: ${data['pnl']:8.2f} | WinRate: {data['win_rate']:6.2f}% | Count: {data['count']}")
+        print("="*40 + "\n")

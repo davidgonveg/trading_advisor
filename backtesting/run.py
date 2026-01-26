@@ -10,6 +10,8 @@ from backtesting.simulation.engine import BacktestEngine
 from backtesting.simulation.engine import BacktestEngine
 from backtesting.strategy.vwap_bounce import VWAPBounceStrategy
 from backtesting.simulation.logger import TradeLogger
+from backtesting.simulation.analytics import BacktestAnalyzer
+from config.settings import SYMBOLS
 
 # Configure Logging
 logging.basicConfig(
@@ -23,7 +25,7 @@ logging.basicConfig(
 
 def main():
     # 1. Configuration
-    symbols = ["SPY", "QQQ", "IWM", "XLF", "XLE", "XLK", "SMH"] # Tier 1 + Tier 2
+    symbols = SYMBOLS
     start_date = datetime(2023, 1, 1, tzinfo=timezone.utc)
     end_date = datetime(2024, 12, 31, tzinfo=timezone.utc)
     initial_capital = 10000.0
@@ -56,7 +58,12 @@ def main():
     logger.save_trades(engine.broker.trades)
     
     # Save Detailed Round Trips (NEW)
-    # logger.save_round_trips(strategy.completed_trades) # Strategy might not have this populated depending on Base
+    if hasattr(strategy, 'completed_trades'):
+        logger.save_round_trips(strategy.completed_trades)
+        
+        # 4.5. Deep Analysis
+        analyzer = BacktestAnalyzer(strategy.completed_trades)
+        analyzer.print_report()
     
     # Save Equity Curve (NEW)
     logger.save_equity_curve(engine.equity_curve)

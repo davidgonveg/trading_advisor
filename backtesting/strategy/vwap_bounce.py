@@ -2,6 +2,7 @@ from backtesting.strategy.base import Strategy
 from backtesting.simulation.context import TradingContext
 from backtesting.simulation.broker_schema import Order, OrderSide, OrderType
 from backtesting.strategy.indicators import IndicatorCalculator
+from backtesting.simulation.analytics import RoundTrip
 from analysis.patterns import PatternRecognizer
 import pandas as pd
 import logging
@@ -48,6 +49,8 @@ class VWAPBounceStrategy(Strategy):
         
         # Signal Logger/Collector
         self.signals = []
+        self.completed_trades: list[RoundTrip] = []
+        self.active_round_trips: dict[str, RoundTrip] = {}
 
     def execute(self, ctx: TradingContext):
         # We iterate over symbols
@@ -159,6 +162,24 @@ class VWAPBounceStrategy(Strategy):
                 'tp2': tp2_price,
                 'original_qty': qty
             }
+            
+            # Start RoundTrip tracking
+            rt = RoundTrip(
+                id=f"RT_{symbol}_{ctx.data.timestamp.timestamp()}",
+                symbol=symbol,
+                direction="LONG" if side == OrderSide.BUY else "SHORT",
+                entry_time=ctx.data.timestamp,
+                max_quantity=qty,
+                avg_entry_price=price,
+                atr_at_entry=ctx.data.bars[symbol].indicators.get('ATR', 0),
+                adx_at_entry=ctx.data.bars[symbol].indicators.get('ADX', 0),
+                initial_sl=sl_price,
+                tp1_target=tp1_price,
+                tp2_target=tp2_price,
+                entry_snapshot=ctx.data.bars[symbol].indicators
+            )
+            rt.tags.append("E1")
+            self.active_round_trips[symbol] = rt
 
     def _manage_positions(self, ctx, symbol, current_price, timestamp, pos):
         # Logic to handle SL, TP1, TP2 based on self.trade_state[symbol]
@@ -184,6 +205,25 @@ class VWAPBounceStrategy(Strategy):
         if hit_sl:
             logger.info(f"SL HIT {symbol} @ {current_price}. Closing.")
             self._close_position(ctx, symbol, "SL", abs(quantity))
+            
+            # Close RoundTrip
+            if symbol in self.active_round_trips:
+                rt = self.active_round_trips[symbol]
+                rt.close(timestamp)
+                rt.exit_reason = "SL"
+                rt.avg_exit_price = current_price
+                rt.exit_snapshot = ctx.data.bars[symbol].indicators
+                # Calculate PnL
+                if rt.direction == "LONG":
+                    rt.gross_pnl = (rt.avg_exit_price - rt.avg_entry_price) * rt.max_quantity
+                else:
+                    rt.gross_pnl = (rt.avg_entry_price - rt.avg_exit_price) * rt.max_quantity
+                rt.net_pnl = rt.gross_pnl # Simplified
+                rt.return_pct = (rt.net_pnl / (rt.avg_entry_price * rt.max_quantity)) * 100 if rt.avg_entry_price else 0
+                
+                self.completed_trades.append(rt)
+                del self.active_round_trips[symbol]
+                
             del self.trade_state[symbol]
             return
 
@@ -201,6 +241,8 @@ class VWAPBounceStrategy(Strategy):
                 if qty_to_close > 0:
                     logger.info(f"TP1 HIT {symbol} @ {current_price}. Closing {qty_to_close}.")
                     self._close_partial(ctx, symbol, qty_to_close, "TP1", quantity)
+                    if symbol in self.active_round_trips:
+                        self.active_round_trips[symbol].tags.append("TP1")
                 
                 # Move SL to BE
                 state['sl'] = state['entry_price']
@@ -219,6 +261,27 @@ class VWAPBounceStrategy(Strategy):
             if hit_tp2:
                 logger.info(f"TP2 HIT {symbol} @ {current_price}. Closing data.")
                 self._close_position(ctx, symbol, "TP2", abs(quantity))
+                
+                # Close RoundTrip
+                if symbol in self.active_round_trips:
+                    rt = self.active_round_trips[symbol]
+                    rt.close(timestamp)
+                    rt.exit_reason = "TP2"
+                    rt.tags.append("TP2")
+                    rt.avg_exit_price = current_price # Simplified
+                    rt.exit_snapshot = ctx.data.bars[symbol].indicators
+                    
+                    # Calculate PnL (Weighted average properly would be better, but for now...)
+                    if rt.direction == "LONG":
+                        rt.gross_pnl = (rt.avg_exit_price - rt.avg_entry_price) * rt.max_quantity
+                    else:
+                        rt.gross_pnl = (rt.avg_entry_price - rt.avg_exit_price) * rt.max_quantity
+                    rt.net_pnl = rt.gross_pnl
+                    rt.return_pct = (rt.net_pnl / (rt.avg_entry_price * rt.max_quantity)) * 100 if rt.avg_entry_price else 0
+
+                    self.completed_trades.append(rt)
+                    del self.active_round_trips[symbol]
+                    
                 del self.trade_state[symbol]
                 return
                 

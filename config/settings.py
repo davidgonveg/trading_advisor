@@ -49,7 +49,7 @@ SYMBOLS = [
     # Tier 2: Sector
     "XLF", "XLE", "XLK", "SMH",
     # Tier 3: Diversification
-    # "GLD", "TLT", "EEM"
+    "GLD", "TLT", "EEM"
 ]
 
 # Risk Management
