@@ -23,10 +23,9 @@ from data.manager import DataManager
 from analysis.scanner import Scanner
 from analysis.indicators import TechnicalIndicators
 from trading.manager import TradeManager
-from trading.manager import TradeManager
 from alerts.telegram import TelegramBot
-from backtesting.data.feed import DatabaseFeed # v3.1 fix
-from backtesting.strategy.mean_reversion import MeanReversionStrategy # v3.1 fix
+from backtesting.data.feed import DatabaseFeed 
+from backtesting.strategy.vwap_bounce import VWAPBounceStrategy # v3.1 fix
 
 # Setup Logging
 logging.basicConfig(
@@ -97,17 +96,26 @@ def run_live_loop():
                 db.save_indicators(symbol, "1h", rows_to_save)
                 
                 # E. Scan
-                # Only scan the LATEST candle in live mode to avoid spamming historical signals
-                # Pass df_daily for Trend Filter
-                signals = scanner.find_signals(symbol, df_analyzed, df_daily=df_daily, scan_latest=True)
+                # We want to scan the last CLOSED candle to ensure consistency with backtesting.
+                # In 1h timeframe, a candle starting at 11:00 is 'closed' at 12:00.
+                # We filter df_analyzed to only include rows where timestamp + 1h is in the past.
+                now_utc = datetime.now(timezone.utc)
+                df_confirmed = df_analyzed[df_analyzed.index + pd.Timedelta(hours=1) <= now_utc]
+                
+                if df_confirmed.empty:
+                    logger.debug(f"No fully closed candles for {symbol} yet.")
+                    continue
+                    
+                # Scan only the latest fully formed candle
+                signals = scanner.find_signals(symbol, df_confirmed, df_daily=df_daily, scan_latest=True)
                 
                 if signals:
                     logger.info(f"SIGNALS FOUND FOR {symbol}: {len(signals)}")
                     for sig in signals:
-                        # Validate?
-                        
                         # Generate Plan
-                        plan = trade_mgr.create_trade_plan(sig, size=1000) # Dummy size for now, or calculate
+                        # Using configurable capital size for risk management
+                        cap_size = SYSTEM_CONFIG.get("INITIAL_CAPITAL", 10000)
+                        plan = trade_mgr.create_trade_plan(sig, size=cap_size) 
                         
                         if plan:
                             logger.info(f"ALERT: {plan}")
@@ -165,6 +173,8 @@ def main():
     parser.add_argument('mode', choices=['live', 'scan', 'backtest'], help="Operating Mode")
     parser.add_argument('--symbol', help="Specific symbol to run (optional)")
     parser.add_argument('--days', type=int, default=365, help="Days of history to load (default: 365)")
+    parser.add_argument('--start-date', help="Start Date (YYYY-MM-DD) for backtest")
+    parser.add_argument('--end-date', help="End Date (YYYY-MM-DD) for backtest")
     
     args = parser.parse_args()
     
@@ -173,24 +183,33 @@ def main():
     elif args.mode == 'scan':
         run_scan()
     elif args.mode == 'backtest':
-        logger.info(f"--- STARTING BACKTEST MODE (Days={args.days}) ---")
+        logger.info(f"--- STARTING BACKTEST MODE ---")
         from backtesting.simulation.engine import BacktestEngine
         
         # 1. Setup Data Feed
         db = Database()
         target_symbols = [args.symbol] if args.symbol else SYMBOLS
         
-        start_date = pd.Timestamp.now(tz='UTC') - pd.Timedelta(days=args.days)
-        end_date = pd.Timestamp.now(tz='UTC')
+        if args.start_date:
+            start_date = pd.Timestamp(args.start_date, tz='UTC')
+            if args.end_date:
+                end_date = pd.Timestamp(args.end_date, tz='UTC')
+            else:
+                end_date = pd.Timestamp.now(tz='UTC')
+            logger.info(f"Using explicit date range: {start_date} to {end_date}")
+        else:
+            start_date = pd.Timestamp.now(tz='UTC') - pd.Timedelta(days=args.days)
+            end_date = pd.Timestamp.now(tz='UTC')
+            logger.info(f"Using relative date range (Days={args.days}): {start_date} to {end_date}")
         
-        print(f"Initializing Data Feed for {target_symbols} ({args.days} days)...")
+        print(f"Initializing Data Feed for {target_symbols}...")
         feed = DatabaseFeed(db, target_symbols, start_date, end_date)
         
         # 2. Init Engine
         engine = BacktestEngine(feed, initial_capital=10000.0)
         
         # 3. Setup Strategy
-        curr_strategy = MeanReversionStrategy(target_symbols)
+        curr_strategy = VWAPBounceStrategy(target_symbols)
         engine.set_strategy(curr_strategy)
         
         # 4. Run
@@ -200,7 +219,7 @@ def main():
         from backtesting.simulation.logger import TradeLogger
         trade_logger = TradeLogger()
         trade_logger.save_trades(engine.broker.trades)
-        curr_strategy.signal_logger.save_signals()
+        # curr_strategy.signal_logger.save_signals()
         
         logger.info("Saved backtest results to backtesting/results/trades.csv")
 

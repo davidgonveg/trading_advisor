@@ -11,15 +11,19 @@ class SignalLogger:
         self.signals = []
 
     def log_signal(self, timestamp: datetime, symbol: str, direction: str, 
-                   entry_price: float, sl_price: float, 
-                   e1_price: float, e2_price: float, e3_price: float,
-                   e1_qty: int, e2_qty: int, e3_qty: int, atr: float, notes: str = ""):
+                   status: str = "ACCEPTED", reason: str = "",
+                   entry_price: float = 0.0, sl_price: float = 0.0, 
+                   e1_price: float = 0.0, e2_price: float = 0.0, e3_price: float = 0.0,
+                   e1_qty: int = 0, e2_qty: int = 0, e3_qty: int = 0, atr: float = 0.0, 
+                   indicators: Dict = None, notes: str = ""):
         
         signal = {
             "timestamp": timestamp,
             "symbol": symbol,
             "direction": direction,
-            "entry_price": entry_price, # Reference Price
+            "status": status,
+            "reason": reason,
+            "entry_price": entry_price, 
             "sl_price": f"{sl_price:.2f}",
             "e1_price": f"{e1_price:.2f}",
             "e1_qty": e1_qty,
@@ -30,6 +34,13 @@ class SignalLogger:
             "atr": f"{atr:.2f}",
             "notes": notes
         }
+        
+        # Merge Indicators
+        if indicators:
+            for k, v in indicators.items():
+                # Avoid collision or prefix
+                signal[k] = v
+                
         self.signals.append(signal)
 
     def save_signals(self, filename="signals.csv"):
@@ -38,8 +49,19 @@ class SignalLogger:
             print(f"No signals to save to {path}")
             return
 
-        fieldnames = ["timestamp", "symbol", "direction", "entry_price", "sl_price", 
+        # Dynamic Field Discovery
+        # Collect all keys from all signals to ensure full coverage
+        all_keys = set()
+        for s in self.signals:
+            all_keys.update(s.keys())
+            
+        # Prioritize standard fields order
+        standard_fields = ["timestamp", "symbol", "direction", "status", "reason", "entry_price", "sl_price", 
                       "e1_price", "e1_qty", "e2_price", "e2_qty", "e3_price", "e3_qty", "atr", "notes"]
+        
+        # Sort remaining keys
+        remaining = sorted([k for k in all_keys if k not in standard_fields])
+        fieldnames = standard_fields + remaining
         
         with open(path, mode='w', newline='') as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)

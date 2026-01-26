@@ -1,9 +1,14 @@
 import logging
 from datetime import datetime, timezone
+import sys
+import os
+sys.path.insert(0, os.getcwd())
+
 from data.storage.database import Database
 from backtesting.data.feed import DatabaseFeed
 from backtesting.simulation.engine import BacktestEngine
-from backtesting.strategy.mean_reversion import MeanReversionStrategy
+from backtesting.simulation.engine import BacktestEngine
+from backtesting.strategy.vwap_bounce import VWAPBounceStrategy
 from backtesting.simulation.logger import TradeLogger
 
 # Configure Logging
@@ -19,8 +24,8 @@ logging.basicConfig(
 def main():
     # 1. Configuration
     symbols = ["SPY", "QQQ", "IWM", "XLF", "XLE", "XLK", "SMH"] # Tier 1 + Tier 2
-    start_date = datetime(2024, 1, 1, tzinfo=timezone.utc) # Targeted Verification
-    end_date = datetime(2025, 12, 31, tzinfo=timezone.utc) # Up to now
+    start_date = datetime(2023, 1, 1, tzinfo=timezone.utc)
+    end_date = datetime(2024, 12, 31, tzinfo=timezone.utc)
     initial_capital = 10000.0
     
     print(f"--- STARTING BACKTEST Runner ---")
@@ -33,8 +38,8 @@ def main():
     feed = DatabaseFeed(db, symbols, start_date, end_date)
     
     engine = BacktestEngine(feed, initial_capital)
-    strategy = MeanReversionStrategy(symbols)
     
+    strategy = VWAPBounceStrategy(symbols)
     engine.set_strategy(strategy)
     
     # 3. Run
@@ -50,18 +55,20 @@ def main():
     logger = TradeLogger()
     logger.save_trades(engine.broker.trades)
     
+    # Save Detailed Round Trips (NEW)
+    # logger.save_round_trips(strategy.completed_trades) # Strategy might not have this populated depending on Base
+    
+    # Save Equity Curve (NEW)
+    logger.save_equity_curve(engine.equity_curve)
+    
     # Save Detailed Signals
-    strategy.signal_logger.save_signals()
+    # strategy.signal_logger.save_signals() # VWAP Strategy doesn't have signal logger instantiated yet?
     
     # 5. Summary
     print("\n--- SUMMARY ---")
     print(f"Final Equity: ${engine.broker.equity:.2f}")
-    print(f"Total Trades: {len(engine.broker.trades)}")
     
-    # Simple Win Rate Calc
-    # NOTE: Broker.trades is a list of fills (entries and exits mixed).
-    # To calculate Win Rate we need to pair them (Round Trips).
-    # For now, just dumping the raw ledger is step 1.
+    print(f"Total Fills: {len(engine.broker.trades)}")
     
     if engine.broker.trades:
         last_trade = engine.broker.trades[-1]

@@ -31,9 +31,11 @@ class TradePlan:
     stop_loss_order: TradeOrder  # NEW: Actual SL order
     take_profits: List[TradeOrder]
     risk_amount: float
+    warnings: List[str] = field(default_factory=list)
     
     def __str__(self):
-        return f"TradePlan: {self.signal.symbol} {self.signal.type.value} Size={self.total_size} SL={self.stop_loss_price}"
+        warn_str = f" [WARNINGS: {', '.join(self.warnings)}]" if self.warnings else ""
+        return f"TradePlan: {self.signal.symbol} {self.signal.type.value} Size={self.total_size} SL={self.stop_loss_price}{warn_str}"
 
 class TradeManager:
     """
@@ -51,100 +53,103 @@ class TradeManager:
     def create_trade_plan(self, signal: Signal, size: int) -> Optional[TradePlan]:
         """
         Converts a raw Signal into an executable Trade Plan.
+        Strategy: VWAP Bounce (v3.1)
+        - Entry: Market (100%)
+        - SL: 0.4% from Entry
+        - TP1: 0.8% from Entry (60% Qty)
+        - TP2: 1.2% from Entry (40% Qty)
         """
-        # 1. Calculate ATR-based Sizing
-        # We need ATR at time of signal. Signal has it?
-        # Signal object has `atr_value`.
-        atr = signal.atr_value
         price = signal.price
-        
-        if atr <= 0 or price <= 0:
-            logger.error(f"Invalid ATR/Price for {signal.symbol}: ATR={atr}, Price={price}")
+        if price <= 0:
             return None
             
-        # Total Max Position Size
-        # total_qty = self.risk_manager.calculate_size(price, atr, capital)
-        total_qty = size
-        
-        if total_qty < 1:
-            logger.warning(f"Calculated size is 0 for {signal.symbol}. Too risky or low capital.")
-            return None
-            
-        # 2. Entry Structure (E1, E2, E3)
-        # E1: 50% at Market (Current Close)
-        # E2: 30% at Entry +/- 0.5 * ATR
-        # E3: 20% at Entry +/- 1.0 * ATR
-        
-        q1 = int(total_qty * 0.50)
-        q2 = int(total_qty * 0.30)
-        q3 = total_qty - q1 - q2 # Remainder
-        
         direction = 1 if signal.type == SignalType.LONG else -1
         
-        # Prices
-        e1_price = price
-        e2_price = price - (direction * self.cfg['ENTRY_2_ATR_DIST'] * atr)
-        e3_price = price - (direction * self.cfg['ENTRY_3_ATR_DIST'] * atr)
+        # 1. Levels (Fixed % as per verified Strategy)
+        SL_PCT = 0.004
+        TP1_PCT = 0.008
+        TP2_PCT = 0.012
+        
+        sl_dist = price * SL_PCT
+        tp1_dist = price * TP1_PCT
+        tp2_dist = price * TP2_PCT
+        
+        sl_price = price - (direction * sl_dist)
+        tp1_price = price + (direction * tp1_dist)
+        tp2_price = price + (direction * tp2_dist)
+        
+        # 2. Sizing
+        # Determine quantity if 'size' is Capital?
+        # WARNING: 'main.py' currently passes 1000. If that's Quantity, we use it. 
+        # If it's Capital, we calculate.
+        # Let's assume 'size' is intended as 'Available Capital' generally, but currently hardcoded.
+        # Let's calculate Quantity based on Risk Management (1.5% Risk).
+        # Risk per unit = sl_dist
+        # Max Risk = size * 0.015 (Assuming size is capital)
+        # If size is 1000 (Capital), Risk is $15. 
+        # If Price is 400, SL is 1.6. Qty = 15 / 1.6 = ~9 shares.
+        # If size=1000 is Qty, then Qty=1000. Risk is 1000 * 1.6 = $1600.
+        # Let's assume for now 'size' is CAPITAL.
+        # Because passing fixed qty (1000 shares) for SPY ($500) = $500k exposure. Unlikely default.
+        
+        capital = float(size)
+        risk_per_trade = 0.015
+        max_risk_amount = capital * risk_per_trade
+        
+        # Qty = Risk / Distance
+        if sl_dist == 0: return None
+        total_qty = int(max_risk_amount / sl_dist)
+        
+        if total_qty < 1:
+            logger.warning(f"Calculated size < 1 for {signal.symbol}. Capital: {capital}, Price: {price}, SL Dist: {sl_dist:.2f}")
+            return None
+            
+        # 3. Capital Validation (New)
+        # Check if total exposure (Initial Value) exceeds allocated capital
+        exposure = total_qty * price
+        warnings = []
+        if exposure > capital:
+            msg = f"CAPITAL OVERFLOW: Exposure (${exposure:.2f}) > Capital (${capital:.2f})"
+            logger.warning(f"⚠️ {msg} for {signal.symbol}")
+            warnings.append(msg)
+
+        # 4. Orders
+        
+        # Entry (Market)
+        entry_order = TradeOrder(signal.symbol, "MARKET", "BUY" if direction > 0 else "SELL", price, total_qty, tag="ENTRY")
         
         # Stop Loss
-        sl_dist = self.cfg['SL_ATR_MULT'] * atr
-        # SL is based on Average Entry? 
-        # Strategy Doc: "SL = Precio entrada promedio - 2 * ATR".
-        # Initially we don't know avg entry. 
-        # We usually set SL relative to E1 or worst case?
-        # Strategy Doc 5.3: "El stop se calcula sobre el precio promedio ponderado... Si solo se ejecutan E1 y E2..."
-        # Initial SL order must be placed somewhere. Usually we place it relative to E1?
-        # Or we implement dynamic SL update?
-        # Let's set initial SL based on E1.
-        sl_price = e1_price - (direction * sl_dist)
-        
-        orders = []
-        orders.append(TradeOrder(signal.symbol, "MARKET", "BUY" if direction > 0 else "SELL", e1_price, q1, tag="E1"))
-        orders.append(TradeOrder(signal.symbol, "LIMIT", "BUY" if direction > 0 else "SELL", e2_price, q2, tag="E2"))
-        orders.append(TradeOrder(signal.symbol, "LIMIT", "BUY" if direction > 0 else "SELL", e3_price, q3, tag="E3"))
-        
-        # Stop Loss Order
-        # For LONG: SELL STOP below entry
-        # For SHORT: BUY STOP above entry
         sl_order = TradeOrder(
             signal.symbol, 
             "STOP", 
             "SELL" if direction > 0 else "BUY", 
             sl_price, 
-            total_qty,  # SL covers entire position
+            total_qty, 
             tag="SL"
         )
         
-        # Take Profits (Based on Avg Entry expected? Use E1 for now)
-        # TP1: 1.5 ATR
-        # TP2: 2.5 ATR
-        # TP3: 4.0 ATR
-        
-        tp1_price = e1_price + (direction * self.cfg['TP1_ATR_MULT'] * atr)
-        tp2_price = e1_price + (direction * self.cfg['TP2_ATR_MULT'] * atr)
-        tp3_price = e1_price + (direction * self.cfg['TP3_ATR_MULT'] * atr)
+        # Take Profits (Split)
+        tp1_qty = int(total_qty * 0.60)
+        tp2_qty = total_qty - tp1_qty
         
         tps = []
-        # Quantity distribution for TPs
-        # TP1 50%, TP2 30%, TP3 20% OF THE TOTAL SIZE
-        tp1_qty = int(total_qty * 0.50)
-        tp2_qty = int(total_qty * 0.30)
-        tp3_qty = total_qty - tp1_qty - tp2_qty  # Remainder
-        
-        tps.append(TradeOrder(signal.symbol, "LIMIT", "SELL" if direction > 0 else "BUY", tp1_price, tp1_qty, tag="TP1"))
-        tps.append(TradeOrder(signal.symbol, "LIMIT", "SELL" if direction > 0 else "BUY", tp2_price, tp2_qty, tag="TP2"))
-        tps.append(TradeOrder(signal.symbol, "LIMIT", "SELL" if direction > 0 else "BUY", tp3_price, tp3_qty, tag="TP3"))
-        
+        if tp1_qty > 0:
+            tps.append(TradeOrder(signal.symbol, "LIMIT", "SELL" if direction > 0 else "BUY", tp1_price, tp1_qty, tag="TP1"))
+        if tp2_qty > 0:
+            tps.append(TradeOrder(signal.symbol, "LIMIT", "SELL" if direction > 0 else "BUY", tp2_price, tp2_qty, tag="TP2"))
+            
         plan = TradePlan(
             signal=signal,
             total_size=total_qty,
-            entry_orders=orders,
+            entry_orders=[entry_order],
             stop_loss_price=sl_price,
             stop_loss_order=sl_order,
             take_profits=tps,
-            risk_amount= (total_qty * abs(price - sl_price)) # Approx risk
+            risk_amount=(total_qty * sl_dist),
+            warnings=warnings
         )
         
+        logger.info(f"Generated Plan for {signal.symbol}: Qty={total_qty}, Exposure=${exposure:.2f}, Risk=${plan.risk_amount:.2f}")
         return plan
 
     def execute_plan(self, plan: TradePlan):

@@ -35,6 +35,10 @@ class PatternRecognizer:
         lo = data['Low']
         cl = data['Close']
         
+        body = abs(cl - op)
+        upper_wick = hi - np.maximum(cl, op)
+        lower_wick = np.minimum(cl, op) - lo
+
         if HAS_TALIB:
             # TA-Lib returns integer score (usually 100 or -100)
             data['pat_hammer'] = talib.CDLHAMMER(op, hi, lo, cl)
@@ -44,9 +48,6 @@ class PatternRecognizer:
         else:
             # Pandas / Custom Logic Implementation
             # 1. Hammer: Small body, long lower wick, small/no upper wick
-            body = abs(cl - op)
-            upper_wick = hi - np.maximum(cl, op)
-            lower_wick = np.minimum(cl, op) - lo
             avg_body = body.rolling(10).mean() # relative body size
             
             # Logic: Lower wick > 2 * body, Upper wick very small
@@ -73,6 +74,15 @@ class PatternRecognizer:
             is_doji = body <= (hi - lo) * 0.1
             data['pat_doji'] = np.where(is_doji, 100, 0)
 
+        # 5. Pure Wick Rejection (VWAP Bounce Strategy) - ALWAYS RUN
+        # Bullish: Lower Wick > 2 * Body
+        is_wick_bull = lower_wick > (2 * body)
+        data['pat_wick_bull'] = np.where(is_wick_bull, 100, 0)
+
+        # Bearish: Upper Wick > 2 * Body
+        is_wick_bear = upper_wick > (2 * body)
+        data['pat_wick_bear'] = np.where(is_wick_bear, -100, 0)
+
         return data
 
     def check_bullish_reversal(self, row) -> bool:
@@ -98,3 +108,13 @@ class PatternRecognizer:
         is_star = row.get('pat_shooting_star', 0) != 0
         
         return is_star or bear_eng or doji
+
+    def check_wick_reversal(self, row) -> int:
+        """
+        Returns 1 for Bullish Wick Rejection, -1 for Bearish, 0 otherwise.
+        """
+        if row.get('pat_wick_bull', 0) > 0:
+            return 1
+        if row.get('pat_wick_bear', 0) < 0: # Bearish stored as -100
+            return -1
+        return 0

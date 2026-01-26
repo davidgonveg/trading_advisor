@@ -39,6 +39,7 @@ SYSTEM_CONFIG = {
     "LOG_LEVEL": os.getenv("LOG_LEVEL", "INFO"),
     "TIMEZONE": os.getenv("TIMEZONE", "US/Eastern"),
     "DEVELOPMENT_MODE": os.getenv("DEVELOPMENT_MODE", "False").lower() == "true",
+    "INITIAL_CAPITAL": 10000,
 }
 
 # Trading Symbols (Tier 1 Core, Tier 2 Sector, Tier 3 Optional)
@@ -48,7 +49,7 @@ SYMBOLS = [
     # Tier 2: Sector
     "XLF", "XLE", "XLK", "SMH",
     # Tier 3: Diversification
-    "GLD", "TLT", "EEM"
+    # "GLD", "TLT", "EEM"
 ]
 
 # Risk Management
@@ -82,14 +83,15 @@ STRATEGY_CONFIG = {
     "BB_DEV": 2.0,
     
     "ADX_PERIOD": 14,
-    "ADX_MAX_THRESHOLD": 30, # Used for Volume Regime
+    "ADX_MAX_THRESHOLD": 100, # Disabled (high value)
+    "ADX_MIN_THRESHOLD": 35, # New: Low Volatility Filter
     "ADX_CANCEL_THRESHOLD": 3, 
     
     "SMA_TREND_PERIOD": 200, # v3.1 Daily
     "VOLUME_SMA_PERIOD": 20,
     
     # Time Rules
-    "TIME_STOP_HOURS": 120, # v3.1 (5 Days)
+    "TIME_STOP_HOURS": 48, # Optimized (2 Days)
     "ENTRY_TIMEOUT_HOURS": 4,
     "MIN_MARKET_HOUR": 15, # 15:30 CET approx (handled via UTC/Timezone conversion)
     "MAX_MARKET_HOUR": 21, # 22:00 CET

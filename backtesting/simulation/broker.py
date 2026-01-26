@@ -159,15 +159,13 @@ class Broker:
                     order.status = OrderStatus.REJECTED
                     return True # Treat as "handled" (removed from queue)
         else:
-            # Check for Sell availability (Long Only enforcement)
-            current_pos_qty = self.positions.get(order.symbol, Position(symbol=order.symbol)).quantity
+            # Short Selling Logic / Closing Logic
+            # We allow selling even if we don't have the position -> Short position.
             
-            if current_pos_qty < order.quantity:
-                 logger.warning(f"REJECTED SELL {order.symbol}: Needed {order.quantity}, Has {current_pos_qty}. (Short Selling disabled)")
-                 order.status = OrderStatus.REJECTED
-                 return True
-                 
-            # If closing, no cash needed strictly.
+            # TODO: Improve Margin Check for Shorts (Infinite Risk)
+            # Currently assuming sufficient collateral if Equity > Margin Requirement.
+            # For strict simulation, we should implement Reg T (150% initial margin).
+            # V1: Allow it, relying on Strategy to be sane.
             pass 
 
         # Execute

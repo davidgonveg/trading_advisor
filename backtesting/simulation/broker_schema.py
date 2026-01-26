@@ -80,35 +80,53 @@ class Position:
         is_buy = trade.side == OrderSide.BUY
         trade_qty_signed = trade.quantity if is_buy else -trade.quantity
         
-        # 1. Increasing Position (Adding)
-        # Same sign
-        if (self.quantity > 0 and is_buy) or (self.quantity < 0 and not is_buy):
+        # 1. Increasing Position (Adding) - Same sign or zero
+        if self.quantity == 0 or (self.quantity > 0 and is_buy) or (self.quantity < 0 and not is_buy):
             total_cost = (self.quantity * self.average_price) + (trade_qty_signed * trade.price)
             self.quantity += trade_qty_signed
-            self.average_price = total_cost / self.quantity
-            
-        # 2. Reducing/Closing Position
-        else:
-            # PnT Calculation: (Exit Price - Entry Price) * Qty
-            # Logic: We are closing 'trade.quantity' amount.
-            # Determine closed qty (min of remaining vs trade)
-            
-            # Simplified: Assume FIFO or Weighted Average PnL.
-            # Using Weighted Average is standard for simple backtests.
-            
-            closing_qty = min(abs(self.quantity), trade.quantity)
-            
-            # PnL on the closed portion
-            if self.quantity > 0: # Long closing
-                pnl = (trade.price - self.average_price) * closing_qty
-            else: # Short closing
-                pnl = (self.average_price - trade.price) * closing_qty
-                
-            self.realized_pnl += pnl
-            
-            self.quantity += trade_qty_signed # This reduces the magnitude
-            
-            if abs(self.quantity) < 1e-9: # Floating point zero
+            # Avoid division by zero if quantity miraculously is 0 (though covered by if)
+            if abs(self.quantity) > 1e-9:
+                self.average_price = abs(total_cost / self.quantity) # Price is always positive
+            else:
                 self.quantity = 0.0
                 self.average_price = 0.0
-            # Note: Average price doesn't change when reducing position size in Weighted Average method.
+            
+        # 2. Reducing or Flipping Position
+        else:
+            # We are going in opposite direction
+            
+            # Check if we are flipping
+            # Current: +10. Trade: -20. Result: -10.
+            remaining_qty = self.quantity + trade_qty_signed
+            
+            # Case A: Flipping (Sign changes)
+            if (self.quantity > 0 and remaining_qty < 0) or (self.quantity < 0 and remaining_qty > 0):
+                # 1. Close the current position fully
+                closed_qty = abs(self.quantity)
+                
+                if self.quantity > 0: # Long closing
+                    pnl = (trade.price - self.average_price) * closed_qty
+                else: # Short closing
+                    pnl = (self.average_price - trade.price) * closed_qty
+                self.realized_pnl += pnl
+                
+                # 2. Open the new position with the remainder
+                self.quantity = remaining_qty
+                self.average_price = trade.price # New price for the new direction
+                
+            # Case B: Reducing (Sign stays same or becomes zero)
+            else:
+                closed_qty = abs(trade_qty_signed)
+                
+                if self.quantity > 0: # Long reducing
+                    pnl = (trade.price - self.average_price) * closed_qty
+                else: # Short reducing
+                    pnl = (self.average_price - trade.price) * closed_qty
+                self.realized_pnl += pnl
+                
+                self.quantity += trade_qty_signed
+                
+                if abs(self.quantity) < 1e-9:
+                   self.quantity = 0.0
+                   self.average_price = 0.0
+                # Average price does not change when just reducing

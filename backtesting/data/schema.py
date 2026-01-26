@@ -14,7 +14,14 @@ class Candle:
     high: float
     low: float
     close: float
+    close: float
     volume: float
+    indicators: Dict[str, float] = None
+    
+    def __post_init__(self):
+        if self.indicators is None:
+             # Hack to allow default without mutable default argument issue in dataclass
+             object.__setattr__(self, 'indicators', {})
     
     @property
     def typical_price(self) -> float:

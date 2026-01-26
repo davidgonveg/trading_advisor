@@ -1,280 +1,109 @@
-# Estrategia de Trading: Mean Reversion Selectiva v3.1
-
-**Versión:** 3.1 (Simplificación operativa)
-**Tipo:** Swing Trading con Mean Reversion
-**Horizonte:** 1–5 días
+# VWAP Bounce Strategy (v1.0)
+**Versión:** 1.0 (Base)
+**Tipo:** Day Trading / Swing Intradiario
+**Horizonte:** 2-8 horas (mismo día)
 **Última revisión:** Enero 2026
 
----
-
 ## 📊 Resumen Ejecutivo
+Estrategia de mean reversion basada en rebotes del precio sobre VWAP (Volume Weighted Average Price), diseñada para ser ejecutada de forma manual y mecánica en timeframe de 1 hora.
+La estrategia explota el comportamiento institucional de respetar VWAP como nivel de referencia para ejecución de órdenes. Cuando el precio se aleja de VWAP y muestra rechazo con volumen, existe alta probabilidad de reversión hacia la media.
 
-Estrategia de swing trading basada en **reversión a la media selectiva**, diseñada para ser ejecutada de forma **manual, clara y sin ambigüedad**, con 10–20 operaciones mensuales en ETFs altamente líquidos del mercado estadounidense.
-
-La versión **v3.1** mantiene intacta la lógica central de la v3.0, pero introduce mejoras clave orientadas a:
-
-* Reducir complejidad operativa
-* Eliminar decisiones discrecionales
-* Mejorar consistencia y reproducibilidad
-
-Cambios principales:
-
-* Reducción de salidas a **dos Take Profits fijos** (sin trailing)
-* **Filtro de volumen dinámico** según régimen de mercado
-* **Cancelación inteligente** de entradas escalonadas E2 y E3
-
----
+**Filosofía central:**
+*   VWAP actúa como "imán" intradiario
+*   Toques con rechazo (mechas largas) son señales de agotamiento
+*   Volumen confirma la intención institucional
+*   Gestión de salidas manual escalonada (broker no soporta TPs dinámicos)
 
 ## 🎯 Métricas Objetivo
-
-| Métrica               | Objetivo      |
-| --------------------- | ------------- |
-| Win Rate esperado     | 52–60%        |
-| R:R medio             | 1:1.6 – 1:2.0 |
-| Profit Factor         | 1.3–1.6       |
-| Trades/mes            | 10–20         |
-| Drawdown máximo       | 15–20%        |
-| Tiempo medio en trade | 1–4 días      |
-
----
+| Métrica | Objetivo |
+| :--- | :--- |
+| **Win Rate esperado** | 58-62% |
+| **R:R medio** | 1:1.8 – 1:2.0 |
+| **Profit Factor** | 1.4-1.6 |
+| **Trades/mes (1 activo)** | 15-20 |
+| **Trades/mes (3 activos)** | 45-60 |
+| **Drawdown máximo** | 12-15% |
+| **Sharpe Ratio** | 1.2-1.5 |
+| **Tiempo medio en trade** | 2-6 horas |
 
 ## 1️⃣ Universo de Productos
+**ETFs permitidos:**
+*   **Core (siempre activos):** SPY, QQQ, IWM
+*   **Sectoriales (expansión):** XLF, XLE, XLK, SMH
+*   **Diversificación (expansión):** GLD, TLT, EEM
 
-### ETFs permitidos
-
-**Core (siempre activos):**
-
-* SPY, QQQ, IWM
-
-**Sectoriales:**
-
-* XLF, XLE, XLK, SMH
-
-**Diversificación:**
-
-* GLD, TLT, EEM
-
-### Productos excluidos
-
-* Acciones individuales
-* Criptomonedas
-* Forex
-
-Motivo: riesgo de gaps, spreads elevados o dependencia macro específica.
-
----
+**Excluidos:** Acciones individuales, Criptomonedas, ETFs baja liquidez, Apalancados.
 
 ## 2️⃣ Timeframes
-
-* **1H:** entradas, gestión y salidas
-* **1D:** filtros estructurales (tendencia y régimen)
-
----
+*   **1H:** Análisis, entradas, gestión y salidas (único timeframe necesario).
+*   **1D (opcional):** Contexto de tendencia.
 
 ## 3️⃣ Indicadores Utilizados
+| Indicador | Configuración | Uso |
+| :--- | :--- | :--- |
+| **VWAP** | Reset diario | Nivel de referencia |
+| **Volumen SMA** | SMA(20) | Confirmación |
+| **Patrón de vela** | Body/Wicks | Detección rechazo |
 
-| Indicador       | Configuración | Uso                 |
-| --------------- | ------------- | ------------------- |
-| Connors RSI     | (3,2,100)     | Gatillo principal   |
-| Bollinger Bands | (20,2)        | Extremos y TP       |
-| SMA 200         | Diario        | Filtro de tendencia |
-| ADX +DI/-DI     | Diario (14)   | Régimen             |
-| ATR             | (14)          | SL y sizing         |
-| Volumen         | SMA 20        | Confirmación        |
-| VWAP            | Diario        | Opcional            |
+## 4️⃣ Reglas de Indicadores
 
----
+### 4.1 VWAP
+Typical Price (TP) = (High + Low + Close) / 3
+VWAP = Σ(TP × Volume) / Σ(Volume) (Reset diario a las 9:30 EST)
 
-## 4️⃣ Filtros de Mercado
+### 4.2 Patrón de Vela (Rechazo)
+*   `Body = |Close - Open|`
+*   `Lower_Wick = min(Open, Close) - Low`
+*   `Upper_Wick = High - max(Open, Close)`
 
-### 4.1 Filtro de Tendencia (obligatorio)
+## 5️⃣ Reglas de Entrada
 
-* **LONG:** Precio > SMA 200 diario
-* **SHORT:** Precio < SMA 200 diario
+### 5.1 Entrada LONG
+1.  **Toque de VWAP desde arriba:** `Low <= VWAP` y `Close > VWAP`
+2.  **Patrón de rechazo alcista:** `Lower_Wick > 2 × Body`
+3.  **Confirmación de volumen:** `Volume > SMA(20)`
+4.  **Vela 1H cerrada.**
 
----
+### 5.2 Entrada SHORT
+1.  **Toque de VWAP desde abajo:** `High >= VWAP` y `Close < VWAP`
+2.  **Patrón de rechazo bajista:** `Upper_Wick > 2 × Body`
+3.  **Confirmación de volumen:** `Volume > SMA(20)`
+4.  **Vela 1H cerrada.**
 
-### 4.2 Filtro de Régimen (ADX)
+## 6️⃣ Gestión de Riesgo y Salida (Simulación Manual)
 
-| Condición                      | Acción                                       |
-| ------------------------------ | -------------------------------------------- |
-| ADX < 20                       | Mercado lateral → mean reversion óptimo      |
-| ADX 20–30                      | Régimen neutral → operar con reglas estándar |
-| ADX ≥ 30 + dirección favorable | Pullbacks permitidos                         |
-| ADX ≥ 30 + dirección contraria | NO operar                                    |
+Dado que el broker no soporta TPs dinámicos, la estrategia simula la gestión manual:
 
----
-
-## 5️⃣ Filtro de Volumen Dinámico
-
-El requisito de volumen se adapta al régimen:
-
-| Régimen    | Condición ADX | Volumen mínimo |
-| ---------- | ------------- | -------------- |
-| Lateral    | ADX < 20      | ≥ 1.0 × SMA20  |
-| Neutral    | ADX 20–30     | ≥ 1.2 × SMA20  |
-| Tendencial | ADX ≥ 30      | ≥ 1.5 × SMA20  |
-
-Si el volumen no cumple → **no se toma la entrada**, aunque el resto del setup sea perfecto.
+*   **Riesgo por trade:** 1.5% del capital.
+*   **SL Inicial:** ±0.4% desde precio de entrada (Stop-Limit Dinámico).
+*   **TP1 (+0.8%):** Cerrar 60% posición. Mover SL restante a Break Even.
+*   **TP2 (+1.2%):** Cerrar 40% restante.
 
 ---
 
-## 6️⃣ Reglas de Entrada
+# Plan de Implementación (Backtesting)
 
-### 6.1 Entrada LONG
+Este plan se centra en habilitar el backtesting de la estrategia en la rama `feature/strategies-implementation`.
 
-Todas deben cumplirse:
+## Fase 1: Infraestructura y Core
+- [ ] **Habilitar Short Selling en Broker**: Modificar `backtesting/simulation/broker.py` para permitir órdenes de venta que resulten en posiciones negativas.
+- [ ] **Validar Cálculo VWAP**: Crear test unitario (`tests/unit/test_vwap.py`) para asegurar que el VWAP se resetea correctamente cada día en el flujo de datos continuo.
+- [ ] **Implementar Detector de Patrones**: Crear `analysis/patterns.py` con la función `detect_rejection(candle, vwap)` que retorne si es rechazo alcista o bajista según las reglas de mechas.
 
-1. Connors RSI < 10
-2. Precio ≤ banda inferior Bollinger
-3. Precio > SMA 200 diario
-4. Régimen permitido según ADX
-5. Volumen válido según régimen
-6. Vela 1H cerrada
+## Fase 2: Estrategia y Lógica
+- [ ] **Crear Estrategia VWAP Bounce**: Implementar `backtesting/strategy/vwap_bounce.py` heredando de `Strategy`.
+    - [ ] Implementar `on_bar` para calcular indicadores on-the-fly.
+    - [ ] Implementar la lógica de gestión de estado (`trade_state`) para simular las salidas parciales y el movimiento de SL a BE tras TP1.
+    - [ ] Integrar señales de entrada.
+- [ ] **Actualizar Configuración**: Crear archivo de configuración o parámetros por defecto para los thresholds (0.4% SL, 0.8% TP1, etc.).
 
-### 6.2 Entrada SHORT
-
-Simétrico:
-
-1. Connors RSI > 90
-2. Precio ≥ banda superior Bollinger
-3. Precio < SMA 200 diario
-4. Régimen permitido
-5. Volumen válido
-6. Vela 1H cerrada
-
----
-
-## 7️⃣ Entrada Escalonada
-
-### Distribución
-
-| Nivel | % Posición | Precio            |
-| ----- | ---------- | ----------------- |
-| E1    | 50%        | Cierre vela señal |
-| E2    | 30%        | ± 0.5 × ATR       |
-| E3    | 20%        | ± 1.0 × ATR       |
-
----
-
-### Cancelación Inteligente de E2 y E3
-
-Cancelar **inmediatamente** E2 y E3 si ocurre cualquiera:
-
-1. **Alivio estadístico:**
-
-   * LONG: CRSI > 25
-   * SHORT: CRSI < 75
-
-2. **Reversión inicial:**
-
-   * LONG: cierre 1H sobre BB media
-   * SHORT: cierre 1H bajo BB media
-
-3. **Expansión de régimen:**
-
-   * ADX diario +3 puntos desde E1
-
-4. **Timeout:**
-
-   * 4 horas desde E1
-
----
-
-## 8️⃣ Stop Loss
-
-* SL inicial = Precio promedio ± 2 × ATR
-* SL recalculado solo si entra E2/E3
-* Nunca se mueve contra la posición
-
----
-
-## 9️⃣ Take Profit (Simplificado)
-
-### Estructura Única
-
-| TP  | %   | Nivel                  | Acción                   |
-| --- | --- | ---------------------- | ------------------------ |
-| TP1 | 60% | Banda media BB (SMA20) | SL restante → Break Even |
-| TP2 | 40% | Banda opuesta BB       | Cerrar trade             |
-
-### Reglas clave
-
-* Una vez alcanzado TP1, el trade **no puede acabar en pérdida**
-* No hay trailing stop
-* No hay TP discrecional
-
-Si TP1 y TP2 se alcanzan en la misma vela → ejecutar ambos y cerrar.
-
----
-
-## 🔁 Invalidez Temprana del Trade
-
-Antes de TP1, cerrar trade completo si:
-
-* CRSI cruza extremo opuesto
-* Y el precio no ha alcanzado BB media
-
-Evita trades zombis.
-
----
-
-## ⏱️ Time Stop
-
-* Cerrar trade si tras 5 días:
-
-  * No se alcanzó TP1
-  * Y el precio no supera ±0.5×ATR
-
-**No aplicar time stop** si:
-
-* TP1 ya ejecutado
-* SL está en BE
-
----
-
-## 💰 Gestión de Riesgo
-
-* Riesgo por trade: 1.5%
-* Máx trades simultáneos: 4
-* Riesgo total máximo: 6%
-* Ajuste por volatilidad ATR
-* Reglas estrictas de correlación
-
----
-
-## 🕒 Horarios
-
-* Operar solo:
-
-  * 15:30–17:30 CET
-  * 20:00–22:00 CET
-
-Evitar:
-
-* Viernes última media hora
-* FOMC, NFP, CPI según calendario
-
----
-
-## ✅ Checklist Final
-
-* Tendencia válida
-* Régimen válido
-* Volumen correcto
-* CRSI extremo
-* Precio en banda BB
-* Riesgo y correlación OK
-
----
-
-## 🧠 Conclusión
-
-La versión **v3.1** es una evolución natural hacia una estrategia:
-
-* Más limpia
-* Más ejecutable
-* Menos ambigua
-* Igual de robusta
-
-**Menos decisiones → mejor trading.**
+## Fase 3: Validación y Backtest
+- [ ] **Unit Tests**:
+    - [ ] Test de lógica de entradas (mocks de velas).
+    - [ ] Test de gestión de salidas parciales en el broker simulado.
+- [ ] **Ejecución de Backtest**:
+    - [ ] Correr simulación sobre SPY (2022-2024).
+    - [ ] Generar logs detallados de operaciones.
+- [ ] **Análisis de Resultados**:
+    - [ ] Verificar Win Rate y Profit Factor contra objetivos.
+    - [ ] Validar visualmente 5-10 trades aleatorios.

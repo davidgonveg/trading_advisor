@@ -48,7 +48,7 @@ class TelegramBot:
 
     def send_signal_alert(self, signal, plan):
         """
-        Formats a Signal/Plan into the Strategy's specific markdown format.
+        Formats a Signal/Plan into the VWAP Bounce Strategy format.
         """
         if not self.enabled:
             return
@@ -59,37 +59,41 @@ class TelegramBot:
         price = signal.price
         
         # Extract Logic Metadata
-        rsi = signal.metadata.get('rsi', 0)
-        adx = signal.metadata.get('adx', 0)
         vwap = signal.metadata.get('vwap', 0)
-        sma = signal.metadata.get('sma_50', 0)
+        vol = signal.metadata.get('vol', 0)
+        vol_sma = signal.metadata.get('vol_sma', 0)
         
         # Build Message
         msg = f"{icon} *{direction} - {symbol} (1H)*\n\n"
-        msg += "📊 *SETUP: Mean Reversion*\n"
+        msg += "📊 *SETUP: VWAP BOUNCE*\n"
         msg += "━━━━━━━━━━━━━━━━━━━━━\n"
-        msg += f"- RSI(14): {rsi:.1f} {'✓' if (rsi<35 or rsi>65) else ''}\n"
         msg += f"- Precio: ${price:.2f}\n"
-        msg += f"- VWAP: ${vwap:.2f}\n"
-        msg += f"- ADX: {adx:.1f}\n"
-        msg += f"- SMA(50): ${sma:.2f}\n\n"
+        msg += f"- VWAP: ${vwap:.2f} {'✓'}\n"
+        msg += f"- Vol: {int(vol)} > Avg ({int(vol_sma)}) {'✓'}\n\n"
         
         if plan:
-            msg += "📥 *ENTRADA ESCALONADA:*\n"
+            msg += "📥 *EJECUCIÓN:*\n"
             msg += "━━━━━━━━━━━━━━━━━━━━━\n"
             for order in plan.entry_orders:
-                msg += f"• {order.tag}: {order.quantity} uds @ {order.price if order.price else 'MKT'}\n"
+                msg += f"• {order.tag}: {order.quantity} uds @ {order.price:.2f} ({order.type})\n"
             
-            msg += f"\n🛑 *STOP LOSS*: ${plan.stop_loss_price:.2f}\n\n"
+            msg += f"\n🛑 *STOP LOSS*: ${plan.stop_loss_price:.2f} (0.4%)\n\n"
             
             msg += "✅ *TAKE PROFIT:*\n"
             msg += "━━━━━━━━━━━━━━━━━━━━━\n"
             if plan.take_profits:
-                msg += f"• TP1: ${plan.take_profits[0].price:.2f}\n"
-                msg += f"• TP2: ${plan.take_profits[1].price:.2f}\n"
-                msg += f"• TP3: ${plan.take_profits[2].price:.2f}\n"
+                for tp in plan.take_profits:
+                    pct = 0.8 if tp.tag == "TP1" else 1.2
+                    weight = "60%" if tp.tag == "TP1" else "40%"
+                    msg += f"• {tp.tag} ({weight}): ${tp.price:.2f} (+{pct}%)\n"
         
-        msg += f"\n💰 Riesgo: ${plan.risk_amount:.2f} (1.5%)\n"
-        msg += "⏱️ Time Stop: 48h"
+        msg += f"\n💰 Riesgo Total: ${plan.risk_amount:.2f}\n"
+        
+        if plan.warnings:
+            msg += "\n⚠️ *ADVERTENCIAS:*\n"
+            for warn in plan.warnings:
+                msg += f"• {warn}\n"
+                
+        msg += "⏱️ Time Stop: Cierre de Sesión / 8H"
         
         self.send_message(msg)

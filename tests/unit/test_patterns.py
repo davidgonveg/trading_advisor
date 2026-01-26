@@ -83,7 +83,40 @@ class TestPatterns(unittest.TestCase):
         # Our custom impl sets -100
         # If TA-Lib is present, it sets -100
         # Check != 0
+        # Check != 0
         self.assertNotEqual(last_row['pat_shooting_star'], 0)
+
+    def test_pure_wick_rejection(self):
+        # Test strict 2x body rule from strategy
+        
+        # Case 1: Bullish Rejection
+        # Body = 2. Lower Wick = 5 (> 4). Upper Wick = 5 (Large, but ignored by this specific pattern).
+        # Open 100, Close 102. High 107. Low 95.
+        # Body 2. Upper 5. Lower 5.
+        df1 = self.create_candle(100.0, 107.0, 95.0, 102.0)
+        res1 = self.recognizer.detect_patterns(df1)
+        
+        # Should be detected as Bull Rejection (Lower > 2*Body)
+        self.assertEqual(res1.iloc[-1]['pat_wick_bull'], 100)
+        # Should also be detected as Bear Rejection (Upper > 2*Body) because both wicks are long
+        self.assertEqual(res1.iloc[-1]['pat_wick_bear'], -100)
+        
+        # Check helper
+        # Helper prioritizes? No, it returns 1 if bull > 0, -1 if bear < 0.
+        # If both present... logic is: if bull > 0 return 1.
+        self.assertEqual(self.recognizer.check_wick_reversal(res1.iloc[-1]), 1)
+        
+        # Case 2: Only Bearish
+        # Body 2. Upper 5. Lower 1.
+        # Open 100, Close 102. High 107. Low 99.
+        df2 = self.create_candle(100.0, 107.0, 99.0, 102.0)
+        res2 = self.recognizer.detect_patterns(df2)
+        
+        self.assertEqual(res2.iloc[-1]['pat_wick_bear'], -100)
+        self.assertEqual(res2.iloc[-1]['pat_wick_bull'], 0)
+        self.assertEqual(self.recognizer.check_wick_reversal(res2.iloc[-1]), -1)
+
+    # ... existing tests ...
 
 if __name__ == '__main__':
     unittest.main()

@@ -37,6 +37,10 @@ class Strategy(ABC):
                     "Close": c.close,
                     "Volume": c.volume
                 }
+                # Unpack pre-calculated indicators
+                if c.indicators:
+                    record.update(c.indicators)
+                    
                 self._history[sym].append(record)
                 
         # 2. Execute Logic

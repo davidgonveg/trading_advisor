@@ -13,7 +13,9 @@ class BacktestEngine:
     def __init__(self, data_feed: DataFeed, initial_capital: float = 10000.0):
         self.feed = data_feed
         self.broker = Broker(initial_capital)
+        self.broker = Broker(initial_capital)
         self.strategy = None # Set later
+        self.equity_curve = [] # List of dicts (timestamp, equity, cash)
         
     def set_strategy(self, strategy_instance):
         self.strategy = strategy_instance
@@ -30,14 +32,36 @@ class BacktestEngine:
         
         step_count = 0
         
-        for bar_data in self.feed:
+        # Try to use tqdm for progress bar
+        iterator = self.feed
+        try:
+            from tqdm import tqdm
+            # Check if feed has length to show a bar
+            if hasattr(self.feed, '__len__'):
+                iterator = tqdm(self.feed, desc="Backtest Progress", unit="bars")
+            else:
+                iterator = tqdm(self.feed, desc="Backtest Progress", unit="bars")
+        except ImportError:
+            pass
+
+        for bar_data in iterator:
             step_count += 1
             current_time = bar_data.timestamp
             
             # 1. Update Broker (Check Fills against NEW Bar)
             #    Crucially: Limit orders submitted yesterday are checked against Today's Low/High.
+            #    Crucially: Limit orders submitted yesterday are checked against Today's Low/High.
             self.broker.process_bar(bar_data)
             
+            # 1.5. Record Equity (Mark to Market)
+            # Record at the CLOSE of the bar (after fills processed for this bar's range)
+            self.equity_curve.append({
+                "timestamp": current_time,
+                "equity": self.broker.equity,
+                "cash": self.broker.cash,
+                "drawdown": 0.0 # TODO: Calculate running DD
+            })
+
             # 2. create Context
             ctx = TradingContext(self.broker, current_time, bar_data)
             

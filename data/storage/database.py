@@ -321,3 +321,47 @@ class Database:
             return pd.DataFrame()
         finally:
             conn.close()
+
+    def save_alert(self, signal, plan):
+        """Persists a generated alert with its trade plan targets."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            # Extract TP prices from plan orders
+            tp1 = None
+            tp2 = None
+            tp3 = None
+            
+            for tp in plan.take_profits:
+                if tp.tag == "TP1": tp1 = tp.price
+                elif tp.tag == "TP2": tp2 = tp.price
+                elif tp.tag == "TP3": tp3 = tp.price
+
+            # Context values from signal metadata
+            atr = signal.atr_value
+            adx = signal.metadata.get('adx')
+            rsi = signal.metadata.get('rsi')
+
+            cursor.execute('''
+            INSERT INTO alerts (
+                timestamp, symbol, signal_type, price,
+                sl_price, tp1_price, tp2_price, tp3_price,
+                atr, adx, rsi, status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                signal.timestamp.isoformat() if hasattr(signal.timestamp, 'isoformat') else str(signal.timestamp),
+                signal.symbol,
+                signal.type.value if hasattr(signal.type, 'value') else str(signal.type),
+                signal.price,
+                plan.stop_loss_price,
+                tp1, tp2, tp3,
+                atr, adx, rsi,
+                'SENT'
+            ))
+            conn.commit()
+            logger.info(f"Alert saved to DB for {signal.symbol}")
+        except Exception as e:
+            logger.error(f"Failed to save alert for {signal.symbol}: {e}")
+        finally:
+            conn.close()

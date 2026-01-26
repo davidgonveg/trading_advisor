@@ -6,6 +6,7 @@ yfinance
 # Utilities
 requests
 python-dotenv
+tqdm
 
 # Optional: TA-Lib
 # Note: Installing TA-Lib on Windows can be difficult. 
