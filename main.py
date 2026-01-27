@@ -24,8 +24,8 @@ from analysis.scanner import Scanner
 from analysis.indicators import TechnicalIndicators
 from trading.manager import TradeManager
 from alerts.telegram import TelegramBot
-from backtesting.data.feed import DatabaseFeed 
-from backtesting.strategy.vwap_bounce import VWAPBounceStrategy # v3.1 fix
+# from backtesting.data.feed import DatabaseFeed 
+# from backtesting.strategy.vwap_bounce import VWAPBounceStrategy # v3.1 fix
 
 # Setup Logging
 logging.basicConfig(

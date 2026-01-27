@@ -1,0 +1,184 @@
+import logging
+import pandas as pd
+from typing import Dict, Any, List, Type, Optional
+from backtesting.core.strategy_interface import StrategyInterface, Signal, SignalSide
+from backtesting.core.data_loader import DataLoader
+from backtesting.core.order_executor import OrderExecutor
+from backtesting.core.portfolio import Portfolio
+from backtesting.core.schema import Order, OrderSide, OrderType, OrderStatus
+from backtesting.core.logger import AuditTrail
+import uuid
+
+logger = logging.getLogger("backtesting.core.backtester")
+
+class BacktestEngine:
+    def __init__(self, initial_capital: float = 10000.0, commission: float = 0.001, slippage: float = 0.0005, config: Dict[str, Any] = None, timestamp: str = None, symbol: str = "asset", strategy_name: str = "strat"):
+        self.initial_capital = initial_capital
+        self.portfolio = Portfolio(initial_capital)
+        self.executor = OrderExecutor(commission_pct=commission, slippage_pct=slippage)
+        self.strategy: Optional[StrategyInterface] = None
+        self.data: pd.DataFrame = pd.DataFrame()
+        self.symbol = symbol
+        self.config = config or {}
+        self.audit = AuditTrail(self.config, timestamp or "test", symbol=symbol, strategy=strategy_name)
+        self.debug_mode = self.config.get("debug", {}).get("enabled", False)
+        
+    def set_strategy(self, strategy: StrategyInterface, params: Dict[str, Any]):
+        self.strategy = strategy
+        self.strategy.setup(params)
+        
+    def run(self, symbol: str, data: pd.DataFrame):
+        """
+        The Main Event Loop. Processes data bar by bar.
+        """
+        if self.strategy is None:
+            raise ValueError("Strategy not set.")
+            
+        self.symbol = symbol
+        self.data = data
+        
+        # Performance Hook: Strategy Pre-calculation
+        if hasattr(self.strategy, "_precompute_indicators"):
+            # Ensure strategy knows the symbol for multi-timeframe data loading
+            self.strategy.symbol = symbol
+            self.strategy._precompute_indicators(data)
+            
+        logger.info(f"[BACKTEST START] Strategy: {self.strategy.__class__.__name__} | Symbol: {symbol} | Bars: {len(data)}")
+        self.audit.set_metadata({
+            "strategy": self.strategy.__class__.__name__,
+            "symbol": symbol,
+            "period": f"{data.index[0]} to {data.index[-1]}",
+            "initial_capital": self.initial_capital
+        })
+        
+        # Progress bar
+        iterator = range(len(data))
+        try:
+            from tqdm import tqdm
+            iterator = tqdm(range(len(data)), desc=f"Backtesting {symbol}", unit="bar")
+        except ImportError:
+            pass
+            
+        for i in iterator:
+            current_bar = data.iloc[i]
+            ts = data.index[i]
+            
+            # 1. PROCESS ORDERS
+            trades = self.executor.process_bar(current_bar, symbol)
+            for trade in trades:
+                self.portfolio.apply_trade(trade)
+                self.audit.log_trade(trade.__dict__)
+                if self.debug_mode and self.config.get("debug", {}).get("pause_on_trade", True):
+                    input(f"\n[DEBUG] Trade executed on {ts}. Press Enter to continue...")
+                
+            # 2. RECORD SNAPSHOT
+            self.portfolio.record_snapshot(ts, {symbol: current_bar['Close']})
+            
+            # 3. STRATEGY STEP
+            history = data.iloc[:i+1]
+            portfolio_ctx = self.portfolio.get_context()
+            
+            # Audit bar before signal
+            bar_audit = {
+                "index": i,
+                "timestamp": ts,
+                "ohlc": current_bar[['Open', 'High', 'Low', 'Close']].to_dict(),
+                "portfolio_before": portfolio_ctx.copy()
+            }
+            
+            signal = self.strategy.on_bar(history, portfolio_ctx)
+            bar_audit["signal"] = signal.side.value if signal else "HOLD"
+            
+            # 4. HANDLE SIGNAL
+            if signal.side != SignalSide.HOLD:
+                logger.info(f"[SIGNAL] {ts} | {signal.side.value} | Tag: {signal.tag}")
+                self._handle_signal(signal, ts, current_bar['Close'])
+                if self.debug_mode and self.config.get("debug", {}).get("pause_on_signal", True):
+                    print(f"\n[DEBUG] BAR {i} | {ts} | Close: {current_bar['Close']:.2f}")
+                    print(f" INDICATORS: {getattr(self.strategy, 'last_indicators', 'N/A')}")
+                    print(f" PORTFOLIO: Equity ${portfolio_ctx['total_equity']:.2f} | Cash ${portfolio_ctx['cash']:.2f}")
+                    cmd = input("[DEBUG] Signal generated. Press Enter to continue, 's' to skip debug, 'q' to quit: ")
+                    if cmd == 's': self.debug_mode = False
+                    if cmd == 'q': break
+                    
+            self.audit.log_bar(bar_audit)
+                
+        logger.info(f"[BACKTEST END] {symbol} finished. Final Equity: ${self.portfolio.equity_curve[-1]['total_equity']:.2f}")
+        
+        return {
+            "trades": self.portfolio.trades,
+            "equity_curve": pd.DataFrame(self.portfolio.equity_curve),
+            "final_equity": self.portfolio.equity_curve[-1]['total_equity'] if self.portfolio.equity_curve else self.initial_capital,
+            "audit": self.audit
+        }
+
+    def _handle_signal(self, signal: Signal, timestamp: pd.Timestamp, current_price: float):
+        """
+        Converts Strategy signals into Broker orders.
+        """
+        side = OrderSide.BUY if signal.side == SignalSide.BUY else OrderSide.SELL
+        current_pos = self.portfolio.positions.get(self.symbol, 0.0)
+        
+        qty = 0.0
+        if signal.quantity is not None:
+            qty = signal.quantity
+        elif signal.quantity_pct is not None:
+            # If closing: use position pct. If opening: use cash pct.
+            is_closing = (signal.side == SignalSide.BUY and current_pos < -1e-6) or \
+                         (signal.side == SignalSide.SELL and current_pos > 1e-6)
+            
+            if is_closing:
+                qty = abs(current_pos) * signal.quantity_pct
+            else:
+                available_cash = self.portfolio.cash * signal.quantity_pct
+                qty = (available_cash * 0.99) / current_price 
+        else:
+            # Default: Close full position or open full potential
+            is_closing = (signal.side == SignalSide.BUY and current_pos < -1e-6) or \
+                         (signal.side == SignalSide.SELL and current_pos > 1e-6)
+            
+            if is_closing:
+                qty = abs(current_pos)
+            else:
+                qty = (self.portfolio.cash * 0.99) / current_price
+            
+        if qty <= 1e-6: # Avoid near-zero quantities
+            return
+
+        order = Order(
+            id=str(uuid.uuid4())[:8],
+            symbol=self.symbol,
+            side=side,
+            order_type=OrderType.MARKET,
+            quantity=round(qty, 4), # Professional rounding
+            timestamp=timestamp,
+            tag=signal.tag
+        )
+        
+        self.executor.submit_order(order)
+        
+        if signal.stop_loss:
+            sl_order = Order(
+                id=f"SL-{order.id}",
+                symbol=self.symbol,
+                side=OrderSide.SELL if side == OrderSide.BUY else OrderSide.BUY,
+                order_type=OrderType.STOP,
+                stop_price=signal.stop_loss,
+                quantity=order.quantity,
+                timestamp=timestamp,
+                tag=f"{signal.tag}_SL" if signal.tag else "SL"
+            )
+            self.executor.submit_order(sl_order)
+            
+        if signal.take_profit:
+            tp_order = Order(
+                id=f"TP-{order.id}",
+                symbol=self.symbol,
+                side=OrderSide.SELL if side == OrderSide.BUY else OrderSide.BUY,
+                order_type=OrderType.LIMIT,
+                price=signal.take_profit,
+                quantity=order.quantity,
+                timestamp=timestamp,
+                tag=f"{signal.tag}_TP" if signal.tag else "TP"
+            )
+            self.executor.submit_order(tp_order)

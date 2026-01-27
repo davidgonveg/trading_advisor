@@ -128,29 +128,28 @@ class Scanner:
                 decision_logger.info(f"{ts} | {symbol} | LONG | VWAP Bounce: {bounce_long} | Wick Bull: {wick_bull} -> ACCEPTED")
                 continue
 
-            # 3. SHORT Setup
-            # Bounce: High >= VWAP and Close < VWAP
-            bounce_short = (row['High'] >= vwap_val) and (row['Close'] < vwap_val)
-            wick_bear = row.get('pat_wick_bear', 0) < 0
-            
-            if bounce_short and wick_bear:
-                logger.info(f"SIGNAL FOUND: SHORT {symbol} @ {row['Close']} (VWAP Bounce)")
-                sig = Signal(
-                    symbol=symbol,
-                    timestamp=ts,
-                    type=SignalType.SHORT,
-                    price=float(row['Close']),
-                    atr_value=float(row.get('ATR', 0)),
-                    metadata={
-                        "vwap": float(vwap_val),
-                        "vol": float(row['Volume']),
-                        "vol_sma": float(vol_sma),
-                        "pat_score": -100
-                    }
-                )
-                signals.append(sig)
-                decision_logger.info(f"{ts} | {symbol} | SHORT | VWAP Bounce: {bounce_short} | Wick Bear: {wick_bear} -> ACCEPTED")
-                continue
+            # 3. SHORT Setup (DISABLED for now based on backtesting results)
+            # bounce_short = (row['High'] >= vwap_val) and (row['Close'] < vwap_val)
+            # wick_bear = row.get('pat_wick_bear', 0) < 0
+            # 
+            # if bounce_short and wick_bear:
+            #     logger.info(f"SIGNAL FOUND: SHORT {symbol} @ {row['Close']} (VWAP Bounce)")
+            #     sig = Signal(
+            #         symbol=symbol,
+            #         timestamp=ts,
+            #         type=SignalType.SHORT,
+            #         price=float(row['Close']),
+            #         atr_value=float(row.get('ATR', 0)),
+            #         metadata={
+            #             "vwap": float(vwap_val),
+            #             "vol": float(row['Volume']),
+            #             "vol_sma": float(vol_sma),
+            #             "pat_score": -100
+            #         }
+            #     )
+            #     signals.append(sig)
+            #     decision_logger.info(f"{ts} | {symbol} | SHORT | VWAP Bounce: {bounce_short} | Wick Bear: {wick_bear} -> ACCEPTED")
+            #     continue
             
             # If no signal, log rejection for debugging
             decision_logger.debug(f"{ts} | {symbol} | REJECTED: No VWAP Bounce signal. Long Bounce: {bounce_long}, Wick Bull: {wick_bull}. Short Bounce: {bounce_short}, Wick Bear: {wick_bear}")

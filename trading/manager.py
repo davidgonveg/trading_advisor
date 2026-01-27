@@ -53,30 +53,34 @@ class TradeManager:
     def create_trade_plan(self, signal: Signal, size: int) -> Optional[TradePlan]:
         """
         Converts a raw Signal into an executable Trade Plan.
-        Strategy: VWAP Bounce (v3.1)
-        - Entry: Market (100%)
-        - SL: 0.4% from Entry
-        - TP1: 0.8% from Entry (60% Qty)
-        - TP2: 1.2% from Entry (40% Qty)
+        Strategy: VWAP Bounce (v3.2 - Simplified)
+        - Entry: Market
+        - SL: ATR * 2.0
+        - TP: ATR * 4.0
         """
         price = signal.price
         if price <= 0:
             return None
             
         direction = 1 if signal.type == SignalType.LONG else -1
+        atr = getattr(signal, 'atr_value', 0)
         
-        # 1. Levels (Fixed % as per verified Strategy)
-        SL_PCT = 0.004
-        TP1_PCT = 0.008
-        TP2_PCT = 0.012
+        # 1. Levels (ATR-based for alignment with Backtesting)
+        # Use config or defaults
+        SL_MULT = 2.0
+        TP_MULT = 4.0
         
-        sl_dist = price * SL_PCT
-        tp1_dist = price * TP1_PCT
-        tp2_dist = price * TP2_PCT
+        # Fallback to Fixed % if ATR is missing (though scanner should provide it)
+        if atr > 0:
+            sl_dist = atr * SL_MULT
+            tp_dist = atr * TP_MULT
+        else:
+            # Fallback 0.4% / 1.0%
+            sl_dist = price * 0.004
+            tp_dist = price * 0.010
         
         sl_price = price - (direction * sl_dist)
-        tp1_price = price + (direction * tp1_dist)
-        tp2_price = price + (direction * tp2_dist)
+        tp_price = price + (direction * tp_dist)
         
         # 2. Sizing
         # Determine quantity if 'size' is Capital?
@@ -104,8 +108,7 @@ class TradeManager:
             logger.warning(f"Calculated size < 1 for {signal.symbol}. Capital: {capital}, Price: {price}, SL Dist: {sl_dist:.2f}")
             return None
             
-        # 3. Capital Validation (New)
-        # Check if total exposure (Initial Value) exceeds allocated capital
+        # 3. Capital Validation
         exposure = total_qty * price
         warnings = []
         if exposure > capital:
@@ -128,15 +131,10 @@ class TradeManager:
             tag="SL"
         )
         
-        # Take Profits (Split)
-        tp1_qty = int(total_qty * 0.60)
-        tp2_qty = total_qty - tp1_qty
-        
-        tps = []
-        if tp1_qty > 0:
-            tps.append(TradeOrder(signal.symbol, "LIMIT", "SELL" if direction > 0 else "BUY", tp1_price, tp1_qty, tag="TP1"))
-        if tp2_qty > 0:
-            tps.append(TradeOrder(signal.symbol, "LIMIT", "SELL" if direction > 0 else "BUY", tp2_price, tp2_qty, tag="TP2"))
+        # Take Profit (Single)
+        tps = [
+            TradeOrder(signal.symbol, "LIMIT", "SELL" if direction > 0 else "BUY", tp_price, total_qty, tag="TP")
+        ]
             
         plan = TradePlan(
             signal=signal,

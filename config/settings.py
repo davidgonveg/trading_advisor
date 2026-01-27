@@ -44,12 +44,7 @@ SYSTEM_CONFIG = {
 
 # Trading Symbols (Tier 1 Core, Tier 2 Sector, Tier 3 Optional)
 SYMBOLS = [
-    # Tier 1: Core (Indices)
-    "SPY", "QQQ", "IWM",
-    # Tier 2: Sector
-    "XLF", "XLE", "XLK", "SMH",
-    # Tier 3: Diversification
-    "GLD", "TLT", "EEM"
+    "QQQ", "SPY", "XLF", "XLK", "SMH", "XLE", "GLD", "SLV"
 ]
 
 # Risk Management

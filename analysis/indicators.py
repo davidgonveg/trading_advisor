@@ -119,22 +119,27 @@ class TechnicalIndicators:
         if 'Volume' not in df.columns:
             return pd.Series(np.nan, index=df.index)
             
-        # Session VWAP (Resets at the start of each day)
+        # Session VWAP (Resets at the start of each day in NY)
         # 1. Calculate Typical Price
         typical_price = (df['High'] + df['Low'] + df['Close']) / 3
         
         # 2. Calculate PV (Price * Volume)
         pv = typical_price * df['Volume']
         
-        # 3. Group by Date and calculate Cumulative Sums
-        # This requires the index to be a DatetimeIndex
+        # 3. Group by Date (NY Timezone) and calculate Cumulative Sums
+        # Ensure the index is a DatetimeIndex and convert to NY to catch the reset correctly
+        try:
+            ny_index = df.index.tz_convert('America/New_York')
+        except Exception:
+            # Fallback if index is not timezone aware (assume UTC)
+            ny_index = df.index.tz_localize('UTC').tz_convert('America/New_York')
+
         df_temp = pd.DataFrame(index=df.index)
         df_temp['pv'] = pv
         df_temp['vol'] = df['Volume']
-        df_temp['date'] = df.index.date
+        df_temp['date'] = ny_index.date
         
         # Group by date and cumsum
-        # We use transform to keep the original index structure
         df_temp['cum_pv'] = df_temp.groupby('date')['pv'].cumsum()
         df_temp['cum_vol'] = df_temp.groupby('date')['vol'].cumsum()
         
