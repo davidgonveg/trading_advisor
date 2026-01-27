@@ -4,6 +4,7 @@ import logging
 from typing import Optional
 from datetime import timedelta
 from data.interfaces import IDataProvider
+from core.utils import retry
 
 logger = logging.getLogger("core.data.yfinance")
 
@@ -18,8 +19,9 @@ class YFinanceProvider(IDataProvider):
 
     @property
     def priority(self) -> int:
-        return 1
+        return 10 # Fallback
 
+    @retry(Exception, tries=3, delay=2, backoff=2, logger=logger)
     def fetch_data(self, 
                    symbol: str, 
                    timeframe: str, 
@@ -65,12 +67,11 @@ class YFinanceProvider(IDataProvider):
             
             required_cols = ["Open", "High", "Low", "Close", "Volume"]
             
-            # Ensure index is standardized
+            # Ensure index is standardized to UTC
             if df.index.tz is None:
-                # Default to US/Eastern
-                df.index = df.index.tz_localize("US/Eastern")
+                df.index = df.index.tz_localize("UTC")
             else:
-                df.index = df.index.tz_convert("US/Eastern")
+                df.index = df.index.tz_convert("UTC")
                 
             return df[required_cols]
 

@@ -6,6 +6,9 @@ from typing import Optional, Dict
 from config.settings import DATA_CONFIG, STRATEGY_CONFIG
 from data.storage.database import Database
 from data.providers.yfinance_provider import YFinanceProvider
+from data.providers.polygon_provider import PolygonProvider
+from data.providers.twelve_provider import TwelveDataProvider
+from data.providers.alphavantage_provider import AlphaVantageProvider
 from data.quality.gap_detector import GapDetector
 from data.interfaces import Candle
 
@@ -22,8 +25,17 @@ class DataManager:
     
     def __init__(self):
         self.db = Database()
-        self.provider = YFinanceProvider()
         self.gap_detector = GapDetector(expected_interval_minutes=60) # 1H
+        
+        # Initialize Providers
+        self.providers = [
+            PolygonProvider(),
+            TwelveDataProvider(),
+            AlphaVantageProvider(),
+            YFinanceProvider()
+        ]
+        # Sort by priority
+        self.providers.sort(key=lambda x: x.priority)
         
         # Cache for simple access? 
         # Better to hit DB for reliability in this architecture.
@@ -78,22 +90,30 @@ class DataManager:
             start_date = (last_ts - timedelta(hours=24)).strftime('%Y-%m-%d')
             days_back = 0 # Use explicit dates
             
-        df_new = self.provider.fetch_data(
-            symbol, 
-            "1h", 
-            start_date=start_date, 
-            days_back=days_back if not start_date else 0
-        )
+        
+        df_new = None
+        source_name = "UNKNOWN"
+        for provider in self.providers:
+            try:
+                df_new = provider.fetch_data(
+                    symbol, 
+                    "1h", 
+                    start_date=start_date, 
+                    days_back=days_back if not start_date else 0
+                )
+                if df_new is not None and not df_new.empty:
+                    source_name = provider.name
+                    logger.info(f"Successfully fetched 1h data for {symbol} using {source_name}")
+                    break
+            except Exception as e:
+                logger.warning(f"Provider {provider.name} failed for {symbol}: {e}")
+                continue
         
         if df_new is None or df_new.empty:
             logger.warning(f"No new data fetched for {symbol}")
             return
             
         # 2. Save
-        # Convert DF to Candles? 
-        # Or bulk insert directly if DB supported it. 
-        # Current DB.save_bulk_candles expects List[Candle].
-        
         candles = []
         for ts, row in df_new.iterrows():
             c = Candle(
@@ -106,8 +126,8 @@ class DataManager:
             )
             candles.append(c)
             
-        self.db.save_bulk_candles(symbol, "1h", candles)
-        logger.info(f"Stored {len(candles)} candles for {symbol}")
+        self.db.save_bulk_candles(symbol, "1h", candles, source=source_name)
+        logger.info(f"Stored {len(candles)} candles for {symbol} from {source_name}")
 
     def get_latest_daily_data(self, symbol: str, days: int = 730) -> pd.DataFrame:
         """
@@ -142,12 +162,23 @@ class DataManager:
             start_date = (last_ts - timedelta(days=1)).strftime('%Y-%m-%d')
             days_back = 0
             
-        df_new = self.provider.fetch_data(
-            symbol, 
-            "1d", 
-            start_date=start_date, 
-            days_back=days_back if not start_date else 0
-        )
+        df_new = None
+        source_name = "UNKNOWN"
+        for provider in self.providers:
+            try:
+                df_new = provider.fetch_data(
+                    symbol, 
+                    "1d", 
+                    start_date=start_date, 
+                    days_back=days_back if not start_date else 0
+                )
+                if df_new is not None and not df_new.empty:
+                    source_name = provider.name
+                    logger.info(f"Successfully fetched DAILY data for {symbol} using {source_name}")
+                    break
+            except Exception as e:
+                logger.warning(f"Provider {provider.name} failed for {symbol}: {e}")
+                continue
         
         if df_new is None or df_new.empty:
             logger.warning(f"No new DAILY data fetched for {symbol}")
@@ -166,8 +197,8 @@ class DataManager:
             )
             candles.append(c)
             
-        self.db.save_bulk_candles(symbol, "1d", candles)
-        logger.info(f"Stored {len(candles)} DAILY candles for {symbol}")
+        self.db.save_bulk_candles(symbol, "1d", candles, source=source_name)
+        logger.info(f"Stored {len(candles)} DAILY candles for {symbol} from {source_name}")
 
         
     def resolve_gaps(self, symbol: str):

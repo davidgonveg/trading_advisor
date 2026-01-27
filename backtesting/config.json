@@ -14,7 +14,7 @@
             "SMH",
             "XLE",
             "GLD",
-            "SLV"
+            "IWM"
         ]
     },
     "strategies": {
@@ -61,5 +61,14 @@
         "pause_on_signal": true,
         "pause_on_trade": true,
         "show_indicators": true
+    },
+    "ml_filter": {
+        "enabled": true,
+        "comparison_mode": true,
+        "per_symbol": true,
+        "model_type": "RandomForest",
+        "threshold": 0.6,
+        "min_samples": 50,
+        "model_path": "models/global_RandomForest_classifier.joblib"
     }
 }

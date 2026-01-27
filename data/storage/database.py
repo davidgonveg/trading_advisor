@@ -151,8 +151,14 @@ class Database:
             )
             ''')
             
+            # 6. Indices (Performance)
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_market_data_lookup ON market_data (symbol, timeframe, timestamp)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_indicators_lookup ON indicators (symbol, timeframe, timestamp)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_market_data_ts ON market_data (timestamp)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_indicators_ts ON indicators (timestamp)')
+            
             conn.commit()
-            logger.info("Database schema initialized.")
+            logger.info("Database schema and indices initialized.")
             
         except Exception as e:
             logger.error(f"Failed to init schema: {e}")
@@ -180,7 +186,7 @@ class Database:
         finally:
             conn.close()
 
-    def save_bulk_candles(self, symbol: str, timeframe: str, candles: List[Candle], is_filled_list: List[bool] = None):
+    def save_bulk_candles(self, symbol: str, timeframe: str, candles: List[Candle], is_filled_list: List[bool] = None, source: str = "YFINANCE"):
         """Save multiple candles efficiently."""
         conn = self.get_connection()
         try:
@@ -191,15 +197,15 @@ class Database:
                 (
                     f"{symbol}_{timeframe}_{c.timestamp.isoformat()}",
                     symbol, timeframe, c.timestamp.isoformat(), # FIXED: Explicit string conversion
-                    c.open, c.high, c.low, c.close, c.volume, filled
+                    c.open, c.high, c.low, c.close, c.volume, source, filled
                 )
                 for c, filled in zip(candles, is_filled_list)
             ]
             
             conn.executemany('''
             INSERT OR REPLACE INTO market_data 
-            (feature_id, symbol, timeframe, timestamp, open, high, low, close, volume, is_filled)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (feature_id, symbol, timeframe, timestamp, open, high, low, close, volume, source, is_filled)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', data)
             conn.commit()
             logger.info(f"Saved {len(candles)} candles for {symbol}")
@@ -363,5 +369,43 @@ class Database:
             logger.info(f"Alert saved to DB for {signal.symbol}")
         except Exception as e:
             logger.error(f"Failed to save alert for {signal.symbol}: {e}")
+        finally:
+            conn.close()
+    def get_active_alerts(self) -> List[Dict]:
+        """Returns all alerts that are currently SENT (active)."""
+        conn = self.get_connection()
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        try:
+            cursor.execute('SELECT * FROM alerts WHERE status = "SENT"')
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error(f"Error fetching active alerts: {e}")
+            return []
+        finally:
+            conn.close()
+
+    def update_alert_performance(self, alert_id: int, outcome: str, pnl_r: float, exit_price: float, exit_time: datetime):
+        """Updates or inserts performance record and closes the alert."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            # 1. Update Alert Status
+            cursor.execute('UPDATE alerts SET status = "CLOSED" WHERE id = ?', (alert_id,))
+            
+            # 2. Insert/Replace Performance Record
+            cursor.execute('''
+            INSERT OR REPLACE INTO alert_performance 
+            (alert_id, triggered, outcome, pnl_r_multiple, entry_price, closed_at)
+            VALUES (?, ?, ?, ?, (SELECT price FROM alerts WHERE id = ?), ?)
+            ''', (
+                alert_id, 1, outcome, pnl_r, alert_id, exit_time.isoformat()
+            ))
+            
+            conn.commit()
+            logger.info(f"Updated performance for alert {alert_id}: {outcome} ({pnl_r:.2f}R)")
+        except Exception as e:
+            logger.error(f"Error updating alert performance {alert_id}: {e}")
         finally:
             conn.close()

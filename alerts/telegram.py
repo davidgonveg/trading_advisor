@@ -4,6 +4,7 @@ import requests
 import os
 from typing import Optional
 from config.settings import SYSTEM_CONFIG, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+from core.utils import retry
 
 logger = logging.getLogger("core.alerts.telegram")
 
@@ -19,6 +20,7 @@ class TelegramBot:
         if not self.enabled:
             logger.warning("Telegram credentials not found. Notifications disabled.")
             
+    @retry(Exception, tries=3, delay=2, backoff=2)
     def send_message(self, message: str) -> bool:
         """
         Send a text message to the configured chat.
@@ -96,4 +98,27 @@ class TelegramBot:
                 
         msg += "⏱️ Time Stop: Cierre de Sesión / 8H"
         
+        self.send_message(msg)
+    def send_exit_notification(self, symbol: str, outcome: str, pnl_r: float, exit_price: float):
+        """
+        Sends a notification when a position is closed.
+        """
+        if not self.enabled:
+            return
+
+        icon = "🏁"
+        if outcome == "SL": icon = "❌"
+        elif outcome == "TP1": icon = "✅"
+        elif outcome == "EARLY_EXIT": icon = "⚠️"
+        elif outcome == "TIME_STOP": icon = "⏱️"
+
+        msg = f"{icon} *POSICIÓN CERRADA - {symbol}*\n"
+        msg += "━━━━━━━━━━━━━━━━━━━━━\n"
+        msg += f"- Resultado: *{outcome}*\n"
+        msg += f"- Precio de Salida: ${exit_price:.2f}\n"
+        msg += f"- PnL (R): *{pnl_r:+.2f}R*\n\n"
+        
+        if outcome == "EARLY_EXIT":
+            msg += "_Salida temprana por empeoramiento de condiciones._"
+            
         self.send_message(msg)

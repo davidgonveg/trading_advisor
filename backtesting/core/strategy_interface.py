@@ -22,6 +22,9 @@ class StrategyInterface(ABC):
     Abstract Interface that all strategies must implement.
     """
     
+    def __init__(self):
+        self.last_indicators: Dict[str, Any] = {}
+    
     @abstractmethod
     def setup(self, params: Dict[str, Any]):
         """

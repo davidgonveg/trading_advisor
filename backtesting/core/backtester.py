@@ -7,6 +7,7 @@ from backtesting.core.order_executor import OrderExecutor
 from backtesting.core.portfolio import Portfolio
 from backtesting.core.schema import Order, OrderSide, OrderType, OrderStatus
 from backtesting.core.logger import AuditTrail
+from backtesting.core.ml_filter import MLFilter
 import uuid
 
 logger = logging.getLogger("backtesting.core.backtester")
@@ -22,6 +23,7 @@ class BacktestEngine:
         self.config = config or {}
         self.audit = AuditTrail(self.config, timestamp or "test", symbol=symbol, strategy=strategy_name)
         self.debug_mode = self.config.get("debug", {}).get("enabled", False)
+        self.ml_filter = MLFilter(self.config)
         
     def set_strategy(self, strategy: StrategyInterface, params: Dict[str, Any]):
         self.strategy = strategy
@@ -51,13 +53,8 @@ class BacktestEngine:
             "initial_capital": self.initial_capital
         })
         
-        # Progress bar
+        # Progress bar (disabled for cleaner logs in parallel runs)
         iterator = range(len(data))
-        try:
-            from tqdm import tqdm
-            iterator = tqdm(range(len(data)), desc=f"Backtesting {symbol}", unit="bar")
-        except ImportError:
-            pass
             
         for i in iterator:
             current_bar = data.iloc[i]
@@ -69,7 +66,10 @@ class BacktestEngine:
                 self.portfolio.apply_trade(trade)
                 self.audit.log_trade(trade.__dict__)
                 if self.debug_mode and self.config.get("debug", {}).get("pause_on_trade", True):
-                    input(f"\n[DEBUG] Trade executed on {ts}. Press Enter to continue...")
+                    try:
+                        input(f"\n[DEBUG] Trade executed on {ts}. Press Enter to continue...")
+                    except EOFError:
+                        self.debug_mode = False
                 
             # 2. RECORD SNAPSHOT
             self.portfolio.record_snapshot(ts, {symbol: current_bar['Close']})
@@ -83,6 +83,7 @@ class BacktestEngine:
                 "index": i,
                 "timestamp": ts,
                 "ohlc": current_bar[['Open', 'High', 'Low', 'Close']].to_dict(),
+                "indicators": getattr(self.strategy, 'last_indicators', {}),
                 "portfolio_before": portfolio_ctx.copy()
             }
             
@@ -90,16 +91,36 @@ class BacktestEngine:
             bar_audit["signal"] = signal.side.value if signal else "HOLD"
             
             # 4. HANDLE SIGNAL
-            if signal.side != SignalSide.HOLD:
-                logger.info(f"[SIGNAL] {ts} | {signal.side.value} | Tag: {signal.tag}")
-                self._handle_signal(signal, ts, current_bar['Close'])
-                if self.debug_mode and self.config.get("debug", {}).get("pause_on_signal", True):
-                    print(f"\n[DEBUG] BAR {i} | {ts} | Close: {current_bar['Close']:.2f}")
-                    print(f" INDICATORS: {getattr(self.strategy, 'last_indicators', 'N/A')}")
-                    print(f" PORTFOLIO: Equity ${portfolio_ctx['total_equity']:.2f} | Cash ${portfolio_ctx['cash']:.2f}")
-                    cmd = input("[DEBUG] Signal generated. Press Enter to continue, 's' to skip debug, 'q' to quit: ")
-                    if cmd == 's': self.debug_mode = False
-                    if cmd == 'q': break
+            if signal and signal.side != SignalSide.HOLD:
+                # ML Filter check (if enabled)
+                ml_cfg = self.config.get("ml_filter", {})
+                if ml_cfg.get("enabled", False) and self.ml_filter.enabled:
+                    prob = self.ml_filter.predict_proba(bar_audit['indicators'], self.symbol)
+                    threshold = ml_cfg.get("threshold", 0.5)
+                    bar_audit["ml_confidence"] = prob
+                    
+                    if prob < threshold:
+                        logger.info(f"[ML FILTER] Signal REJECTED (Confidence: {prob:.2f} < {threshold})")
+                        signal = None # Reject signal
+                    else:
+                        logger.info(f"[ML FILTER] Signal ACCEPTED (Confidence: {prob:.2f} >= {threshold})")
+
+                if signal:
+                    logger.info(f"[SIGNAL] {ts} | {signal.side.value} | Tag: {signal.tag}")
+                    self._handle_signal(signal, ts, current_bar['Close'])
+                    if self.debug_mode and self.config.get("debug", {}).get("pause_on_signal", True):
+                        print(f"\n[DEBUG] BAR {i} | {ts} | Close: {current_bar['Close']:.2f}")
+                        print(f" INDICATORS: {bar_audit['indicators']}")
+                        if "ml_confidence" in bar_audit:
+                            print(f" ML CONFIDENCE: {bar_audit['ml_confidence']:.2f}")
+                        print(f" PORTFOLIO: Equity ${portfolio_ctx['total_equity']:.2f} | Cash ${portfolio_ctx['cash']:.2f}")
+                        
+                        try:
+                            cmd = input("[DEBUG] Signal generated. Press Enter to continue, 's' to skip debug, 'q' to quit: ")
+                            if cmd == 's': self.debug_mode = False
+                            if cmd == 'q': break
+                        except EOFError:
+                            self.debug_mode = False
                     
             self.audit.log_bar(bar_audit)
                 

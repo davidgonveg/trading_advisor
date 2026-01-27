@@ -1,9 +1,11 @@
 import argparse
 import time
 import logging
+from logging.handlers import RotatingFileHandler
 import sys
-from datetime import datetime, timedelta
-from datetime import datetime, timedelta, timezone # Added timezone
+import os
+import requests
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import pandas as pd # Added pandas for Timestamp
 
@@ -28,15 +30,61 @@ from alerts.telegram import TelegramBot
 # from backtesting.strategy.vwap_bounce import VWAPBounceStrategy # v3.1 fix
 
 # Setup Logging
+log_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+log_file = os.getenv("LOG_FILE", "logs/trading_advisor.log")
+
+# Rotating File Handler: 5MB per file, keep 5 backups
+file_handler = RotatingFileHandler(log_file, maxBytes=5*1024*1024, backupCount=5)
+file_handler.setFormatter(log_formatter)
+
+stream_handler = logging.StreamHandler(sys.stdout)
+stream_handler.setFormatter(log_formatter)
+
 logging.basicConfig(
     level=getattr(logging, SYSTEM_CONFIG["LOG_LEVEL"]),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler("logs/trading_advisor.log"),
-        logging.StreamHandler(sys.stdout)
-    ]
+    handlers=[file_handler, stream_handler]
 )
 logger = logging.getLogger("main")
+
+def run_diagnostic_check():
+    """
+    Verifies system readiness before starting.
+    """
+    logger.info("--- STARTING SYSTEM DIAGNOSTICS ---")
+    all_ok = True
+    
+    # 1. Internet Check
+    try:
+        requests.get("https://8.8.8.8", timeout=5)
+        logger.info("Internet Connection: OK")
+    except Exception:
+        logger.error("Internet Connection: FAILED")
+        all_ok = False
+        
+    # 2. Telegram Check
+    from alerts.telegram import TelegramBot
+    bot = TelegramBot()
+    if bot.enabled:
+        # Simple test message might be too much, but let's check config at least
+        logger.info("Telegram Config: FOUND")
+    else:
+        logger.warning("Telegram Config: NOT FOUND (Proceeding without alerts)")
+        
+    # 3. API Keys Check
+    from config.settings import POLYGON_API_KEY, TWELVE_DATA_API_KEY, ALPHA_VANTAGE_API_KEY
+    keys = {
+        "Polygon": POLYGON_API_KEY,
+        "TwelveData": TWELVE_DATA_API_KEY,
+        "AlphaVantage": ALPHA_VANTAGE_API_KEY
+    }
+    for name, key in keys.items():
+        if key:
+            logger.info(f"{name} API Key: FOUND")
+        else:
+            logger.warning(f"{name} API Key: MISSING")
+            
+    logger.info("--- DIAGNOSTICS COMPLETE ---")
+    return all_ok
 
 def run_gap_check(data_manager: DataManager):
     """
@@ -64,6 +112,12 @@ def run_live_loop():
     trade_mgr = TradeManager()
     telegram = TelegramBot()
     
+    # 0. Diagnostics
+    if not run_diagnostic_check():
+        logger.error("System diagnostics failed. Please check your connection and configuration.")
+        if not SYSTEM_CONFIG.get("DEVELOPMENT_MODE", False):
+            sys.exit(1)
+    
     # 1. Startup Tasks
     telegram.send_message("🚀 Trading Advisor STARTED. Monitoring market...")
     run_gap_check(data_mgr)
@@ -73,7 +127,21 @@ def run_live_loop():
         cycle_start = datetime.now()
         logger.info(f"--- SCAN CYCLE START: {cycle_start} ---")
         
+        # 0. Monitor existing positions
+        try:
+            trade_mgr.monitor_positions(data_mgr)
+        except Exception as e:
+            logger.error(f"Error in monitor_positions: {e}")
+
+        # 0b. Get currently active alerts to avoid duplicates
+        active_alerts = db.get_active_alerts()
+        active_symbols = {a['symbol'] for a in active_alerts}
+
         for symbol in SYMBOLS:
+            if symbol in active_symbols:
+                logger.debug(f"Skipping {symbol}: Alert already active.")
+                continue
+
             try:
                 # A. Update Data (Hourly and Daily)
                 data_mgr.update_data(symbol)
@@ -128,9 +196,18 @@ def run_live_loop():
                 logger.error(f"Error processing {symbol}: {e}")
                 import traceback
                 logger.error(traceback.format_exc())
+            
+            # Rate Limit Protection: Small sleep between symbols
+            time.sleep(2)
         
         logger.info("--- CYCLE COMPLETE ---")
         
+        # 3. Daily Report (Optional: Send at 22:00 UTC)
+        now_utc = datetime.now(timezone.utc)
+        if now_utc.hour == 22 and now_utc.minute < 5: # Small window
+            report = trade_mgr.generate_performance_report(data_mgr=data_mgr)
+            telegram.send_message(report)
+
         # Smart Sleep: Wait until next hour mark + 10 seconds buffer
         now = datetime.now()
         next_hour = (now + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)

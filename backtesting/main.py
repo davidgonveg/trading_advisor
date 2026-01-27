@@ -61,6 +61,11 @@ def main():
     # 1. Load Config
     config = load_config()
     
+    # Check if comparison mode is requested
+    ml_cfg = config.get("ml_filter", {})
+    comparison_mode = ml_cfg.get("comparison_mode", False)
+    # If ML is enabled but no comparison_mode is set, just run normal with ML
+    
     # 2. Setup Logging
     ts = setup_logging(config)
     logger = logging.getLogger("backtesting.main")
@@ -96,10 +101,22 @@ def main():
     tasks = []
     for symbol in data_cache:
         for strat_class, params in strategies_to_test:
-            tasks.append((strat_class, params, config, symbol, data_cache[symbol], ts))
+            if comparison_mode:
+                # Add baseline run
+                base_config = json.loads(json.dumps(config))
+                base_config['ml_filter']['enabled'] = False
+                tasks.append((strat_class, params, base_config, symbol, data_cache[symbol], f"{ts}_BASE"))
+                
+                # Add ML run
+                ml_config = json.loads(json.dumps(config))
+                ml_config['ml_filter']['enabled'] = True
+                tasks.append((strat_class, params, ml_config, symbol, data_cache[symbol], f"{ts}_ML"))
+            else:
+                tasks.append((strat_class, params, config, symbol, data_cache[symbol], ts))
             
     print("\n" + "="*80)
-    print(f"STARTING PARALLEL BACKTEST | {len(symbols)} Assets | {len(strategies_to_test)} Strategies")
+    mode_str = "COMPARISON MODE (Normal vs ML)" if comparison_mode else "NORMAL MODE"
+    print(f"STARTING PARALLEL BACKTEST | {mode_str} | {len(tasks)} Rounds")
     print(f" Threads: {os.cpu_count()}")
     print("="*80)
 
@@ -112,24 +129,30 @@ def main():
             try:
                 res = future.result()
                 if res:
+                    # Enrich with ML status
+                    task = future_to_task[future]
+                    res['ml_enabled'] = task[2].get('ml_filter', {}).get('enabled', False)
                     all_results.append(res)
             except Exception as exc:
                 task = future_to_task[future]
                 logger.error(f"Task {task[3]} {task[0].__name__} generated an exception: {exc}")
             
-    # 6. Print Multi-Symbol Summary
+    # 6. Print Summary
+    if comparison_mode:
+        print_comparison_summary(all_results, ts, datetime.now() - start_time)
+    else:
+        print_standard_summary(all_results, ts, datetime.now() - start_time)
+
+def print_standard_summary(all_results, ts, elapsed):
     print("\n" + "="*110)
     print(f"MULTI-SYMBOL PERFORMANCE SUMMARY ({ts})")
-    print(f" Elapsed Time: {datetime.now() - start_time}")
+    print(f" Elapsed Time: {elapsed}")
     print("="*110)
     
-    overall_summary = []
-    long_summary = []
-    short_summary = []
-    
+    summary = []
     for res in all_results:
         m = res['metrics']
-        overall_summary.append({
+        summary.append({
             "Symbol": res['symbol'],
             "Strategy": res['strategy'],
             "P&L %": f"{m.get('Total P&L %'):+,.2f}%",
@@ -139,39 +162,57 @@ def main():
             "Trades": m.get("Total Trades"),
             "Profit Factor": m.get("Profit Factor")
         })
-        
-        l = m.get('Long Performance', {})
-        long_summary.append({
-            "Symbol": res['symbol'],
-            "Trades": l.get("Total Trades"),
-            "Win Rate": f"{l.get('Win Rate %', 0):.1f}%",
-            "Profit Factor": l.get("Profit Factor"),
-            "Net P&L $": f"${l.get('Total P&L', 0):,.2f}"
-        })
-        
-        s = m.get('Short Performance', {})
-        short_summary.append({
-            "Symbol": res['symbol'],
-            "Trades": s.get("Total Trades"),
-            "Win Rate": f"{s.get('Win Rate %', 0):.1f}%",
-            "Profit Factor": s.get("Profit Factor"),
-            "Net P&L $": f"${s.get('Total P&L', 0):,.2f}"
-        })
-        
-    if overall_summary:
-        print("\nOVERALL PERFORMANCE")
-        print(pd.DataFrame(overall_summary).sort_values(by='Symbol').to_string(index=False))
-        
-        print("\nLONG POSITIONS PERFORMANCE")
-        print(pd.DataFrame(long_summary).sort_values(by='Symbol').to_string(index=False))
-        
-        print("\nSHORT POSITIONS PERFORMANCE")
-        print(pd.DataFrame(short_summary).sort_values(by='Symbol').to_string(index=False))
-    else:
-        print("No results to display.")
-        
+    
+    if summary:
+        print(pd.DataFrame(summary).sort_values(by='Symbol').to_string(index=False))
     print("="*110)
-    print(f"[OK] Detailed logs and audit trails (JSON/CSV) saved in backtesting/logs/")
+
+def print_comparison_summary(all_results, ts, elapsed):
+    print("\n" + "="*120)
+    print(f"ML FILTER COMPARISON SUMMARY ({ts})")
+    print(f" Elapsed Time: {elapsed}")
+    print("="*120)
+    
+    # Group results by symbol/strategy
+    grouped = {}
+    for res in all_results:
+        key = (res['symbol'], res['strategy'])
+        if key not in grouped: grouped[key] = {}
+        grouped[key]['ml' if res['ml_enabled'] else 'base'] = res['metrics']
+    
+    comp_table = []
+    for (sym, strat), runs in grouped.items():
+        if 'base' in runs and 'ml' in runs:
+            m_base = runs['base']
+            m_ml = runs['ml']
+            
+            pnl_base = m_base.get('Total P&L %', 0)
+            pnl_ml = m_ml.get('Total P&L %', 0)
+            wr_base = m_base.get('Win Rate %', 0)
+            wr_ml = m_ml.get('Win Rate %', 0)
+            trades_base = m_base.get('Total Trades', 0)
+            trades_ml = m_ml.get('Total Trades', 0)
+            
+            reduction = ((trades_base - trades_ml) / trades_base * 100) if trades_base > 0 else 0
+            
+            comp_table.append({
+                "Symbol": sym,
+                "Trades(B)": trades_base,
+                "Trades(ML)": trades_ml,
+                "Reduc %": f"{reduction:.1f}%",
+                "WR(B)": f"{wr_base:.1f}%",
+                "WR(ML)": f"{wr_ml:.1f}%",
+                "WR +/-": f"{wr_ml - wr_base:+.1f}%",
+                "PNL(B)": f"{pnl_base:+.2f}%",
+                "PNL(ML)": f"{pnl_ml:+.2f}%",
+                "PNL +/-": f"{pnl_ml - pnl_base:+.2f}%"
+            })
+    
+    if comp_table:
+        print(pd.DataFrame(comp_table).sort_values(by='Symbol').to_string(index=False))
+    else:
+        print("Not enough results for comparison.")
+    print("="*120)
 
 if __name__ == "__main__":
     main()

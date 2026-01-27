@@ -30,7 +30,6 @@ class EMAPullback(StrategyInterface):
         self.tp1_hit = False
         self.active_side = None # 'LONG' or 'SHORT'
         self.trailing_stop_active = False
-        self.last_indicators = {}
 
     def get_params(self) -> Dict[str, Any]:
         return self.params
@@ -131,7 +130,12 @@ class EMAPullback(StrategyInterface):
         self.last_indicators = {
             "EMA20": round(ema20, 2) if not pd.isna(ema20) else 0,
             "ADX_D": round(adx_d, 2) if not pd.isna(adx_d) else 0,
-            "ATR": round(atr, 2) if not pd.isna(atr) else 0
+            "ATR": round(atr, 2) if not pd.isna(atr) else 0,
+            "Vol_SMA": round(vol_sma, 0) if not pd.isna(vol_sma) else 0,
+            "EMA100_D": round(ema100_d, 2) if not pd.isna(ema100_d) else 0,
+            "DI_pos_D": round(di_pos_d, 2) if not pd.isna(di_pos_d) else 0,
+            "DI_neg_D": round(di_neg_d, 2) if not pd.isna(di_neg_d) else 0,
+            "Close_D": round(close_d, 2) if not pd.isna(close_d) else 0
         }
         
         pos_qty = sum(portfolio_context["positions"].values())

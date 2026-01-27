@@ -1,4 +1,5 @@
 import logging
+import pandas as pd
 from datetime import datetime
 from typing import Optional, Dict, List
 from dataclasses import dataclass, field
@@ -49,6 +50,8 @@ class TradeManager:
         self.risk_manager = RiskManager()
         self.cfg = STRATEGY_CONFIG
         self.db = Database() # For persistence of trades
+        from alerts.telegram import TelegramBot
+        self.telegram = TelegramBot()
         
     def create_trade_plan(self, signal: Signal, size: int) -> Optional[TradePlan]:
         """
@@ -108,13 +111,16 @@ class TradeManager:
             logger.warning(f"Calculated size < 1 for {signal.symbol}. Capital: {capital}, Price: {price}, SL Dist: {sl_dist:.2f}")
             return None
             
-        # 3. Capital Validation
+        # 3. Capital Validation & Capping
         exposure = total_qty * price
-        warnings = []
+        
+        # If exposure exceeds capital, scale down
         if exposure > capital:
-            msg = f"CAPITAL OVERFLOW: Exposure (${exposure:.2f}) > Capital (${capital:.2f})"
-            logger.warning(f"⚠️ {msg} for {signal.symbol}")
-            warnings.append(msg)
+            total_qty = int(capital / price)
+            exposure = total_qty * price
+            logger.warning(f"EXPOSURE CAP HIT: Scaled down {signal.symbol} to {total_qty} units (${exposure:.2f})")
+            
+        warnings = []
 
         # 4. Orders
         
@@ -155,7 +161,190 @@ class TradeManager:
         Simulate execution or send to broker.
         For now: Log and Save to DB.
         """
-        logger.info(f"🚀 EXECUTING PLAN: {plan}")
+        logger.info(f"EXECUTING PLAN: {plan}")
         # Here we would insert into 'trades' table.
         # Or print for User.
         pass
+    def monitor_positions(self, data_mgr):
+        """
+        Main entry point for monitoring active alerts.
+        """
+        active_alerts = self.db.get_active_alerts()
+        if not active_alerts:
+            return
+
+        logger.info(f"Monitoring {len(active_alerts)} active positions/alerts...")
+        
+        for alert in active_alerts:
+            symbol = alert['symbol']
+            try:
+                # Get latest data for this symbol
+                df = data_mgr.get_latest_data(symbol)
+                if df.empty:
+                    continue
+                
+                latest_price = float(df.iloc[-1]['Close'])
+                latest_ts = df.index[-1]
+                
+                # Check exit conditions
+                self.check_exit_conditions(alert, latest_price, latest_ts, df)
+                
+            except Exception as e:
+                logger.error(f"Error monitoring {symbol}: {e}")
+
+    def check_exit_conditions(self, alert: Dict, current_price: float, current_ts: datetime, df: pd.DataFrame):
+        """
+        Evaluates SL, TP, and worsening conditions.
+        """
+        alert_id = alert['id']
+        symbol = alert['symbol']
+        entry_price = alert['price']
+        side = alert['signal_type'] # LONG/SHORT
+        sl_price = alert['sl_price']
+        tp1_price = alert['tp1_price']
+        
+        # Calculate R-Multiple
+        # R = Distance to SL
+        r_dist = abs(entry_price - sl_price)
+        if r_dist == 0: r_dist = 0.01 # Safety
+        
+        current_pnl_r = (current_price - entry_price) / r_dist if side == 'LONG' else (entry_price - current_price) / r_dist
+        
+        outcome = None
+
+        # 1. Stop Loss Hit
+        if (side == 'LONG' and current_price <= sl_price) or (side == 'SHORT' and current_price >= sl_price):
+            logger.warning(f"STOP LOSS HIT for {symbol} @ {current_price:.2f}")
+            outcome = "SL"
+
+        # 2. Take Profit Hit (TP1)
+        elif tp1_price and ((side == 'LONG' and current_price >= tp1_price) or (side == 'SHORT' and current_price <= tp1_price)):
+            logger.info(f"TAKE PROFIT HIT for {symbol} @ {current_price:.2f}")
+            outcome = "TP1"
+
+        # 3. Worsening Conditions (Early Exit)
+        # Strategy specific: If Close < VWAP for LONG, or Close > VWAP for SHORT
+        else:
+            # A. VWAP Check
+            vwap_val = df.iloc[-1].get('VWAP')
+            if vwap_val:
+                if (side == 'LONG' and current_price < vwap_val) or (side == 'SHORT' and current_price > vwap_val):
+                    logger.info(f"EARLY EXIT for {symbol} @ {current_price:.2f} due to worsening conditions (Price vs VWAP)")
+                    outcome = "EARLY_EXIT"
+            
+            # B. Time Stop
+            if not outcome:
+                alert_ts = pd.to_datetime(alert['timestamp'], utc=True)
+                current_ts_dt = pd.to_datetime(current_ts, utc=True)
+                duration = (current_ts_dt - alert_ts).total_seconds() / 3600
+                limit = self.cfg.get('TIME_STOP_HOURS', 8)
+                if duration >= limit:
+                    logger.info(f"TIME STOP for {symbol} after {duration:.1f} hours (Limit: {limit}h)")
+                    outcome = "TIME_STOP"
+
+            # C. Session Close (EOD)
+            if not outcome and self.is_market_closing_soon(current_ts):
+                logger.info(f"SESSION CLOSE exit for {symbol}")
+                outcome = "TIME_STOP"
+
+        if outcome:
+            # 1. Update DB
+            self.db.update_alert_performance(alert_id, outcome, current_pnl_r, current_price, current_ts)
+            
+            # 2. Notify
+            self.telegram.send_exit_notification(symbol, outcome, current_pnl_r, current_price)
+
+    def generate_performance_report(self, data_mgr=None) -> str:
+        """
+        Generates a summary of recent alert performance.
+        Includes Active positions if data_mgr is provided.
+        """
+        conn = self.db.get_connection()
+        try:
+            # 1. Closed Trades Stats
+            query = """
+                SELECT outcome, COUNT(*) as count, SUM(pnl_r_multiple) as total_r
+                FROM alert_performance
+                GROUP BY outcome
+            """
+            df_closed = pd.read_sql_query(query, conn)
+            
+            # 2. Get Active Alerts for Floating PnL
+            active_alerts = self.db.get_active_alerts()
+            
+            report = "*INFORME DE RENDIMIENTO*\n"
+            report += "━━━━━━━━━━━━━━━━━━━━━\n"
+            
+            if not df_closed.empty:
+                total_trades = df_closed['count'].sum()
+                total_r = df_closed['total_r'].sum()
+                win_rate = (df_closed[df_closed['outcome'].isin(['TP1', 'TP2', 'TP3'])]['count'].sum() / total_trades) * 100 if total_trades > 0 else 0
+                
+                report += f"*Cerrados:* {total_trades} trades\n"
+                report += f"- Beneficio Realizado: {total_r:+.2f}R\n"
+                report += f"- Win Rate: {win_rate:.1f}%\n"
+                
+                report += "\n*Desglose:* "
+                outcomes = []
+                for _, row in df_closed.iterrows():
+                    outcomes.append(f"{row['outcome']}: {row['count']} ({row['total_r']:+.2f}R)")
+                report += ", ".join(outcomes) + "\n"
+            else:
+                report += "_No hay trades cerrados aún._\n"
+
+            report += "\n━━━━━━━━━━━━━━━━━━━━━\n"
+            
+            # 3. Active Positions Section
+            if active_alerts:
+                report += f"*POSICIONES ABIERTAS:* {len(active_alerts)}\n"
+                for alert in active_alerts:
+                    symbol = alert['symbol']
+                    entry_price = alert['price']
+                    side = alert['signal_type']
+                    sl_price = alert['sl_price']
+                    
+                    floating_pnl_r = 0
+                    if data_mgr:
+                        df = data_mgr.get_latest_data(symbol)
+                        if not df.empty:
+                            current_price = float(df.iloc[-1]['Close'])
+                            r_dist = abs(entry_price - sl_price) or 0.01
+                            floating_pnl_r = (current_price - entry_price) / r_dist if side == 'LONG' else (entry_price - current_price) / r_dist
+                    
+                    report += f"• {symbol}: {side} @ {entry_price:.2f} (PnL: {floating_pnl_r:+.2f}R)\n"
+            else:
+                report += "🏖️ *Sin posiciones abiertas.*\n"
+            
+            return report
+        except Exception as e:
+            logger.error(f"Error generating report: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return "Error generating performance report."
+        finally:
+            conn.close()
+    def is_market_closing_soon(self, current_ts: datetime) -> bool:
+        """
+        Checks if the US market is close to ending (15:55 EST/EDT).
+        """
+        try:
+            # Convert to NY time
+            if current_ts.tzinfo is None:
+                current_ts = current_ts.replace(tzinfo=pd.Timestamp.now(tz='UTC').tzinfo) # Assume UTC if naive
+            
+            ny_ts = pd.Timestamp(current_ts).tz_convert('America/New_York')
+            
+            # Market closes at 16:00. We trigger at 15:50 or later.
+            # Only on weekdays
+            if ny_ts.weekday() >= 5: # Weekend
+                return False
+                
+            if ny_ts.hour == 15 and ny_ts.minute >= 50:
+                return True
+            if ny_ts.hour >= 16: # Already after close
+                return True
+                
+            return False
+        except Exception as e:
+            logger.error(f"Error checking market close: {e}")
+            return False

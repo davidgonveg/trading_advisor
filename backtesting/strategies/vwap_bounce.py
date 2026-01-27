@@ -21,6 +21,8 @@ class VWAPBounce(StrategyInterface):
         self.sl_price = 0.0
         self.tp_price = 0.0
         self.active_side = None # 'LONG' or 'SHORT'
+        self.entry_ts = None
+
         self.last_indicators = {}
         self.symbol = "asset"
 
@@ -69,6 +71,9 @@ class VWAPBounce(StrategyInterface):
         
         # Access precomputed indicators
         ind = self.indicators_df.loc[ts]
+        if isinstance(ind, pd.DataFrame):
+            ind = ind.iloc[0] # Handle duplicates by taking first match
+            
         vwap = ind['VWAP']
         vol_sma = ind['Vol_SMA']
         body = ind['Body']
@@ -92,26 +97,50 @@ class VWAPBounce(StrategyInterface):
             current_price = bar['Close']
             
             if self.active_side == 'LONG':
-                # SL Check
+                # 1. SL Check
                 if current_price <= self.sl_price:
                     self._reset_state()
                     return Signal(SignalSide.SELL, quantity_pct=1.0, tag="SL_EXIT")
                 
-                # TP Check
+                # 2. TP Check
                 if current_price >= self.tp_price:
                     self._reset_state()
                     return Signal(SignalSide.SELL, quantity_pct=1.0, tag="TP_EXIT")
+                
+                # 3. VWAP Exit (Worsening Conditions)
+                if current_price < vwap:
+                    self._reset_state()
+                    return Signal(SignalSide.SELL, quantity_pct=1.0, tag="VWAP_EXIT")
             
             elif self.active_side == 'SHORT':
-                # SL Check (Price goes ABOVE entry)
+                # 1. SL Check
                 if current_price >= self.sl_price:
                     self._reset_state()
                     return Signal(SignalSide.BUY, quantity_pct=1.0, tag="SL_EXIT")
                 
-                # TP Check (Price goes BELOW entry)
+                # 2. TP Check
                 if current_price <= self.tp_price:
                     self._reset_state()
                     return Signal(SignalSide.BUY, quantity_pct=1.0, tag="TP_EXIT")
+                
+                # 3. VWAP Exit
+                if current_price > vwap:
+                    self._reset_state()
+                    return Signal(SignalSide.BUY, quantity_pct=1.0, tag="VWAP_EXIT")
+
+            # 4. Time Stop (8 hours)
+            if self.entry_ts:
+                duration = (ts - self.entry_ts).total_seconds() / 3600
+                if duration >= 8:
+                    exit_side = SignalSide.SELL if self.active_side == 'LONG' else SignalSide.BUY
+                    self._reset_state()
+                    return Signal(exit_side, quantity_pct=1.0, tag="TIME_STOP_EXIT")
+
+            # 5. Session Close
+            if self.is_market_closing_soon(ts):
+                exit_side = SignalSide.SELL if self.active_side == 'LONG' else SignalSide.BUY
+                self._reset_state()
+                return Signal(exit_side, quantity_pct=1.0, tag="SESSION_CLOSE_EXIT")
 
         # --- ENTRY LOGIC ---
         if abs(pos_qty) < 1e-6:
@@ -122,6 +151,7 @@ class VWAPBounce(StrategyInterface):
                     
                     self.entry_price = bar['Close']
                     self.active_side = 'LONG'
+                    self.entry_ts = ts
                     risk_distance = atr * self.atr_multiplier_sl
                     self.sl_price = self.entry_price - risk_distance
                     self.tp_price = self.entry_price + (atr * self.atr_multiplier_tp)
@@ -135,6 +165,7 @@ class VWAPBounce(StrategyInterface):
                     
                     self.entry_price = bar['Close']
                     self.active_side = 'SHORT'
+                    self.entry_ts = ts
                     risk_distance = atr * self.atr_multiplier_sl
                     self.sl_price = self.entry_price + risk_distance
                     self.tp_price = self.entry_price - (atr * self.atr_multiplier_tp)
@@ -148,3 +179,15 @@ class VWAPBounce(StrategyInterface):
         self.sl_price = 0.0
         self.tp_price = 0.0
         self.active_side = None
+        self.entry_ts = None
+
+    def is_market_closing_soon(self, ts: pd.Timestamp) -> bool:
+        """Helper to identify EOD in NY time."""
+        try:
+            ny_ts = ts.tz_convert('America/New_York')
+            if ny_ts.weekday() >= 5: return False
+            if ny_ts.hour == 15 and ny_ts.minute >= 50: return True
+            if ny_ts.hour >= 16: return True
+            return False
+        except:
+            return False

@@ -44,7 +44,7 @@ SYSTEM_CONFIG = {
 
 # Trading Symbols (Tier 1 Core, Tier 2 Sector, Tier 3 Optional)
 SYMBOLS = [
-    "QQQ", "SPY", "XLF", "XLK", "SMH", "XLE", "GLD", "SLV"
+    "QQQ", "SPY", "XLF", "XLK", "SMH", "XLE", "GLD", "IWM"
 ]
 
 # Risk Management
@@ -86,7 +86,7 @@ STRATEGY_CONFIG = {
     "VOLUME_SMA_PERIOD": 20,
     
     # Time Rules
-    "TIME_STOP_HOURS": 48, # Optimized (2 Days)
+    "TIME_STOP_HOURS": 8, # Reduced from 48 to match refined strategy
     "ENTRY_TIMEOUT_HOURS": 4,
     "MIN_MARKET_HOUR": 15, # 15:30 CET approx (handled via UTC/Timezone conversion)
     "MAX_MARKET_HOUR": 21, # 22:00 CET
