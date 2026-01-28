@@ -30,7 +30,7 @@ class VWAPBounce(StrategyInterface):
         return self.params
 
     def _precompute_indicators(self, data: pd.DataFrame):
-        """Vectorized pre-calculation of all necessary indicators including ATR."""
+        """Vectorized pre-calculation of all necessary indicators including ATR and context for ML."""
         # 1. VWAP (NY Reset)
         ny_index = data.index.tz_convert('America/New_York')
         
@@ -55,14 +55,120 @@ class VWAPBounce(StrategyInterface):
         low_close = (data['Low'] - data['Close'].shift()).abs()
         tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
         atr = tr.rolling(window=self.atr_period).mean()
+
+        # 5. Passive Indicators for ML Context
+        # RSI 14
+        delta = data['Close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        rs = gain / loss
+        rsi = 100 - (100 / (1 + rs))
+
+        # Price distance to EMA 200 (Trend Context)
+        ema200 = data['Close'].ewm(span=200, adjust=False).mean()
+        dist_ema200 = (data['Close'] - ema200) / ema200
+        
+        # ===== PHASE 1: CORE INDICATORS =====
+        
+        # MACD (Moving Average Convergence Divergence)
+        ema12 = data['Close'].ewm(span=12, adjust=False).mean()
+        ema26 = data['Close'].ewm(span=26, adjust=False).mean()
+        macd = ema12 - ema26
+        macd_signal = macd.ewm(span=9, adjust=False).mean()
+        macd_hist = macd - macd_signal
+        
+        # Bollinger Bands
+        bb_sma = data['Close'].rolling(window=20).mean()
+        bb_std = data['Close'].rolling(window=20).std()
+        bb_upper = bb_sma + (2 * bb_std)
+        bb_lower = bb_sma - (2 * bb_std)
+        bb_width = (bb_upper - bb_lower) / data['Close']
+        bb_pctb = (data['Close'] - bb_lower) / (bb_upper - bb_lower + 1e-10)
+        
+        # Stochastic Oscillator
+        low_14 = data['Low'].rolling(window=14).min()
+        high_14 = data['High'].rolling(window=14).max()
+        stoch_k = 100 * (data['Close'] - low_14) / (high_14 - low_14 + 1e-10)
+        stoch_d = stoch_k.rolling(window=3).mean()
+        
+        # Williams %R
+        williams_r = -100 * (high_14 - data['Close']) / (high_14 - low_14 + 1e-10)
+        
+        # Rate of Change
+        roc = ((data['Close'] - data['Close'].shift(10)) / data['Close'].shift(10)) * 100
+        
+        # Volume Indicators
+        volume_ratio = data['Volume'] / (vol_sma + 1e-10)
+        
+        # OBV (On-Balance Volume)
+        obv = (np.sign(data['Close'].diff()) * data['Volume']).fillna(0).cumsum()
+        obv_ema = obv.ewm(span=20, adjust=False).mean()
+        
+        # EMA Distances
+        ema20 = data['Close'].ewm(span=20, adjust=False).mean()
+        ema50 = data['Close'].ewm(span=50, adjust=False).mean()
+        ema100 = data['Close'].ewm(span=100, adjust=False).mean()
+        dist_ema20 = (data['Close'] - ema20) / (ema20 + 1e-10)
+        dist_ema50 = (data['Close'] - ema50) / (ema50 + 1e-10)
+        dist_ema100 = (data['Close'] - ema100) / (ema100 + 1e-10)
+        
+        # ATR as percentage of price
+        atr_pct = atr / (data['Close'] + 1e-10)
+        
+        # VWAP Distance
+        vwap_dist_pct = (data['Close'] - vwap) / (vwap + 1e-10)
+        
+        # Time features
+        hour = data.index.hour
+        day_of_week = data.index.dayofweek
         
         self.indicators_df = pd.DataFrame({
+            # Original indicators
             'VWAP': vwap,
             'Vol_SMA': vol_sma,
             'Body': body,
             'LowerWick': lower_wick,
             'UpperWick': upper_wick,
-            'ATR': atr
+            'ATR': atr,
+            'RSI': rsi,
+            'Dist_EMA200': dist_ema200,
+            
+            # Phase 1: MACD
+            'MACD': macd,
+            'MACD_Signal': macd_signal,
+            'MACD_Hist': macd_hist,
+            
+            # Phase 1: Bollinger Bands
+            'BB_Upper': bb_upper,
+            'BB_Lower': bb_lower,
+            'BB_Width': bb_width,
+            'BB_PctB': bb_pctb,
+            
+            # Phase 1: Stochastic
+            'Stoch_K': stoch_k,
+            'Stoch_D': stoch_d,
+            
+            # Phase 1: Other Momentum
+            'Williams_R': williams_r,
+            'ROC': roc,
+            
+            # Phase 1: Volume
+            'Volume_Ratio': volume_ratio,
+            'OBV': obv,
+            'OBV_EMA': obv_ema,
+            
+            # Phase 1: EMA Distances
+            'Dist_EMA20': dist_ema20,
+            'Dist_EMA50': dist_ema50,
+            'Dist_EMA100': dist_ema100,
+            
+            # Phase 1: Volatility
+            'ATR_Pct': atr_pct,
+            'VWAP_Dist_Pct': vwap_dist_pct,
+            
+            # Phase 1: Time
+            'Hour': hour,
+            'Day_Of_Week': day_of_week
         }, index=data.index)
 
     def on_bar(self, history: pd.DataFrame, portfolio_context: Dict[str, Any]) -> Signal:
@@ -72,7 +178,7 @@ class VWAPBounce(StrategyInterface):
         # Access precomputed indicators
         ind = self.indicators_df.loc[ts]
         if isinstance(ind, pd.DataFrame):
-            ind = ind.iloc[0] # Handle duplicates by taking first match
+            ind = ind.iloc[0] # Handle duplicates
             
         vwap = ind['VWAP']
         vol_sma = ind['Vol_SMA']
@@ -86,7 +192,9 @@ class VWAPBounce(StrategyInterface):
             "Volume_SMA": round(vol_sma, 0),
             "ATR": round(atr, 2),
             "LowerWick": round(lower_wick, 2),
-            "UpperWick": round(upper_wick, 2)
+            "UpperWick": round(upper_wick, 2),
+            "RSI": round(ind['RSI'], 2),
+            "Dist_EMA200": round(ind['Dist_EMA200'], 4)
         }
         
         # Get position for THIS symbol
