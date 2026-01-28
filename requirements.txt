@@ -8,6 +8,13 @@ requests
 python-dotenv
 tqdm
 
+# Machine Learning
+scikit-learn
+xgboost
+lightgbm
+catboost
+imbalanced-learn
+
 # Optional: TA-Lib
 # Note: Installing TA-Lib on Windows can be difficult. 
 # Providing you have the binary dependencies, you can uncomment the line below.

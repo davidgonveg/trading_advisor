@@ -31,7 +31,10 @@ class ModelFactory:
             return RandomForestClassifier(
                 n_estimators=kwargs.get("n_estimators", 100),
                 max_depth=kwargs.get("max_depth", 10),
-                random_state=42
+                min_samples_split=kwargs.get("min_samples_split", 5),
+                min_samples_leaf=kwargs.get("min_samples_leaf", 2),
+                random_state=42,
+                n_jobs=-1
             )
         elif model_type == "XGBoost":
             try:
@@ -39,14 +42,54 @@ class ModelFactory:
                 return XGBClassifier(
                     n_estimators=kwargs.get("n_estimators", 100),
                     max_depth=kwargs.get("max_depth", 6),
-                    random_state=42
+                    learning_rate=kwargs.get("learning_rate", 0.05),
+                    subsample=kwargs.get("subsample", 0.8),
+                    colsample_bytree=kwargs.get("colsample_bytree", 0.8),
+                    random_state=42,
+                    n_jobs=-1,
+                    eval_metric='logloss'
                 )
             except ImportError:
-                logger.error("XGBoost not installed. Falling back to RandomForest.")
-                return RandomForestClassifier(random_state=42)
+                logger.error("XGBoost not installed. Install with: pip install xgboost")
+                logger.error("Falling back to RandomForest.")
+                return RandomForestClassifier(random_state=42, n_jobs=-1)
+        elif model_type == "LightGBM":
+            try:
+                from lightgbm import LGBMClassifier
+                return LGBMClassifier(
+                    n_estimators=kwargs.get("n_estimators", 100),
+                    max_depth=kwargs.get("max_depth", 6),
+                    learning_rate=kwargs.get("learning_rate", 0.05),
+                    num_leaves=kwargs.get("num_leaves", 31),
+                    subsample=kwargs.get("subsample", 0.8),
+                    colsample_bytree=kwargs.get("colsample_bytree", 0.8),
+                    random_state=42,
+                    n_jobs=-1,
+                    verbose=-1
+                )
+            except ImportError:
+                logger.error("LightGBM not installed. Install with: pip install lightgbm")
+                logger.error("Falling back to RandomForest.")
+                return RandomForestClassifier(random_state=42, n_jobs=-1)
+        elif model_type == "CatBoost":
+            try:
+                from catboost import CatBoostClassifier
+                return CatBoostClassifier(
+                    iterations=kwargs.get("iterations", 100),
+                    depth=kwargs.get("depth", 6),
+                    learning_rate=kwargs.get("learning_rate", 0.05),
+                    random_state=42,
+                    verbose=False,
+                    thread_count=-1
+                )
+            except ImportError:
+                logger.error("CatBoost not installed. Install with: pip install catboost")
+                logger.error("Falling back to RandomForest.")
+                return RandomForestClassifier(random_state=42, n_jobs=-1)
         else:
-            logger.warning(f"Unknown model type {model_type}. Using RandomForest.")
-            return RandomForestClassifier(random_state=42)
+            logger.warning(f"Unknown model type '{model_type}'. Available: RandomForest, XGBoost, LightGBM, CatBoost")
+            logger.warning("Using RandomForest as default.")
+            return RandomForestClassifier(random_state=42, n_jobs=-1)
 
 def train_single_model(df: pd.DataFrame, model_type: str, model_path: str, min_samples: int = 50) -> bool:
     """
