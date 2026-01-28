@@ -39,9 +39,11 @@ class MLFilter:
         else:
             logger.debug(f"ML Model not found at {path}")
 
-    def predict_proba(self, indicators: Dict[str, Any], symbol: str = "global") -> float:
+    def predict_proba(self, indicators: Dict[str, Any], history: List[Dict[str, Any]], symbol: str = "global") -> float:
         """
-        Predicts probability of success. Returns 1.0 (pass) if filter is disabled or model fails.
+        Predicts probability of success. 
+        indicators: current bar indicators.
+        history: list of previous bars indicators (L1, L2, ...).
         """
         if not self.enabled:
             return 1.0
@@ -55,11 +57,23 @@ class MLFilter:
             model = self.models[key]
             feats = self.features[key]
             
-            # Prepare row
-            row = pd.DataFrame([indicators])
+            # Prepare row - start with current indicators
+            features_dict = indicators.copy()
+            
+            # Add historical context (L1, L2, ...)
+            # history[0] is L1, history[1] is L2...
+            for i, hist_inds in enumerate(history):
+                lb = i + 1
+                for k, v in hist_inds.items():
+                    features_dict[f"{k}_L{lb}"] = v
+            
+            row = pd.DataFrame([features_dict])
+            
+            # Align features with the model expectatations
             for f in feats:
                 if f not in row.columns:
-                    row[f] = 0.0
+                    row[f] = 0.0 # Missing features filled with 0 (e.g. if history not full)
+            
             row = row[feats]
             
             # Predict

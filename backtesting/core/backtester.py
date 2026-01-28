@@ -9,6 +9,7 @@ from backtesting.core.schema import Order, OrderSide, OrderType, OrderStatus
 from backtesting.core.logger import AuditTrail
 from backtesting.core.ml_filter import MLFilter
 import uuid
+from collections import deque
 
 logger = logging.getLogger("backtesting.core.backtester")
 
@@ -24,6 +25,8 @@ class BacktestEngine:
         self.audit = AuditTrail(self.config, timestamp or "test", symbol=symbol, strategy=strategy_name)
         self.debug_mode = self.config.get("debug", {}).get("enabled", False)
         self.ml_filter = MLFilter(self.config)
+        self.lookback_bars = self.config.get("ml_filter", {}).get("lookback", 5)
+        self.indicator_history = deque(maxlen=self.lookback_bars)
         
     def set_strategy(self, strategy: StrategyInterface, params: Dict[str, Any]):
         self.strategy = strategy
@@ -88,6 +91,8 @@ class BacktestEngine:
             }
             
             signal = self.strategy.on_bar(history, portfolio_ctx)
+            current_indicators = getattr(self.strategy, 'last_indicators', {}).copy()
+            bar_audit["indicators"] = current_indicators
             bar_audit["signal"] = signal.side.value if signal else "HOLD"
             
             # 4. HANDLE SIGNAL
@@ -95,7 +100,8 @@ class BacktestEngine:
                 # ML Filter check (if enabled)
                 ml_cfg = self.config.get("ml_filter", {})
                 if ml_cfg.get("enabled", False) and self.ml_filter.enabled:
-                    prob = self.ml_filter.predict_proba(bar_audit['indicators'], self.symbol)
+                    # History is currently [t-1, t-2, ... t-N] because we haven't pushed current bar yet
+                    prob = self.ml_filter.predict_proba(current_indicators, list(self.indicator_history), self.symbol)
                     threshold = ml_cfg.get("threshold", 0.5)
                     bar_audit["ml_confidence"] = prob
                     
@@ -122,6 +128,8 @@ class BacktestEngine:
                         except EOFError:
                             self.debug_mode = False
                     
+            # 5. Record context for next bar
+            self.indicator_history.appendleft(current_indicators)
             self.audit.log_bar(bar_audit)
                 
         logger.info(f"[BACKTEST END] {symbol} finished. Final Equity: ${self.portfolio.equity_curve[-1]['total_equity']:.2f}")

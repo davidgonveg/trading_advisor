@@ -67,7 +67,8 @@
         "comparison_mode": true,
         "per_symbol": true,
         "model_type": "RandomForest",
-        "threshold": 0.6,
+        "threshold": 0.55,
+        "lookback": 5,
         "min_samples": 50,
         "model_path": "models/global_RandomForest_classifier.joblib"
     }

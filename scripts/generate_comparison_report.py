@@ -9,7 +9,7 @@ def parse_audit(filename):
         return data.get('final_metrics', {})
 
 def main():
-    ts = "20260127_193033"
+    ts = "20260128_105809"
     base_files = glob.glob(f"backtesting/logs/audit_*_{ts}_BASE.json")
     
     results = []

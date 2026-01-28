@@ -1,1 +1,1 @@
-["VWAP", "Volume_SMA", "ATR", "LowerWick", "UpperWick"]
+["VWAP", "Volume_SMA", "ATR", "LowerWick", "UpperWick", "VWAP_L1", "Volume_SMA_L1", "ATR_L1", "LowerWick_L1", "UpperWick_L1", "VWAP_L2", "Volume_SMA_L2", "ATR_L2", "LowerWick_L2", "UpperWick_L2", "VWAP_L3", "Volume_SMA_L3", "ATR_L3", "LowerWick_L3", "UpperWick_L3", "VWAP_L4", "Volume_SMA_L4", "ATR_L4", "LowerWick_L4", "UpperWick_L4", "VWAP_L5", "Volume_SMA_L5", "ATR_L5", "LowerWick_L5", "UpperWick_L5"]
