@@ -1,0 +1,284 @@
+================================================================================
+PER-SYMBOL MODEL COMPARISON
+================================================================================
+
+
+AAPL:
+       Model  Accuracy  F1-Score  ROC-AUC
+RandomForest  0.717742       0.0      0.5
+     XGBoost  0.717742       0.0      0.5
+    LightGBM  0.717742       0.0      0.5
+------------------------------------------------------------
+
+AMD:
+       Model  Accuracy  F1-Score  ROC-AUC
+RandomForest  0.689655       0.0      0.5
+     XGBoost  0.689655       0.0      0.5
+    LightGBM  0.689655       0.0      0.5
+------------------------------------------------------------
+
+AMZN:
+       Model  Accuracy  F1-Score  ROC-AUC
+RandomForest  0.677966       0.0      0.5
+     XGBoost  0.677966       0.0      0.5
+    LightGBM  0.677966       0.0      0.5
+------------------------------------------------------------
+
+ARKK:
+       Model  Accuracy  F1-Score  ROC-AUC
+RandomForest  0.644628       0.0      0.5
+     XGBoost  0.644628       0.0      0.5
+    LightGBM  0.644628       0.0      0.5
+------------------------------------------------------------
+
+BA:
+       Model  Accuracy  F1-Score  ROC-AUC
+RandomForest  0.692308       0.0      0.5
+     XGBoost  0.692308       0.0      0.5
+    LightGBM  0.692308       0.0      0.5
+------------------------------------------------------------
+
+COIN:
+       Model  Accuracy  F1-Score  ROC-AUC
+RandomForest  0.663934       0.0      0.5
+     XGBoost  0.663934       0.0      0.5
+    LightGBM  0.663934       0.0      0.5
+------------------------------------------------------------
+
+DIA:
+       Model  Accuracy  F1-Score  ROC-AUC
+RandomForest  0.646552       0.0      0.5
+     XGBoost  0.646552       0.0      0.5
+    LightGBM  0.646552       0.0      0.5
+------------------------------------------------------------
+
+DIS:
+       Model  Accuracy  F1-Score  ROC-AUC
+RandomForest  0.702479       0.0      0.5
+     XGBoost  0.702479       0.0      0.5
+    LightGBM  0.702479       0.0      0.5
+------------------------------------------------------------
+
+EEM:
+       Model  Accuracy  F1-Score  ROC-AUC
+RandomForest  0.630137  0.773109      0.5
+     XGBoost  0.630137  0.773109      0.5
+    LightGBM  0.630137  0.773109      0.5
+------------------------------------------------------------
+
+GDX:
+       Model  Accuracy  F1-Score  ROC-AUC
+RandomForest  0.612069       0.0      0.5
+     XGBoost  0.612069       0.0      0.5
+    LightGBM  0.612069       0.0      0.5
+------------------------------------------------------------
+
+GLD:
+       Model  Accuracy  F1-Score  ROC-AUC
+     XGBoost  0.694091  0.788031 0.794773
+RandomForest  0.690000  0.786742 0.789938
+    LightGBM  0.689545  0.785692 0.788714
+------------------------------------------------------------
+
+GOOGL:
+       Model  Accuracy  F1-Score  ROC-AUC
+RandomForest  0.677966       0.0      0.5
+     XGBoost  0.677966       0.0      0.5
+    LightGBM  0.677966       0.0      0.5
+------------------------------------------------------------
+
+IWM:
+       Model  Accuracy  F1-Score  ROC-AUC
+RandomForest  0.753623  0.822300 0.878923
+     XGBoost  0.752933  0.821357 0.878310
+    LightGBM  0.734990  0.809713 0.852105
+------------------------------------------------------------
+
+JPM:
+       Model  Accuracy  F1-Score  ROC-AUC
+RandomForest  0.655462       0.0      0.5
+     XGBoost  0.655462       0.0      0.5
+    LightGBM  0.655462       0.0      0.5
+------------------------------------------------------------
+
+KRE:
+       Model  Accuracy  F1-Score  ROC-AUC
+RandomForest  0.669492       0.0      0.5
+     XGBoost  0.669492       0.0      0.5
+    LightGBM  0.669492       0.0      0.5
+------------------------------------------------------------
+
+MA:
+       Model  Accuracy  F1-Score  ROC-AUC
+RandomForest     0.696       0.0      0.5
+     XGBoost     0.696       0.0      0.5
+    LightGBM     0.696       0.0      0.5
+------------------------------------------------------------
+
+META:
+       Model  Accuracy  F1-Score  ROC-AUC
+RandomForest  0.673077       0.0      0.5
+     XGBoost  0.673077       0.0      0.5
+    LightGBM  0.673077       0.0      0.5
+------------------------------------------------------------
+
+MSFT:
+       Model  Accuracy  F1-Score  ROC-AUC
+RandomForest     0.725       0.0      0.5
+     XGBoost     0.725       0.0      0.5
+    LightGBM     0.725       0.0      0.5
+------------------------------------------------------------
+
+MSTR:
+       Model  Accuracy  F1-Score  ROC-AUC
+RandomForest  0.654135       0.0      0.5
+     XGBoost  0.654135       0.0      0.5
+    LightGBM  0.654135       0.0      0.5
+------------------------------------------------------------
+
+NVDA:
+       Model  Accuracy  F1-Score  ROC-AUC
+RandomForest  0.627119       0.0      0.5
+     XGBoost  0.627119       0.0      0.5
+    LightGBM  0.627119       0.0      0.5
+------------------------------------------------------------
+
+PLTR:
+       Model  Accuracy  F1-Score  ROC-AUC
+RandomForest  0.658537       0.0      0.5
+     XGBoost  0.658537       0.0      0.5
+    LightGBM  0.658537       0.0      0.5
+------------------------------------------------------------
+
+PYPL:
+       Model  Accuracy  F1-Score  ROC-AUC
+RandomForest  0.698413       0.0      0.5
+     XGBoost  0.698413       0.0      0.5
+    LightGBM  0.698413       0.0      0.5
+------------------------------------------------------------
+
+QQQ:
+       Model  Accuracy  F1-Score  ROC-AUC
+     XGBoost  0.712527  0.798521 0.776374
+RandomForest  0.708132  0.796569 0.775987
+    LightGBM  0.705495  0.793465 0.768359
+------------------------------------------------------------
+
+SLV:
+       Model  Accuracy  F1-Score  ROC-AUC
+RandomForest   0.66736       0.0      0.5
+     XGBoost   0.66736       0.0      0.5
+    LightGBM   0.66736       0.0      0.5
+------------------------------------------------------------
+
+SMH:
+       Model  Accuracy  F1-Score  ROC-AUC
+     XGBoost  0.777642  0.845763 0.863568
+RandomForest  0.769090  0.841709 0.865107
+    LightGBM  0.769090  0.841176 0.857177
+------------------------------------------------------------
+
+SPY:
+       Model  Accuracy  F1-Score  ROC-AUC
+     XGBoost  0.691480  0.776333 0.787263
+RandomForest  0.684305  0.772757 0.777901
+    LightGBM  0.680269  0.768732 0.779590
+------------------------------------------------------------
+
+TLT:
+       Model  Accuracy  F1-Score  ROC-AUC
+RandomForest   0.57971       0.0      0.5
+     XGBoost   0.57971       0.0      0.5
+    LightGBM   0.57971       0.0      0.5
+------------------------------------------------------------
+
+TSLA:
+       Model  Accuracy  F1-Score  ROC-AUC
+RandomForest  0.696429       0.0      0.5
+     XGBoost  0.696429       0.0      0.5
+    LightGBM  0.696429       0.0      0.5
+------------------------------------------------------------
+
+UNG:
+       Model  Accuracy  F1-Score  ROC-AUC
+RandomForest  0.625954       0.0      0.5
+     XGBoost  0.625954       0.0      0.5
+    LightGBM  0.625954       0.0      0.5
+------------------------------------------------------------
+
+USO:
+       Model  Accuracy  F1-Score  ROC-AUC
+RandomForest  0.684615       0.0      0.5
+     XGBoost  0.684615       0.0      0.5
+    LightGBM  0.684615       0.0      0.5
+------------------------------------------------------------
+
+V:
+       Model  Accuracy  F1-Score  ROC-AUC
+RandomForest  0.689922       0.0      0.5
+     XGBoost  0.689922       0.0      0.5
+    LightGBM  0.689922       0.0      0.5
+------------------------------------------------------------
+
+XBI:
+       Model  Accuracy  F1-Score  ROC-AUC
+RandomForest  0.653846       0.0      0.5
+     XGBoost  0.653846       0.0      0.5
+    LightGBM  0.653846       0.0      0.5
+------------------------------------------------------------
+
+XLB:
+       Model  Accuracy  F1-Score  ROC-AUC
+RandomForest  0.655462       0.0      0.5
+     XGBoost  0.655462       0.0      0.5
+    LightGBM  0.655462       0.0      0.5
+------------------------------------------------------------
+
+XLE:
+       Model  Accuracy  F1-Score  ROC-AUC
+     XGBoost  0.760600  0.825984 0.862785
+RandomForest  0.757991  0.824752 0.877800
+    LightGBM  0.752772  0.820464 0.848548
+------------------------------------------------------------
+
+XLF:
+       Model  Accuracy  F1-Score  ROC-AUC
+RandomForest  0.753846  0.817352 0.865522
+     XGBoost  0.730462  0.800365 0.839033
+    LightGBM  0.714462  0.789855 0.818429
+------------------------------------------------------------
+
+XLI:
+       Model  Accuracy  F1-Score  ROC-AUC
+RandomForest  0.677165       0.0      0.5
+     XGBoost  0.677165       0.0      0.5
+    LightGBM  0.677165       0.0      0.5
+------------------------------------------------------------
+
+XLK:
+       Model  Accuracy  F1-Score  ROC-AUC
+     XGBoost  0.764238  0.827586 0.865379
+RandomForest  0.761176  0.826821 0.866275
+    LightGBM  0.754440  0.821222 0.855885
+------------------------------------------------------------
+
+XLU:
+       Model  Accuracy  F1-Score  ROC-AUC
+RandomForest  0.705426       0.0      0.5
+     XGBoost  0.705426       0.0      0.5
+    LightGBM  0.705426       0.0      0.5
+------------------------------------------------------------
+
+XLV:
+       Model  Accuracy  F1-Score  ROC-AUC
+RandomForest  0.707692       0.0      0.5
+     XGBoost  0.707692       0.0      0.5
+    LightGBM  0.707692       0.0      0.5
+------------------------------------------------------------
+
+XLY:
+       Model  Accuracy  F1-Score  ROC-AUC
+RandomForest  0.675497       0.0      0.5
+     XGBoost  0.675497       0.0      0.5
+    LightGBM  0.675497       0.0      0.5
+------------------------------------------------------------
