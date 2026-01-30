@@ -4,6 +4,7 @@ from typing import Optional, List
 from data.interfaces import IDataProvider
 from data.providers.yfinance_provider import YFinanceProvider
 from data.providers.twelvedata_provider import TwelveDataProvider
+from data.providers.polygon_provider import PolygonProvider
 
 logger = logging.getLogger("core.data.factory")
 
@@ -21,6 +22,7 @@ class DataProviderFactory:
         # Register in order of priority (or sort later)
         self.register(YFinanceProvider())
         self.register(TwelveDataProvider())
+        self.register(PolygonProvider())
         
         # Sort by priority (asc)
         self.providers.sort(key=lambda p: p.priority)

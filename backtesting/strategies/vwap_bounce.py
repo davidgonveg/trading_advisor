@@ -122,6 +122,39 @@ class VWAPBounce(StrategyInterface):
         hour = data.index.hour
         day_of_week = data.index.dayofweek
         
+        # 6. ===== NEW ROBUST INDICATORS (Phase 2) =====
+        
+        # Log Returns (Stationary Price Dynamics)
+        log_returns = np.log(data['Close'] / data['Close'].shift(1)).fillna(0)
+        
+        # Historical Volatility (20 period rolling std of returns)
+        hist_vol = log_returns.rolling(window=20).std().fillna(0)
+        
+        # Slope (Regression-like of Log Prices for stationarity) -> 5 periods
+        # Slope of ln(price) is approx % change per bar
+        slope = np.log(data['Close']).diff(5) / 5
+        slope = slope.fillna(0)
+        
+        # Acceleration
+        acceleration = slope.diff().fillna(0)
+        
+        # Donchian Channels (Breakout Context)
+        donchian_high = data['High'].rolling(window=20).max()
+        donchian_low = data['Low'].rolling(window=20).min()
+        donchian_pos = (data['Close'] - donchian_low) / (donchian_high - donchian_low + 1e-10)
+        
+        # Keltner Channels (Volatility Context vs Bollinger)
+        kc_mid = data['Close'].ewm(span=20, adjust=False).mean()
+        kc_upper = kc_mid + (2 * atr)
+        kc_lower = kc_mid - (2 * atr)
+        kc_pos = (data['Close'] - kc_lower) / (kc_upper - kc_lower + 1e-10)
+        
+        # CCI (Commodity Channel Index)
+        # TP was calculated above
+        sma_tp = tp.rolling(window=20).mean()
+        mean_dev = (tp - sma_tp).abs().rolling(window=20).mean()
+        cci = (tp - sma_tp) / (0.015 * mean_dev + 1e-10)
+        
         self.indicators_df = pd.DataFrame({
             # Original indicators
             'VWAP': vwap,
@@ -168,7 +201,17 @@ class VWAPBounce(StrategyInterface):
             
             # Phase 1: Time
             'Hour': hour,
-            'Day_Of_Week': day_of_week
+            'Day_Of_Week': day_of_week,
+            
+            # Phase 2: Robust Indicators
+            'Log_Return': log_returns,
+            'Hist_Vol': hist_vol,
+            'Slope': slope,
+            'Acceleration': acceleration,
+            'Donchian_Pos': donchian_pos,
+            'Keltner_Pos': kc_pos,
+            'CCI': cci
+            
         }, index=data.index)
 
     def on_bar(self, history: pd.DataFrame, portfolio_context: Dict[str, Any]) -> Signal:
@@ -194,7 +237,21 @@ class VWAPBounce(StrategyInterface):
             "LowerWick": round(lower_wick, 2),
             "UpperWick": round(upper_wick, 2),
             "RSI": round(ind['RSI'], 2),
-            "Dist_EMA200": round(ind['Dist_EMA200'], 4)
+            "Dist_EMA200": round(ind['Dist_EMA200'], 4),
+            "Close": round(bar['Close'], 2),  # Added for ML Feature Normalization
+            "Open": round(bar['Open'], 2),
+            "High": round(bar['High'], 2),
+            "Low": round(bar['Low'], 2),
+            "Volume": bar['Volume'],
+            
+            # New Phase 2 Indicators
+            "Log_Return": ind['Log_Return'],
+            "Hist_Vol": ind['Hist_Vol'],
+            "Slope": ind['Slope'],
+            "Acceleration": ind['Acceleration'],
+            "Donchian_Pos": ind['Donchian_Pos'],
+            "Keltner_Pos": ind['Keltner_Pos'],
+            "CCI": ind['CCI']
         }
         
         # Get position for THIS symbol

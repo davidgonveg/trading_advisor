@@ -1,75 +1,74 @@
 {
-    "backtesting": {
-        "initial_capital": 10000,
-        "commission": 5e-05,
-        "slippage": 0.0005,
-        "start_date": "2022-01-27",
-        "end_date": "2026-12-31",
-        "interval": "1h",
-        "symbols": [
-            "QQQ",
-            "SPY",
-            "XLF",
-            "XLK",
-            "SMH",
-            "XLE",
-            "GLD",
-            "IWM"
-        ]
+  "backtesting": {
+    "initial_capital": 100000.0,
+    "commission": 5e-05,
+    "slippage": 0.0005,
+    "start_date": "2023-01-01",
+    "end_date": "2025-12-31",
+    "interval": "1h",
+    "symbols": [
+      "QQQ",
+      "SPY",
+      "XLF",
+      "XLK",
+      "SMH",
+      "XLE",
+      "GLD",
+      "IWM"
+    ]
+  },
+  "strategies": {
+    "vwap_bounce": {
+      "risk_pct": 0.015,
+      "atr_period": 14,
+      "atr_multiplier_sl": 2.0,
+      "atr_multiplier_tp": 4.0,
+      "volume_sma": 20
     },
-    "strategies": {
-        "vwap_bounce": {
-            "risk_pct": 0.015,
-            "atr_period": 14,
-            "atr_multiplier_sl": 2.0,
-            "atr_multiplier_tp": 4.0,
-            "volume_sma": 20
-        },
-        "ema_pullback": {
-            "risk_pct": 0.015,
-            "ema_fast": 20,
-            "ema_slow_daily": 100,
-            "adx_threshold": 25,
-            "atr_period": 14,
-            "sl_atr_mult": 1.5,
-            "tp1_pct": 0.012,
-            "trailing_atr_mult": 1.0,
-            "volume_sma": 20
-        }
-    },
-    "logging": {
-        "console": {
-            "enabled": true,
-            "level": "INFO"
-        },
-        "file": {
-            "enabled": true,
-            "path": "backtesting/logs/backtest_{timestamp}.log",
-            "level": "DEBUG"
-        },
-        "trade_log": {
-            "enabled": true,
-            "path": "backtesting/logs/trades_{timestamp}.csv"
-        },
-        "audit_log": {
-            "enabled": true,
-            "path": "backtesting/logs/audit_{timestamp}.json"
-        }
-    },
-    "debug": {
-        "enabled": false,
-        "pause_on_signal": true,
-        "pause_on_trade": true,
-        "show_indicators": true
-    },
-    "ml_filter": {
-        "enabled": true,
-        "comparison_mode": true,
-        "per_symbol": true,
-        "model_type": "RandomForest",
-        "threshold": 0.55,
-        "lookback": 5,
-        "min_samples": 50,
-        "model_path": "models/global_RandomForest_classifier.joblib"
+    "ema_pullback": {
+      "risk_pct": 0.015,
+      "ema_fast": 20,
+      "ema_slow_daily": 100,
+      "adx_threshold": 25,
+      "atr_period": 14,
+      "sl_atr_mult": 1.5,
+      "tp1_pct": 0.012,
+      "trailing_atr_mult": 1.0,
+      "volume_sma": 20
     }
+  },
+  "logging": {
+    "console": {
+      "enabled": true,
+      "level": "INFO"
+    },
+    "file": {
+      "enabled": true,
+      "path": "backtesting/logs/backtest_{timestamp}.log",
+      "level": "DEBUG"
+    },
+    "trade_log": {
+      "enabled": true,
+      "path": "backtesting/logs/trades_{timestamp}.csv"
+    },
+    "audit_log": {
+      "enabled": true,
+      "path": "backtesting/logs/audit_{timestamp}.json"
+    }
+  },
+  "debug": {
+    "enabled": false,
+    "pause_on_signal": true,
+    "pause_on_trade": true,
+    "show_indicators": true
+  },
+  "ml_filter": {
+    "enabled": true,
+    "comparison_mode": true,
+    "per_symbol": true,
+    "model_type": "XGBoost",
+    "threshold": 0.9,
+    "lookback": 5,
+    "min_samples": 50
+  }
 }
