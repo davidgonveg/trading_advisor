@@ -127,23 +127,24 @@ def run_live_loop():
         cycle_start = datetime.now()
         logger.info(f"--- SCAN CYCLE START: {cycle_start} ---")
         
-        # 0. Monitor existing positions
-        try:
-            trade_mgr.monitor_positions(data_mgr)
-        except Exception as e:
-            logger.error(f"Error in monitor_positions: {e}")
-
         # 0b. Get currently active alerts to avoid duplicates
         active_alerts = db.get_active_alerts()
         active_symbols = {a['symbol'] for a in active_alerts}
 
         for symbol in SYMBOLS:
-            if symbol in active_symbols:
-                logger.debug(f"Skipping {symbol}: Alert already active.")
-                continue
+            # Skip check for active alert here, because we want to MONITOR it first with fresh data.
+            # But we should only SCAN if no active alert?
+            # Actually, we can scan even if active alert exists (pyramiding?), but for now let's keep simplistic:
+            # 1. Update Data
+            # 2. Monitor Position (if any)
+            # 3. Scan for New Signal (if none)
 
+            # Optimisation: Check if we have active alert for this symbol
+            is_active = symbol in active_symbols
+            
             try:
                 # A. Update Data (Hourly and Daily)
+                # Always update to ensure monitoring has fresh data
                 data_mgr.update_data(symbol)
                 data_mgr.update_daily_data(symbol)
                 
@@ -159,9 +160,36 @@ def run_live_loop():
                 df_analyzed = indicators.calculate_all(df_raw)
                 
                 # D. Save Indicators (Optimize: Only save last 48 hours)
-                # We calculate on full history for accuracy, but only persist recent changes.
                 rows_to_save = df_analyzed.iloc[-48:] 
                 db.save_indicators(symbol, "1h", rows_to_save)
+                
+                # --- MONITORING (Moved Here) ---
+                # Check active positions using FRESH data
+                if is_active:
+                    # Filter active alerts for this symbol
+                    symbol_alerts = [a for a in active_alerts if a['symbol'] == symbol]
+                    for alert in symbol_alerts:
+                        # Monitor using the specific df we just updated
+                        # We need to expose a method in TradeManager that accepts the df directly
+                        # The monitor_positions loop in TradeManager iterates all alerts. 
+                        # We can refactor check_exit_conditions logic or just call it directly here.
+                        # Ideally, TradeManager.monitor_single_position(alert, df) ?
+                        # For minimum friction, let's look at what we have.
+                        # existing monitor_positions iterates all.
+                        # Let's extract the core logic or call `check_exit_conditions` here manually.
+                        
+                        latest_high = float(df_analyzed.iloc[-1]['High'])
+                        latest_low = float(df_analyzed.iloc[-1]['Low'])
+                        latest_close = float(df_analyzed.iloc[-1]['Close'])
+                        latest_ts = df_analyzed.index[-1]
+                        
+                        trade_mgr.check_exit_conditions(alert, latest_close, latest_high, latest_low, latest_ts, df_analyzed)
+                        
+                    # If active, skip scanning for new signals (Simplicity)
+                    logger.debug(f"Skipping Scan for {symbol}: Position active.")
+                    continue 
+
+                # --- SCANNING ---
                 
                 # E. Scan
                 # We want to scan the last CLOSED candle to ensure consistency with backtesting.
@@ -187,8 +215,17 @@ def run_live_loop():
                         
                         if plan:
                             logger.info(f"ALERT: {plan}")
+                            
+                            # SNAPSHOT: Capture last 5 rows of indicators + Signal Data
+                            # Convert to JSON string
+                            snapshot_rows = df_analyzed.iloc[-5:].copy()
+                            # Convert timestamp index to string column
+                            snapshot_rows.reset_index(inplace=True)
+                            snapshot_rows['timestamp'] = snapshot_rows['timestamp'].dt.strftime('%Y-%m-%d %H:%M:%S')
+                            snapshot_json = snapshot_rows.to_json(orient='records')
+                            
                             # Save to DB
-                            db.save_alert(sig, plan)
+                            db.save_alert(sig, plan, snapshot_data=snapshot_json)
                             # Send Telegram
                             telegram.send_signal_alert(sig, plan)
                             

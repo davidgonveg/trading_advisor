@@ -127,9 +127,16 @@ class Database:
                 rsi REAL,
                 
                 status TEXT DEFAULT 'SENT', -- SENT, CANCELLED (by logic)
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                snapshot_data TEXT -- JSON snapshot of indicators
             )
             ''')
+            
+            # Simple Migration for alerts.snapshot_data
+            try:
+                cursor.execute('ALTER TABLE alerts ADD COLUMN snapshot_data TEXT')
+            except sqlite3.OperationalError:
+                pass # Column likely exists
             
             # 5. Alert Performance (Tracking Outcome)
             # Did the alert trigger a trade? Did it hit TP/SL?
@@ -142,6 +149,8 @@ class Database:
                 
                 outcome TEXT, -- TP1, TP2, TP3, SL, TIME_STOP, NONE
                 pnl_r_multiple REAL, -- Result in R units
+                pnl_amount REAL, -- Result in USD
+                duration_minutes REAL, -- Trade duration
                 
                 max_favorable_excursion REAL,
                 max_adverse_excursion REAL,
@@ -150,6 +159,13 @@ class Database:
                 FOREIGN KEY(alert_id) REFERENCES alerts(id)
             )
             ''')
+
+            # Simple Migration for alert_performance
+            try:
+                cursor.execute('ALTER TABLE alert_performance ADD COLUMN pnl_amount REAL')
+                cursor.execute('ALTER TABLE alert_performance ADD COLUMN duration_minutes REAL')
+            except sqlite3.OperationalError:
+                pass
             
             # 6. Indices (Performance)
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_market_data_lookup ON market_data (symbol, timeframe, timestamp)')
@@ -274,6 +290,12 @@ class Database:
                 df['timestamp'] = pd.to_datetime(df['timestamp'], utc=True, format='mixed')
                 df.set_index('timestamp', inplace=True)
                 
+                # Deduplicate: Mixed timezones (e.g. UTC vs EST) can cause duplicates after conversion
+                # We keep the last one (usually POLYGON/TwelveData if sorted by string timestamp, as 09:00 > 04:00)
+                if df.index.duplicated().any():
+                    logger.warning(f"Found {df.index.duplicated().sum()} duplicates for {symbol} {timeframe} after timezone conversion. Dropping...")
+                    df = df[~df.index.duplicated(keep='last')]
+                
                 # Rename columns to standard Capitalized format
                 df.rename(columns={
                     'open': 'Open',
@@ -328,7 +350,7 @@ class Database:
         finally:
             conn.close()
 
-    def save_alert(self, signal, plan):
+    def save_alert(self, signal, plan, snapshot_data: str = None):
         """Persists a generated alert with its trade plan targets."""
         conn = self.get_connection()
         cursor = conn.cursor()
@@ -353,8 +375,8 @@ class Database:
             INSERT INTO alerts (
                 timestamp, symbol, signal_type, price,
                 sl_price, tp1_price, tp2_price, tp3_price,
-                atr, adx, rsi, status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                atr, adx, rsi, status, snapshot_data
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 signal.timestamp.isoformat() if hasattr(signal.timestamp, 'isoformat') else str(signal.timestamp),
                 signal.symbol,
@@ -363,7 +385,8 @@ class Database:
                 plan.stop_loss_price,
                 tp1, tp2, tp3,
                 atr, adx, rsi,
-                'SENT'
+                'SENT',
+                snapshot_data
             ))
             conn.commit()
             logger.info(f"Alert saved to DB for {signal.symbol}")
@@ -386,7 +409,7 @@ class Database:
         finally:
             conn.close()
 
-    def update_alert_performance(self, alert_id: int, outcome: str, pnl_r: float, exit_price: float, exit_time: datetime):
+    def update_alert_performance(self, alert_id: int, outcome: str, pnl_r: float, exit_price: float, exit_time: datetime, pnl_amount: float = 0.0, duration_minutes: float = 0.0):
         """Updates or inserts performance record and closes the alert."""
         conn = self.get_connection()
         cursor = conn.cursor()
@@ -397,10 +420,10 @@ class Database:
             # 2. Insert/Replace Performance Record
             cursor.execute('''
             INSERT OR REPLACE INTO alert_performance 
-            (alert_id, triggered, outcome, pnl_r_multiple, entry_price, closed_at)
-            VALUES (?, ?, ?, ?, (SELECT price FROM alerts WHERE id = ?), ?)
+            (alert_id, triggered, outcome, pnl_r_multiple, pnl_amount, duration_minutes, entry_price, closed_at)
+            VALUES (?, ?, ?, ?, ?, ?, (SELECT price FROM alerts WHERE id = ?), ?)
             ''', (
-                alert_id, 1, outcome, pnl_r, alert_id, exit_time.isoformat()
+                alert_id, 1, outcome, pnl_r, pnl_amount, duration_minutes, alert_id, exit_time.isoformat()
             ))
             
             conn.commit()

@@ -183,18 +183,23 @@ class TradeManager:
                 if df.empty:
                     continue
                 
-                latest_price = float(df.iloc[-1]['Close'])
+                # Use High/Low for intra-hour checks if available
+                # Assuming df has 'High' and 'Low' columns
+                latest_high = float(df.iloc[-1]['High'])
+                latest_low = float(df.iloc[-1]['Low'])
+                latest_close = float(df.iloc[-1]['Close'])
                 latest_ts = df.index[-1]
                 
                 # Check exit conditions
-                self.check_exit_conditions(alert, latest_price, latest_ts, df)
+                self.check_exit_conditions(alert, latest_close, latest_high, latest_low, latest_ts, df)
                 
             except Exception as e:
                 logger.error(f"Error monitoring {symbol}: {e}")
 
-    def check_exit_conditions(self, alert: Dict, current_price: float, current_ts: datetime, df: pd.DataFrame):
+    def check_exit_conditions(self, alert: Dict, current_close: float, current_high: float, current_low: float, current_ts: datetime, df: pd.DataFrame):
         """
         Evaluates SL, TP, and worsening conditions.
+        Uses High/Low for hard stops (SL/TP) to catch intra-candle moves.
         """
         alert_id = alert['id']
         symbol = alert['symbol']
@@ -203,56 +208,111 @@ class TradeManager:
         sl_price = alert['sl_price']
         tp1_price = alert['tp1_price']
         
-        # Calculate R-Multiple
+        
+        # Calculate R-Multiple and PnL Amount
         # R = Distance to SL
         r_dist = abs(entry_price - sl_price)
         if r_dist == 0: r_dist = 0.01 # Safety
         
-        current_pnl_r = (current_price - entry_price) / r_dist if side == 'LONG' else (entry_price - current_price) / r_dist
+        # We need trade size to calculate PnL ($)
+        # Assuming we can estimate it from a fixed capital model if not stored.
+        # Ideally, 'alerts' table should store 'qty' or 'size', but it doesn't currently.
+        # We will assume a default size or derived from risk if not available.
+        # But wait, create_trade_plan calculates Qty. We lost it! 
+        # Enhancement: We should store Qty in alerts table.
+        # For now, let's reverse calculate from Risk Amount if possible, or just use R units for relative performance.
+        # Actually, let's use a standard risk unit (e.g. $100) for reporting if we don't have exact size.
+        # OR: We can store Quantity in the Metadata or new column. 
+        # Given we just added schemas, let's use a standard 100 shares for estimation or try to fetch from somewhere.
+        # BETTER: Alert has 'price' and 'sl_price'. Logic: Qty = Risk ($150) / (Entry - SL).
+        # Let's assume standard risk of $150 per trade for reporting consistency.
+        risk_per_trade_usd = 150.0
+        estimated_qty = int(risk_per_trade_usd / r_dist) if r_dist > 0 else 0
         
         outcome = None
-
-        # 1. Stop Loss Hit
-        if (side == 'LONG' and current_price <= sl_price) or (side == 'SHORT' and current_price >= sl_price):
-            logger.warning(f"STOP LOSS HIT for {symbol} @ {current_price:.2f}")
+        exit_price_val = current_close # Default
+        
+        # Priority Logic: SL has priority if conflict? 
+        # If Low < SL and High > TP (conflict):
+        # We assume Worst Case (SL) unless we have finer data.
+        
+        # 1. Stop Loss Hit (Intra-candle)
+        sl_hit = False
+        if side == 'LONG':
+            if current_low <= sl_price: sl_hit = True
+        else: # SHORT
+            if current_high >= sl_price: sl_hit = True
+            
+        # 2. Take Profit Hit (Intra-candle)
+        tp_hit = False
+        if side == 'LONG':
+            if current_high >= tp1_price: tp_hit = True
+        else: # SHORT
+            if current_low <= tp1_price: tp_hit = True
+            
+        # Decision
+        if sl_hit and tp_hit:
+            logger.warning(f"CONFLICT: Both SL and TP hit in same candle for {symbol}. Assuming SL (Conservative).")
             outcome = "SL"
-
-        # 2. Take Profit Hit (TP1)
-        elif tp1_price and ((side == 'LONG' and current_price >= tp1_price) or (side == 'SHORT' and current_price <= tp1_price)):
-            logger.info(f"TAKE PROFIT HIT for {symbol} @ {current_price:.2f}")
+            exit_price_val = sl_price
+        elif sl_hit:
+            logger.warning(f"STOP LOSS HIT for {symbol} (Low/High touch)")
+            outcome = "SL"
+            exit_price_val = sl_price
+        elif tp_hit:
+            logger.info(f"TAKE PROFIT HIT for {symbol} (Low/High touch)")
             outcome = "TP1"
+            exit_price_val = tp1_price
 
-        # 3. Worsening Conditions (Early Exit)
+        # 3. Worsening Conditions (Early Exit) - Checks CLOSE Only
         # Strategy specific: If Close < VWAP for LONG, or Close > VWAP for SHORT
-        else:
+        if not outcome:
             # A. VWAP Check
             vwap_val = df.iloc[-1].get('VWAP')
             if vwap_val:
-                if (side == 'LONG' and current_price < vwap_val) or (side == 'SHORT' and current_price > vwap_val):
-                    logger.info(f"EARLY EXIT for {symbol} @ {current_price:.2f} due to worsening conditions (Price vs VWAP)")
+                if (side == 'LONG' and current_close < vwap_val) or (side == 'SHORT' and current_close > vwap_val):
+                    logger.info(f"EARLY EXIT for {symbol} @ {current_close:.2f} due to worsening conditions (Price vs VWAP)")
                     outcome = "EARLY_EXIT"
+                    exit_price_val = current_close
             
             # B. Time Stop
             if not outcome:
                 alert_ts = pd.to_datetime(alert['timestamp'], utc=True)
                 current_ts_dt = pd.to_datetime(current_ts, utc=True)
-                duration = (current_ts_dt - alert_ts).total_seconds() / 3600
+                duration_hours = (current_ts_dt - alert_ts).total_seconds() / 3600
                 limit = self.cfg.get('TIME_STOP_HOURS', 8)
-                if duration >= limit:
-                    logger.info(f"TIME STOP for {symbol} after {duration:.1f} hours (Limit: {limit}h)")
+                if duration_hours >= limit:
+                    logger.info(f"TIME STOP for {symbol} after {duration_hours:.1f} hours (Limit: {limit}h)")
                     outcome = "TIME_STOP"
+                    exit_price_val = current_close
 
             # C. Session Close (EOD)
             if not outcome and self.is_market_closing_soon(current_ts):
                 logger.info(f"SESSION CLOSE exit for {symbol}")
                 outcome = "TIME_STOP"
+                exit_price_val = current_close
 
         if outcome:
+            # Calculate PnL
+            if side == 'LONG':
+                pnl_r = (exit_price_val - entry_price) / r_dist
+                pnl_usd = (exit_price_val - entry_price) * estimated_qty
+            else:
+                pnl_r = (entry_price - exit_price_val) / r_dist
+                pnl_usd = (entry_price - exit_price_val) * estimated_qty
+                
+            # Duration
+            alert_ts = pd.to_datetime(alert['timestamp'], utc=True)
+            current_ts_dt = pd.to_datetime(current_ts, utc=True)
+            duration_minutes = (current_ts_dt - alert_ts).total_seconds() / 60
+            
             # 1. Update DB
-            self.db.update_alert_performance(alert_id, outcome, current_pnl_r, current_price, current_ts)
+            self.db.update_alert_performance(alert_id, outcome, pnl_r, exit_price_val, current_ts, pnl_usd, duration_minutes)
             
             # 2. Notify
-            self.telegram.send_exit_notification(symbol, outcome, current_pnl_r, current_price)
+            # Format Duration String
+            dur_str = f"{int(duration_minutes // 60)}h {int(duration_minutes % 60)}m"
+            self.telegram.send_exit_notification(symbol, outcome, pnl_r, exit_price_val, pnl_usd, dur_str)
 
     def generate_performance_report(self, data_mgr=None) -> str:
         """
@@ -261,9 +321,9 @@ class TradeManager:
         """
         conn = self.db.get_connection()
         try:
-            # 1. Closed Trades Stats
+            # 1. Closed Trades Stats (Updated with PnL)
             query = """
-                SELECT outcome, COUNT(*) as count, SUM(pnl_r_multiple) as total_r
+                SELECT outcome, COUNT(*) as count, SUM(pnl_r_multiple) as total_r, SUM(pnl_amount) as total_usd
                 FROM alert_performance
                 GROUP BY outcome
             """
@@ -280,8 +340,10 @@ class TradeManager:
                 total_r = df_closed['total_r'].sum()
                 win_rate = (df_closed[df_closed['outcome'].isin(['TP1', 'TP2', 'TP3'])]['count'].sum() / total_trades) * 100 if total_trades > 0 else 0
                 
+                total_usd = df_closed['total_usd'].sum()
+                
                 report += f"*Cerrados:* {total_trades} trades\n"
-                report += f"- Beneficio Realizado: {total_r:+.2f}R\n"
+                report += f"- Beneficio: {total_r:+.2f}R ({'$' if total_usd>=0 else '-'}${abs(total_usd):.2f})\n"
                 report += f"- Win Rate: {win_rate:.1f}%\n"
                 
                 report += "\n*Desglose:* "

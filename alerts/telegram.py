@@ -99,7 +99,7 @@ class TelegramBot:
         msg += "⏱️ Time Stop: Cierre de Sesión / 8H"
         
         self.send_message(msg)
-    def send_exit_notification(self, symbol: str, outcome: str, pnl_r: float, exit_price: float):
+    def send_exit_notification(self, symbol: str, outcome: str, pnl_r: float, exit_price: float, pnl_amount: float = 0.0, duration: str = "N/A"):
         """
         Sends a notification when a position is closed.
         """
@@ -112,11 +112,16 @@ class TelegramBot:
         elif outcome == "EARLY_EXIT": icon = "⚠️"
         elif outcome == "TIME_STOP": icon = "⏱️"
 
+        # Determine PnL Color/Sign
+        pnl_str = f"+${pnl_amount:.2f}" if pnl_amount >= 0 else f"-${abs(pnl_amount):.2f}"
+        
         msg = f"{icon} *POSICIÓN CERRADA - {symbol}*\n"
         msg += "━━━━━━━━━━━━━━━━━━━━━\n"
         msg += f"- Resultado: *{outcome}*\n"
         msg += f"- Precio de Salida: ${exit_price:.2f}\n"
-        msg += f"- PnL (R): *{pnl_r:+.2f}R*\n\n"
+        msg += f"- PnL (R): *{pnl_r:+.2f}R*\n"
+        msg += f"- PnL ($): *{pnl_str}*\n"
+        msg += f"- Duración: {duration}\n\n"
         
         if outcome == "EARLY_EXIT":
             msg += "_Salida temprana por empeoramiento de condiciones._"
