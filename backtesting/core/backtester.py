@@ -150,16 +150,23 @@ class BacktestEngine:
         
         qty = 0.0
         if signal.quantity is not None:
-            qty = signal.quantity
+            qty = abs(signal.quantity)  # Safety: ensure positive
         elif signal.quantity_pct is not None:
             # If closing: use position pct. If opening: use cash pct.
             is_closing = (signal.side == SignalSide.BUY and current_pos < -1e-6) or \
                          (signal.side == SignalSide.SELL and current_pos > 1e-6)
             
             if is_closing:
-                qty = abs(current_pos) * signal.quantity_pct
+                # Validate that we actually have a position to close
+                if abs(current_pos) < 1e-6:
+                    logger.warning(f"[SIGNAL IGNORED] Attempted to close position with zero quantity for {self.symbol}")
+                    return
+                qty = abs(current_pos * signal.quantity_pct)  # Safety: ensure positive
             else:
                 available_cash = self.portfolio.cash * signal.quantity_pct
+                if available_cash < 0:
+                    logger.warning(f"[ORDER REJECTED] Negative cash: ${available_cash:.2f} for {self.symbol}")
+                    return
                 qty = (available_cash * 0.99) / current_price 
         else:
             # Default: Close full position or open full potential
@@ -167,12 +174,27 @@ class BacktestEngine:
                          (signal.side == SignalSide.SELL and current_pos > 1e-6)
             
             if is_closing:
+                # Validate that we actually have a position to close
+                if abs(current_pos) < 1e-6:
+                    logger.warning(f"[SIGNAL IGNORED] Attempted to close position with zero quantity for {self.symbol}")
+                    return
                 qty = abs(current_pos)
             else:
+                if self.portfolio.cash < 0:
+                    logger.warning(f"[ORDER REJECTED] Negative cash: ${self.portfolio.cash:.2f} for {self.symbol}")
+                    return
                 qty = (self.portfolio.cash * 0.99) / current_price
             
-        if qty <= 1e-6: # Avoid near-zero quantities
+        # Final validation with better error messages
+        if qty <= 0:
+            if qty < 0:
+                logger.error(f"[BUG] Negative quantity calculated: {qty:.4f} for {self.symbol} | pos={current_pos:.4f} | cash=${self.portfolio.cash:.2f}")
+            else:
+                logger.warning(f"[ORDER REJECTED] Zero quantity for {self.symbol} | cash=${self.portfolio.cash:.2f} | price=${current_price:.2f}")
             return
+        
+        # Safety: ensure qty is always positive
+        qty = abs(qty)
 
         order = Order(
             id=str(uuid.uuid4())[:8],

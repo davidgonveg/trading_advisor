@@ -221,7 +221,8 @@ class DataManager:
         
         for gap in gaps:
             if not gap.is_fillable:
-                logger.warning(f"Gap too large to fill safely: {gap.duration_minutes} min at {gap.start_time}")
+                # Downgrade to INFO to reduce noise for expected gaps (e.g. weekends/holidays)
+                logger.info(f"Gap too large to fill safely (likely weekend/holiday): {gap.duration_minutes:.1f} min at {gap.start_time}")
                 continue
                 
             # Logic: Forward Fill
@@ -233,7 +234,11 @@ class DataManager:
                 # Assuming index is unique
                 start_val = df.loc[gap.start_time] # This exists
                 
-                fill_price = start_val['Close']
+                # Robust extraction in case of remaining duplicates
+                if isinstance(start_val, pd.DataFrame):
+                    start_val = start_val.iloc[-1]
+                
+                fill_price = float(start_val['Close'])
                 fill_vol = 0 # No volume on filled candles
                 
                 # Iterate hours

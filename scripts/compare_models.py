@@ -185,7 +185,8 @@ def compare_models(
 def compare_per_symbol(
     data_path: str = "data/ml/training_data.csv",
     models: List[str] = None,
-    output_dir: str = "results"
+    output_dir: str = "results",
+    symbols_filter: List[str] = None
 ) -> Dict[str, pd.DataFrame]:
     """
     Compare models for each symbol separately.
@@ -201,7 +202,13 @@ def compare_per_symbol(
     df = pd.read_csv(data_path)
     
     symbols = df['symbol'].unique()
-    logger.info(f"Found {len(symbols)} symbols: {list(symbols)}")
+    
+    # Filter symbols if specified
+    if symbols_filter:
+        symbols = [s for s in symbols if s in symbols_filter]
+        logger.info(f"Filtering to {len(symbols)} symbols: {list(symbols)}")
+    else:
+        logger.info(f"Found {len(symbols)} symbols: {list(symbols)}")
     
     all_results = {}
     
@@ -304,11 +311,13 @@ if __name__ == "__main__":
     parser.add_argument("--per-symbol", action="store_true", help="Compare models per symbol")
     parser.add_argument("--models", nargs="+", default=["RandomForest", "XGBoost", "LightGBM", "CatBoost"], 
                         help="Models to compare")
+    parser.add_argument("--symbols", nargs="+", default=None,
+                        help="Specific symbols to compare (e.g., --symbols SPY QQQ AAPL)")
     parser.add_argument("--output", type=str, default="results", help="Output directory")
     
     args = parser.parse_args()
     
     if args.per_symbol:
-        compare_per_symbol(args.data, args.models, args.output)
+        compare_per_symbol(args.data, args.models, args.output, args.symbols)
     else:
         compare_models(args.data, args.models, args.per_symbol, args.output)

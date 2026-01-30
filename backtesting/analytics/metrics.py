@@ -43,13 +43,14 @@ class MetricsCalculator:
                 
             if is_opening:
                 # Opening/Adding to position
-                open_slots.append([t.quantity, t.price, t.commission / t.quantity])
+                comm_per_unit = t.commission / t.quantity if t.quantity > 1e-6 else 0
+                open_slots.append([t.quantity, t.price, comm_per_unit])
                 running_qty += t.quantity * side_multiplier
             else:
                 # Closing/Reducing position
                 qty_to_close = t.quantity
                 exit_price = t.price
-                exit_comm_unit = t.commission / t.quantity
+                exit_comm_unit = t.commission / t.quantity if t.quantity > 1e-6 else 0
                 
                 while qty_to_close > 1e-6 and open_slots:
                     slot = open_slots[0]

@@ -13,6 +13,11 @@ class OrderExecutor:
         self.active_orders: Dict[str, Order] = {}
         
     def submit_order(self, order: Order):
+        # Validate quantity to prevent division by zero errors
+        if order.quantity <= 1e-6:
+            logger.warning(f"[ORDER REJECTED] Zero or near-zero quantity: {order.quantity} for {order.symbol}")
+            return
+        
         self.active_orders[order.id] = order
         logger.info(f"[ORDER SUBMITTED] {order.order_type.value} {order.side.value} | {order.quantity} {order.symbol} @ {order.price if order.price else 'MKT'} | Tag: {order.tag}")
         

@@ -4,12 +4,19 @@ import pandas as pd
 from glob import glob
 from datetime import datetime
 import logging
+import sys
+from pathlib import Path
+
+# Add project root to path
+sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 try:
     from tqdm import tqdm
 except ImportError:
     def tqdm(iterable, **kwargs):
         return iterable
+
+from backtesting.core.features import FeatureEngineer
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -34,6 +41,11 @@ def prepare_dataset(audit_dir="backtesting/logs", output_file="data/ml/training_
 
     # Using tqdm for progress tracking
     for file_path in tqdm(audit_files, desc="Parsing Audit Logs", unit="file"):
+        # SKIP LARGE FILES (>100MB) to avoid memory issues
+        if os.path.getsize(file_path) > 100 * 1024 * 1024:
+            logger.warning(f"Skipping large file: {os.path.basename(file_path)} ({os.path.getsize(file_path)/1024/1024:.1f} MB)")
+            continue
+
         try:
             with open(file_path, 'r') as f:
                 try:
@@ -48,10 +60,10 @@ def prepare_dataset(audit_dir="backtesting/logs", output_file="data/ml/training_
             trade_list = audit_data.get('trades', [])
             bars_list = audit_data.get('bars', [])
             
-            # Map timestamp to index and indicators
+            # Map timestamp to index and FULL bar (to get Close price)
             bars_by_ts = {}
             for idx, bar in enumerate(bars_list):
-                bars_by_ts[bar['timestamp']] = (idx, bar.get('indicators', {}))
+                bars_by_ts[bar['timestamp']] = (idx, bar)
             
             processed_entries = set()
             for i, trade in enumerate(trade_list):
@@ -77,8 +89,20 @@ def prepare_dataset(audit_dir="backtesting/logs", output_file="data/ml/training_
                     if entry_ts not in bars_by_ts:
                         continue
                         
-                    idx, current_indicators = bars_by_ts[entry_ts]
+                    idx, full_bar = bars_by_ts[entry_ts]
+                    current_indicators = full_bar.get('indicators', {}).copy()
                     
+                    # Inject raw OHLCV into indicators for FeatureEngineer
+                    # Data is nested in 'ohlc' key
+                    ohlc = full_bar.get('ohlc', {})
+                    for k in ['Open', 'High', 'Low', 'Close', 'Volume']:
+                        if k in ohlc:
+                            current_indicators[k] = ohlc[k]
+                    # Also try lowercase just in case
+                    for k in ['open', 'high', 'low', 'close', 'volume']:
+                        if k in ohlc:
+                            current_indicators[k.capitalize()] = ohlc[k]
+                            
                     # Prepare row with basic info
                     entry_price = trade['price']
                     exit_price = exit_trade['price']
@@ -94,22 +118,42 @@ def prepare_dataset(audit_dir="backtesting/logs", output_file="data/ml/training_
                         "label": 1 if pnl > 0 else 0
                     }
                     
-                    # Add current indicators
-                    row.update(current_indicators)
-                    
-                    # Add historical indicators (L1, L2, ...)
+                    # --- NEW: Use Shared FeatureEngineer ---
+                    # 1. Collect History
+                    history_indicators = []
                     for lb in range(1, lookback_bars + 1):
                         hist_idx = idx - lb
                         if hist_idx >= 0:
-                            hist_indicators = bars_list[hist_idx].get('indicators', {})
-                            for key, val in hist_indicators.items():
-                                row[f"{key}_L{lb}"] = val
+                            h_bar = bars_list[hist_idx]
+                            h_inds = h_bar.get('indicators', {}).copy()
+                            # Inject raw OHLC for history too
+                            h_ohlc = h_bar.get('ohlc', {})
+                            for k in ['Open', 'High', 'Low', 'Close', 'Volume']:
+                                if k in h_ohlc:
+                                    h_inds[k] = h_ohlc[k]
+                            history_indicators.append(h_inds)
                         else:
-                            # Fill with zeros or NaNs if not enough history
-                            # We'll use 0 for now as it's common in RF
-                            # but ideally we should only take signals with full history
-                            pass
+                            history_indicators.append({}) # Empty dict for missing history
+
+                    # 2. Extract Features
+                    try:
+                        features = FeatureEngineer.extract_features(current_indicators, history_indicators)
+                        row.update(features)
+                    except Exception as e:
+                        if len(processed_entries) < 5:
+                            print(f"Feature Ext Error {symbol}: {e}")
+                            print(f"Inds keys: {list(current_indicators.keys())}")
+                        continue
                     
+                    # VALIDATION: Check for key normalized features
+                    # NATR should exist
+                    if 'NATR' not in row:
+                        if len(processed_entries) < 5:
+                            print(f"Missing NATR. Feats: {list(features.keys())}")
+                            print(f"Inds Keys: {list(current_indicators.keys())}")
+                            print(f"Inds: {current_indicators.get('ATR')}, Close: {current_indicators.get('Close')}")
+                        continue
+                        
                     all_rows.append(row)
                     processed_entries.add(entry_id)
 
@@ -118,13 +162,17 @@ def prepare_dataset(audit_dir="backtesting/logs", output_file="data/ml/training_
 
     if all_rows:
         df = pd.DataFrame(all_rows)
-        # Drop rows with too many missing historical features if needed
-        # Or fill them
-        df = df.fillna(0)
+        before_len = len(df)
         
+        # Additional cleanup
+        df = df.dropna()
+        
+        if len(df) < before_len:
+            logger.info(f"Dropped {before_len - len(df)} rows with NaNs.")
+
         os.makedirs(os.path.dirname(output_file), exist_ok=True)
         df.to_csv(output_file, index=False)
-        logger.info(f"Dataset saved to {output_file} with {len(df)} samples and context.")
+        logger.info(f"Dataset saved to {output_file} with {len(df)} samples.")
         print(f"Features in one row sample: {list(df.columns[-10:])}...")
     else:
         logger.warning("No samples collected.")

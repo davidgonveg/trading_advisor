@@ -229,7 +229,12 @@ class EMAPullback(StrategyInterface):
             "EMA100_D": round(ema100_d, 2) if not pd.isna(ema100_d) else 0,
             "DI_pos_D": round(di_pos_d, 2) if not pd.isna(di_pos_d) else 0,
             "DI_neg_D": round(di_neg_d, 2) if not pd.isna(di_neg_d) else 0,
-            "Close_D": round(close_d, 2) if not pd.isna(close_d) else 0
+            "Close_D": round(close_d, 2) if not pd.isna(close_d) else 0,
+            "Close": round(bar['Close'], 2),
+            "Open": round(bar['Open'], 2),
+            "High": round(bar['High'], 2),
+            "Low": round(bar['Low'], 2),
+            "Volume": bar['Volume']
         }
         
         pos_qty = sum(portfolio_context["positions"].values())

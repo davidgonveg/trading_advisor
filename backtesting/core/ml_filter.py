@@ -3,7 +3,9 @@ import os
 import json
 import logging
 import pandas as pd
+import numpy as np
 from typing import Dict, Any, Optional, List
+from .features import FeatureEngineer
 
 logger = logging.getLogger("backtesting.core.ml_filter")
 
@@ -16,9 +18,10 @@ class MLFilter:
         self.config = config.get("ml_filter", {})
         self.enabled = self.config.get("enabled", False)
         self.per_symbol = self.config.get("per_symbol", False)
-        self.model_type = self.config.get("model_type", "RandomForest")
+        self.model_type = config.get("model_type", "XGBoost")
         self.models = {} # Cache for symbol-specific models
         self.features = {} # Cache for features per model
+        self._warned_symbols = set() # To prevent log spam
         
         # Load global model if per_symbol is False
         if not self.per_symbol and self.enabled:
@@ -33,17 +36,15 @@ class MLFilter:
                 feat_path = path.replace(".joblib", "_features.json")
                 with open(feat_path, 'r') as f:
                     self.features[key] = json.load(f)
-                logger.debug(f"ML Model loaded for {key}: {path}")
+                logger.info(f"✅ ML Model loaded for {key}: {path} ({len(self.features[key])} features)")
             except Exception as e:
-                logger.error(f"Failed to load ML model {path}: {e}")
+                logger.error(f"❌ Failed to load ML model {path}: {e}")
         else:
-            logger.debug(f"ML Model not found at {path}")
+            logger.warning(f"⚠️ ML Model not found at {path}")
 
     def predict_proba(self, indicators: Dict[str, Any], history: List[Dict[str, Any]], symbol: str = "global") -> float:
         """
-        Predicts probability of success. 
-        indicators: current bar indicators.
-        history: list of previous bars indicators (L1, L2, ...).
+        Predicts probability of success using FeatureEngineer for consistent extraction.
         """
         if not self.enabled:
             return 1.0
@@ -51,33 +52,40 @@ class MLFilter:
         key = symbol if (self.per_symbol and symbol in self.models or self._try_load_per_symbol(symbol)) else "global"
         
         if key not in self.models:
+            # Log warning only once per symbol to avoid spam
+            if not hasattr(self, '_warned_symbols'):
+                self._warned_symbols = set()
+            if key not in self._warned_symbols:
+                logger.warning(f"⚠️ ML Model not found for '{key}' (model_type={self.model_type}) - FILTER DISABLED for this symbol")
+                self._warned_symbols.add(key)
             return 1.0 # Pass if no model available
             
         try:
             model = self.models[key]
-            feats = self.features[key]
+            expected_feats = self.features[key]
             
-            # Prepare row - start with current indicators
-            features_dict = indicators.copy()
+            # --- EXTRACT FEATURES via Shared Logic ---
+            features_dict = FeatureEngineer.extract_features(indicators, history)
             
-            # Add historical context (L1, L2, ...)
-            # history[0] is L1, history[1] is L2...
-            for i, hist_inds in enumerate(history):
-                lb = i + 1
-                for k, v in hist_inds.items():
-                    features_dict[f"{k}_L{lb}"] = v
+            # Align with model columns
+            # We must ensure the DataFrame has exactly the columns the model expects
+            # Missing features -> NaN (XGBoost handles this)
+            # Extra features -> Ignored
             
-            row = pd.DataFrame([features_dict])
-            
-            # Align features with the model expectatations
-            for f in feats:
-                if f not in row.columns:
-                    row[f] = 0.0 # Missing features filled with 0 (e.g. if history not full)
-            
-            row = row[feats]
+            row_dict = {}
+            for feat in expected_feats:
+                # Default to NaN if missing, XGBoost handles it.
+                row_dict[feat] = features_dict.get(feat, np.nan)
+                
+            # Create DataFrame
+            row = pd.DataFrame([row_dict])
             
             # Predict
+            if len(self._warned_symbols) < 30: # Limit spam
+                 logger.info(f"ML INPUT {symbol}: NATR={row_dict.get('NATR'):.4f}, Dist_VWAP={row_dict.get('Dist_VWAP'):.4f}, RSI={row_dict.get('RSI'):.4f}, WickU={row_dict.get('Wick_Upper_Pct'):.4f}")
+            
             probs = model.predict_proba(row)[0]
+            
             return float(probs[1]) # Index 1 is success (label 1)
         except Exception as e:
             logger.error(f"Prediction error for {symbol}: {e}")

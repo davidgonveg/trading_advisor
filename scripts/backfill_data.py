@@ -81,4 +81,21 @@ def run_backfill():
             logger.error(f"Error backfilling {symbol}: {e}")
 
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--symbol", type=str, help="Specific symbol to backfill (optional)")
+    args = parser.parse_args()
+    
+    if args.symbol:
+        # Override the global SYMBOLS list for this run
+        logging.info(f"Overriding symbol list with single target: {args.symbol}")
+        # We need to monkeypath run_backfill's iteration or change how run_backfill works.
+        # Since run_backfill uses global SYMBOLS from import, we can patch the list in the module scope
+        # BUT run_backfill imports SYMBOLS directly from config.settings inside the function? No, at top level.
+        # Line 9: from config.settings import SYMBOLS
+        # So 'SYMBOLS' is a local variable in the module now.
+        # We can just update it.
+        SYMBOLS.clear()
+        SYMBOLS.append(args.symbol.upper())
+        
     run_backfill()
