@@ -1,0 +1,95 @@
+{
+    "strategy": "vwap_bounce",
+    "method": "random",
+    "iterations": 2000,
+    "symbols": [
+        "QQQ",
+        "SPY",
+        "SMH",
+        "IWM",
+        "XLE",
+        "XLF",
+        "XLK"
+    ],
+    "parameters": {
+        "risk_pct": {
+            "type": "fixed",
+            "value": 0.015
+        },
+        "atr_period": {
+            "type": "range",
+            "min": 10,
+            "max": 25,
+            "step": 1
+        },
+        "atr_multiplier_sl": {
+            "type": "range",
+            "min": 1.0,
+            "max": 3.5,
+            "step": 0.1
+        },
+        "atr_multiplier_tp": {
+            "type": "range",
+            "min": 2.0,
+            "max": 6.0,
+            "step": 0.5
+        },
+        "wick_ratio": {
+            "type": "range",
+            "min": 1.0,
+            "max": 3.0,
+            "step": 0.1
+        },
+        "time_stop_hours": {
+            "type": "choice",
+            "values": [
+                4,
+                6,
+                8,
+                12,
+                16,
+                24
+            ]
+        },
+        "vol_sma": {
+            "type": "choice",
+            "values": [
+                10,
+                20,
+                50
+            ]
+        },
+        "vol_mult": {
+            "type": "range",
+            "min": 0.5,
+            "max": 2.0,
+            "step": 0.1
+        },
+        "use_rsi_filter": {
+            "type": "choice",
+            "values": [
+                true,
+                false
+            ]
+        },
+        "rsi_threshold_long": {
+            "type": "range",
+            "min": 50,
+            "max": 80,
+            "step": 5
+        },
+        "rsi_threshold_short": {
+            "type": "range",
+            "min": 20,
+            "max": 50,
+            "step": 5
+        },
+        "use_trend_filter": {
+            "type": "choice",
+            "values": [
+                true,
+                false
+            ]
+        }
+    }
+}
