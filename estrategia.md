@@ -44,6 +44,8 @@ La estrategia explota el comportamiento institucional de respetar VWAP como nive
 | **VWAP** | Reset diario | Nivel de referencia |
 | **Volumen SMA** | SMA(20) | Confirmación |
 | **Patrón de vela** | Body/Wicks | Detección rechazo |
+| **EMA Tendencia** | EMA(200) | Filtro de Tendencia (Nuevo) |
+| **ATR** | Periodo 14 | Gestión de Riesgo |
 
 ## 4️⃣ Reglas de Indicadores
 
@@ -56,28 +58,32 @@ VWAP = Σ(TP × Volume) / Σ(Volume) (Reset diario a las 9:30 EST)
 *   `Lower_Wick = min(Open, Close) - Low`
 *   `Upper_Wick = High - max(Open, Close)`
 
+### 4.3 Filtro de Tendencia (Smart Hunter)
+*   **Alcista:** Close > EMA(200)
+*   **Bajista:** Close < EMA(200)
+
 ## 5️⃣ Reglas de Entrada
 
 ### 5.1 Entrada LONG
-1.  **Toque de VWAP desde arriba:** `Low <= VWAP` y `Close > VWAP`
-2.  **Patrón de rechazo alcista:** `Lower_Wick > 2 × Body`
-3.  **Confirmación de volumen:** `Volume > SMA(20)`
-4.  **Vela 1H cerrada.**
+1.  **Filtro Tendencia:** `Close > EMA(200)`
+2.  **Toque de VWAP desde arriba:** `Low <= VWAP` y `Close > VWAP`
+3.  **Patrón de rechazo alcista:** `Lower_Wick > 2 × Body`
+4.  **Confirmación de volumen:** `Volume > SMA(20)`
+5.  **Vela 1H cerrada.**
 
 ### 5.2 Entrada SHORT
-1.  **Toque de VWAP desde abajo:** `High >= VWAP` y `Close < VWAP`
-2.  **Patrón de rechazo bajista:** `Upper_Wick > 2 × Body`
-3.  **Confirmación de volumen:** `Volume > SMA(20)`
-4.  **Vela 1H cerrada.**
+1.  **Filtro Tendencia:** `Close < EMA(200)`
+2.  **Toque de VWAP desde abajo:** `High >= VWAP` y `Close < VWAP`
+3.  **Patrón de rechazo bajista:** `Upper_Wick > 2 × Body`
+4.  **Confirmación de volumen:** `Volume > SMA(20)`
+5.  **Vela 1H cerrada.**
 
-## 6️⃣ Gestión de Riesgo y Salida (Simulación Manual)
+## 6️⃣ Gestión de Riesgo y Salida (Smart Hunter)
 
-Dado que el broker no soporta TPs dinámicos, la estrategia simula la gestión manual:
-
-*   **Riesgo por trade:** 1.5% del capital.
-*   **SL Inicial:** ±0.4% desde precio de entrada (Stop-Limit Dinámico).
-*   **TP1 (+0.8%):** Cerrar 60% posición. Mover SL restante a Break Even.
-*   **TP2 (+1.2%):** Cerrar 40% restante.
+*   **Riesgo por trade:** 2.0% del capital.
+*   **Stop Loss (SL):** 2.0 × ATR(14) desde entrada.
+*   **Take Profit (TP):** 4.0 × ATR(14) desde entrada.
+*   **Time Stop:** 8 horas (Cierre forzado si no toca SL/TP).
 
 ---
 

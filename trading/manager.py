@@ -99,8 +99,9 @@ class TradeManager:
         # Let's assume for now 'size' is CAPITAL.
         # Because passing fixed qty (1000 shares) for SPY ($500) = $500k exposure. Unlikely default.
         
+        from config.settings import RISK_CONFIG
         capital = float(size)
-        risk_per_trade = 0.015
+        risk_per_trade = RISK_CONFIG.get("RISK_PER_TRADE_PCT", 2.0) / 100.0
         max_risk_amount = capital * risk_per_trade
         
         # Qty = Risk / Distance
@@ -211,8 +212,16 @@ class TradeManager:
         
         # Calculate R-Multiple and PnL Amount
         # R = Distance to SL
+        # R = Distance to SL
         r_dist = abs(entry_price - sl_price)
-        if r_dist == 0: r_dist = 0.01 # Safety
+        
+        # Safety: Enforce strict minimum to prevent R explosion (e.g. if SL ~= Entry)
+        # Using 0.1% of price as absolute floor for calculation
+        min_r_dist = entry_price * 0.001
+        if r_dist < min_r_dist:
+             logger.warning(f"Suspiciously small Risk Distance ({r_dist:.4f}) for {symbol}. Clamping to {min_r_dist:.4f} (0.1%)")
+             r_dist = min_r_dist
+
         
         # We need trade size to calculate PnL ($)
         # Assuming we can estimate it from a fixed capital model if not stored.
@@ -238,17 +247,19 @@ class TradeManager:
         
         # 1. Stop Loss Hit (Intra-candle)
         sl_hit = False
-        if side == 'LONG':
-            if current_low <= sl_price: sl_hit = True
-        else: # SHORT
-            if current_high >= sl_price: sl_hit = True
+        if sl_price is not None:
+            if side == 'LONG':
+                if current_low <= sl_price: sl_hit = True
+            else: # SHORT
+                if current_high >= sl_price: sl_hit = True
             
         # 2. Take Profit Hit (Intra-candle)
         tp_hit = False
-        if side == 'LONG':
-            if current_high >= tp1_price: tp_hit = True
-        else: # SHORT
-            if current_low <= tp1_price: tp_hit = True
+        if tp1_price is not None:
+            if side == 'LONG':
+                if current_high >= tp1_price: tp_hit = True
+            else: # SHORT
+                if current_low <= tp1_price: tp_hit = True
             
         # Decision
         if sl_hit and tp_hit:

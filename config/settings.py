@@ -49,7 +49,7 @@ SYMBOLS = [
 
 # Risk Management
 RISK_CONFIG = {
-    "RISK_PER_TRADE_PCT": 1.5,
+    "RISK_PER_TRADE_PCT": 2.0,
     "MAX_OPEN_POSITIONS": 3,
 }
 
