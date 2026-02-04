@@ -1,0 +1,92 @@
+﻿
+================================================================================
+ANALYZING GLD
+================================================================================
+
+================================================================================
+GLD - Detailed Signal Analysis for Feb 2, 2026
+================================================================================
+
+Signal #1
+  Timestamp: 2026-02-02 14:00:00+00:00
+  Signal Type: SELL
+  OHLC: O=432.60, H=440.78, L=430.22, C=433.99
+
+  Portfolio Before Signal:
+    Cash: $304128.51
+    Total Equity: $304128.51
+    Open Trades: 0
+    Positions: {}
+python : Traceback 
+(most recent call 
+last):
+En línea: 1 Carácter: 
+1
++ python scripts\deep_
+feb2_analysis.py 2>&1 
+| Out-File -Encoding 
+utf8 s ...
++ ~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo    
+          : NotSpeci  
+  fied: (Traceback    
+ (most recent call    
+ last)::String) [    
+], RemoteExceptio    n
+    + FullyQualifiedE 
+   rrorId : NativeCo  
+  mmandError
+ 
+  File "C:\Users\gonza
+\Documents\trading adv
+isor\scripts\deep_feb2
+_analysis.py", line 
+81, in <module>
+    gld_signals, 
+gld_trades = analyze_s
+ignal_execution(
+                      
+        ~~~~~~~~~~~~~~
+~~~~~~~~~~^
+        'backtesting/l
+ogs/audit_GLD_VWAPBoun
+ce_20260203_195307.jso
+n',
+        ^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^
+^^^
+        'GLD'
+        ^^^^^
+    )
+    ^
+  File "C:\Users\gonza
+\Documents\trading adv
+isor\scripts\deep_feb2
+_analysis.py", line 
+44, in analyze_signal_
+execution
+    print(f"\n  
+\u26a0\ufe0f  NO 
+ORDERS FIELD IN AUDIT 
+LOG")
+    ~~~~~^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^
+  File "C:\Python314\L
+ib\encodings\cp1252.py
+", line 19, in encode
+    return codecs.char
+map_encode(input,self.
+errors,encoding_table)
+[0]
+           ~~~~~~~~~~~
+~~~~~~~~~~^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 
+'charmap' codec can't 
+encode characters in 
+position 4-5: 
+character maps to 
+<undefined>

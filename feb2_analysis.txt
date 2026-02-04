@@ -1,0 +1,147 @@
+﻿=== GLD BARS ON 2026-02-02 ===
+Total bars on 2026-02-02: 31
+
+Time: 2026-02-02 00:00:00+00:00
+  OHLC: O:449.27 H:449.27 L:449.27 C:449.27
+  VWAP: nan
+  ATR: 0.0
+  Volume_SMA: 0.0
+  Signal: HOLD
+
+Time: 2026-02-02 01:00:00+00:00
+  OHLC: O:449.27 H:449.27 L:449.27 C:449.27
+  VWAP: nan
+  ATR: 0.0
+  Volume_SMA: 0.0
+  Signal: HOLD
+
+Time: 2026-02-02 02:00:00+00:00
+  OHLC: O:449.27 H:449.27 L:449.27 C:449.27
+  VWAP: nan
+  ATR: 0.0
+  Volume_SMA: 0.0
+  Signal: HOLD
+
+Time: 2026-02-02 03:00:00+00:00
+  OHLC: O:449.27 H:449.27 L:449.27 C:449.27
+  VWAP: nan
+  ATR: 0.0
+  Volume_SMA: 0.0
+  Signal: HOLD
+
+Time: 2026-02-02 04:00:00+00:00
+  OHLC: O:449.27 H:449.27 L:449.27 C:449.27
+  VWAP: nan
+  ATR: 0.0
+  Volume_SMA: 0.0
+  Signal: HOLD
+
+Time: 2026-02-02 05:00:00+00:00
+  OHLC: O:449.27 H:449.27 L:449.27 C:449.27
+  VWAP: nan
+  ATR: 0.0
+  Volume_SMA: 0.0
+  Signal: HOLD
+
+Time: 2026-02-02 06:00:00+00:00
+  OHLC: O:449.27 H:449.27 L:449.27 C:449.27
+  VWAP: nan
+  ATR: 0.0
+  Volume_SMA: 0.0
+  Signal: HOLD
+
+Time: 2026-02-02 07:00:00+00:00
+  OHLC: O:449.27 H:449.27 L:449.27 C:449.27
+  VWAP: nan
+  ATR: 0.0
+  Volume_SMA: 0.0
+  Signal: HOLD
+
+Time: 2026-02-02 08:00:00+00:00
+  OHLC: O:449.27 H:449.27 L:449.27 C:449.27
+  VWAP: nan
+  ATR: 0.0
+  Volume_SMA: 0.0
+  Signal: HOLD
+
+Time: 2026-02-02 09:00:00+00:00
+  OHLC: O:435.50 H:435.50 L:422.00 C:433.83
+  VWAP: 430.44
+  ATR: 1.95
+  Volume_SMA: 15018.0
+  Signal: HOLD
+
+
+=== XLK BARS ON 2026-02-02 ===
+Total bars on 2026-02-02: 31
+
+Time: 2026-02-02 00:00:00+00:00
+  OHLC: O:143.64 H:143.64 L:143.64 C:143.64
+  VWAP: nan
+  ATR: 0.0
+  Volume_SMA: 0.0
+  Signal: HOLD
+
+Time: 2026-02-02 01:00:00+00:00
+  OHLC: O:143.64 H:143.64 L:143.64 C:143.64
+  VWAP: nan
+  ATR: 0.0
+  Volume_SMA: 0.0
+  Signal: HOLD
+
+Time: 2026-02-02 02:00:00+00:00
+  OHLC: O:143.64 H:143.64 L:143.64 C:143.64
+  VWAP: nan
+  ATR: 0.0
+  Volume_SMA: 0.0
+  Signal: HOLD
+
+Time: 2026-02-02 03:00:00+00:00
+  OHLC: O:143.64 H:143.64 L:143.64 C:143.64
+  VWAP: nan
+  ATR: 0.0
+  Volume_SMA: 0.0
+  Signal: HOLD
+
+Time: 2026-02-02 04:00:00+00:00
+  OHLC: O:143.64 H:143.64 L:143.64 C:143.64
+  VWAP: nan
+  ATR: 0.0
+  Volume_SMA: 0.0
+  Signal: HOLD
+
+Time: 2026-02-02 05:00:00+00:00
+  OHLC: O:143.64 H:143.64 L:143.64 C:143.64
+  VWAP: nan
+  ATR: 0.0
+  Volume_SMA: 0.0
+  Signal: HOLD
+
+Time: 2026-02-02 06:00:00+00:00
+  OHLC: O:143.64 H:143.64 L:143.64 C:143.64
+  VWAP: nan
+  ATR: 0.0
+  Volume_SMA: 0.0
+  Signal: HOLD
+
+Time: 2026-02-02 07:00:00+00:00
+  OHLC: O:143.64 H:143.64 L:143.64 C:143.64
+  VWAP: nan
+  ATR: 0.0
+  Volume_SMA: 0.0
+  Signal: HOLD
+
+Time: 2026-02-02 08:00:00+00:00
+  OHLC: O:143.64 H:143.64 L:143.64 C:143.64
+  VWAP: nan
+  ATR: 0.0
+  Volume_SMA: 0.0
+  Signal: HOLD
+
+Time: 2026-02-02 09:00:00+00:00
+  OHLC: O:143.00 H:143.00 L:141.68 C:142.26
+  VWAP: 142.31
+  ATR: 0.14
+  Volume_SMA: 136.0
+  Signal: HOLD
+

@@ -1,0 +1,35 @@
+﻿=== ALL GLD TRADES ===
+Total trades: 16
+
+1. OrderSide.BUY | Entry: N/A @ $454.81 | Exit: N/A @ $0.00 | P&L: $0.00
+2. OrderSide.SELL | Entry: N/A @ $458.17 | Exit: N/A @ $0.00 | P&L: $0.00
+3. OrderSide.BUY | Entry: N/A @ $468.16 | Exit: N/A @ $0.00 | P&L: $0.00
+4. OrderSide.SELL | Entry: N/A @ $467.71 | Exit: N/A @ $0.00 | P&L: $0.00
+5. OrderSide.BUY | Entry: N/A @ $466.78 | Exit: N/A @ $0.00 | P&L: $0.00
+6. OrderSide.SELL | Entry: N/A @ $468.61 | Exit: N/A @ $0.00 | P&L: $0.00
+7. OrderSide.BUY | Entry: N/A @ $464.63 | Exit: N/A @ $0.00 | P&L: $0.00
+8. OrderSide.SELL | Entry: N/A @ $472.32 | Exit: N/A @ $0.00 | P&L: $0.00
+9. OrderSide.BUY | Entry: N/A @ $486.16 | Exit: N/A @ $0.00 | P&L: $0.00
+10. OrderSide.SELL | Entry: N/A @ $487.43 | Exit: N/A @ $0.00 | P&L: $0.00
+11. OrderSide.SELL | Entry: N/A @ $466.01 | Exit: N/A @ $0.00 | P&L: $0.00
+12. OrderSide.BUY | Entry: N/A @ $463.90 | Exit: N/A @ $0.00 | P&L: $0.00
+13. OrderSide.SELL | Entry: N/A @ $453.27 | Exit: N/A @ $0.00 | P&L: $0.00
+14. OrderSide.BUY | Entry: N/A @ $449.50 | Exit: N/A @ $0.00 | P&L: $0.00
+15. OrderSide.SELL | Entry: N/A @ $433.79 | Exit: N/A @ $0.00 | P&L: $0.00
+16. OrderSide.BUY | Entry: N/A @ $426.96 | Exit: N/A @ $0.00 | P&L: $0.00
+
+=== ALL XLK TRADES ===
+Total trades: 12
+
+1. OrderSide.BUY | Entry: N/A @ $145.63 | Exit: N/A @ $0.00 | P&L: $0.00
+2. OrderSide.SELL | Entry: N/A @ $145.11 | Exit: N/A @ $0.00 | P&L: $0.00
+3. OrderSide.BUY | Entry: N/A @ $146.10 | Exit: N/A @ $0.00 | P&L: $0.00
+4. OrderSide.SELL | Entry: N/A @ $146.27 | Exit: N/A @ $0.00 | P&L: $0.00
+5. OrderSide.BUY | Entry: N/A @ $148.32 | Exit: N/A @ $0.00 | P&L: $0.00
+6. OrderSide.SELL | Entry: N/A @ $148.15 | Exit: N/A @ $0.00 | P&L: $0.00
+7. OrderSide.BUY | Entry: N/A @ $148.86 | Exit: N/A @ $0.00 | P&L: $0.00
+8. OrderSide.SELL | Entry: N/A @ $149.11 | Exit: N/A @ $0.00 | P&L: $0.00
+9. OrderSide.BUY | Entry: N/A @ $149.07 | Exit: N/A @ $0.00 | P&L: $0.00
+10. OrderSide.SELL | Entry: N/A @ $148.93 | Exit: N/A @ $0.00 | P&L: $0.00
+11. OrderSide.SELL | Entry: N/A @ $145.97 | Exit: N/A @ $0.00 | P&L: $0.00
+12. OrderSide.BUY | Entry: N/A @ $144.50 | Exit: N/A @ $0.00 | P&L: $0.00
