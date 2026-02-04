@@ -1,0 +1,62 @@
+﻿
+################################################################################
+# BACKTEST-LIVE DISCREPANCY DIAGNOSTIC
+# Date: 2026-02-02
+# Symbols: XLK, GLD
+################################################################################
+
+python : Traceback 
+(most recent call 
+last):
+En línea: 1 Carácter: 
+1
++ python scripts\diagn
+ose_discrepancy.py 
+--date 2026-02-02 
+--symbols XL ...
++ ~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~
+~~~~~
+    + CategoryInfo    
+          : NotSpeci  
+  fied: (Traceback    
+ (most recent call    
+ last)::String) [    
+], RemoteExceptio    n
+    + FullyQualifiedE 
+   rrorId : NativeCo  
+  mmandError
+ 
+  File "C:\Users\gonza
+\Documents\trading adv
+isor\scripts\diagnose_
+discrepancy.py", line 
+295, in <module>
+    main()
+    ~~~~^^
+  File "C:\Users\gonza
+\Documents\trading adv
+isor\scripts\diagnose_
+discrepancy.py", line 
+257, in main
+    print(f"\n\n{'\u25
+88'*80}")
+    
+~~~~~^^^^^^^^^^^^^^^^^
+  File "C:\Python314\L
+ib\encodings\cp1252.py
+", line 19, in encode
+    return codecs.char
+map_encode(input,self.
+errors,encoding_table)
+[0]
+           ~~~~~~~~~~~
+~~~~~~~~~~^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 
+'charmap' codec can't 
+encode characters in 
+position 4-83: 
+character maps to 
+<undefined>

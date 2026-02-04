@@ -6,7 +6,7 @@ from backtesting.core.data_loader import DataLoader
 from backtesting.core.validator import Validator
 from backtesting.analytics.metrics import MetricsCalculator
 from backtesting.strategies.vwap_bounce import VWAPBounce
-from backtesting.strategies.ema_pullback import EMAPullback
+# from backtesting.strategies.ema_pullback import EMAPullback
 import pandas as pd
 import os
 

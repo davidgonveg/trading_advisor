@@ -1,0 +1,25 @@
+﻿=== GLD LATEST BACKTEST ===
+Period: 2026-01-20 09:00:00+00:00 to 2026-02-03 00:00:00+00:00
+Total bars: 390
+Total trades: 16
+
+Bars around 14:30-15:30 on 2026-02-02:
+  2026-02-02 14:00:00+00:00: Close=433.99, VWAP=434.96, Signal=SELL
+  2026-02-02 14:30:00+00:00: Close=430.23, VWAP=434.07, Signal=HOLD
+  2026-02-02 15:00:00+00:00: Close=424.60, VWAP=432.6, Signal=HOLD
+  2026-02-02 15:30:00+00:00: Close=429.48, VWAP=431.7, Signal=HOLD
+
+Trades on 2026-02-02:
+
+=== XLK LATEST BACKTEST ===
+Period: 2026-01-20 09:00:00+00:00 to 2026-02-03 00:00:00+00:00
+Total bars: 380
+Total trades: 12
+
+Bars around 14:30-15:30 on 2026-02-02:
+  2026-02-02 14:00:00+00:00: Close=144.72, VWAP=144.33, Signal=HOLD
+  2026-02-02 14:30:00+00:00: Close=145.83, VWAP=144.84, Signal=HOLD
+  2026-02-02 15:00:00+00:00: Close=145.60, VWAP=145.03, Signal=HOLD
+  2026-02-02 15:30:00+00:00: Close=145.94, VWAP=145.19, Signal=HOLD
+
+Trades on 2026-02-02:

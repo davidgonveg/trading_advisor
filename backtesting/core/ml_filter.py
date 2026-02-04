@@ -1,4 +1,7 @@
-import joblib
+try:
+    import joblib
+except ImportError:
+    joblib = None
 import os
 import json
 import logging

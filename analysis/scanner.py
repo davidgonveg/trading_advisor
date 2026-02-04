@@ -102,15 +102,25 @@ class Scanner:
                 decision_logger.debug(f"{ts} | {symbol} | REJECTED: VWAP not available")
                 continue
 
+            ema_200 = row.get('EMA_200')
+            if not ema_200 or pd.isna(ema_200):
+                 # Fail safe: if enough data, we should have it. If not, maybe skip?
+                 # Assuming "Smart Hunter" strictly requires it.
+                 # If we are early in history, we might skip.
+                 decision_logger.debug(f"{ts} | {symbol} | REJECTED: EMA_200 not available")
+                 continue
+
             # 2. LONG Setup
             # Bounce: Low <= VWAP and Close > VWAP
             bounce_long = (row['Low'] <= vwap_val) and (row['Close'] > vwap_val)
             # Wick: Lower Wick > 2 * Body (pat_wick_bull > 0)
             # Note: detect_patterns adds 'pat_wick_bull'
             wick_bull = row.get('pat_wick_bull', 0) > 0
+            # Trend: Close > EMA 200
+            trend_long = row['Close'] > ema_200
             
-            if bounce_long and wick_bull:
-                logger.info(f"SIGNAL FOUND: LONG {symbol} @ {row['Close']} (VWAP Bounce)")
+            if bounce_long and wick_bull and trend_long:
+                logger.info(f"SIGNAL FOUND: LONG {symbol} @ {row['Close']} (VWAP Bounce + EMA200)")
                 sig = Signal(
                     symbol=symbol,
                     timestamp=ts,
@@ -119,13 +129,14 @@ class Scanner:
                     atr_value=float(row.get('ATR', 0)), # Needed for Sizing
                     metadata={
                         "vwap": float(vwap_val),
+                        "ema_200": float(ema_200),
                         "vol": float(row['Volume']),
                         "vol_sma": float(vol_sma),
                         "pat_score": 100
                     }
                 )
                 signals.append(sig)
-                decision_logger.info(f"{ts} | {symbol} | LONG | VWAP Bounce: {bounce_long} | Wick Bull: {wick_bull} -> ACCEPTED")
+                decision_logger.info(f"{ts} | {symbol} | LONG | VWAP Bounce: {bounce_long} | Wick Bull: {wick_bull} | Trend: {trend_long} -> ACCEPTED")
                 continue
 
             # 3. SHORT Setup
@@ -133,9 +144,11 @@ class Scanner:
             bounce_short = (row['High'] >= vwap_val) and (row['Close'] < vwap_val)
             # Wick: Upper Wick > 2 * Body (pat_wick_bear < 0)
             wick_bear = row.get('pat_wick_bear', 0) < 0
+            # Trend: Close < EMA 200
+            trend_short = row['Close'] < ema_200
             
-            if bounce_short and wick_bear:
-                logger.info(f"SIGNAL FOUND: SHORT {symbol} @ {row['Close']} (VWAP Bounce)")
+            if bounce_short and wick_bear and trend_short:
+                logger.info(f"SIGNAL FOUND: SHORT {symbol} @ {row['Close']} (VWAP Bounce + EMA200)")
                 sig = Signal(
                     symbol=symbol,
                     timestamp=ts,
@@ -144,17 +157,18 @@ class Scanner:
                     atr_value=float(row.get('ATR', 0)),
                     metadata={
                         "vwap": float(vwap_val),
+                        "ema_200": float(ema_200),
                         "vol": float(row['Volume']),
                         "vol_sma": float(vol_sma),
                         "pat_score": -100
                     }
                 )
                 signals.append(sig)
-                decision_logger.info(f"{ts} | {symbol} | SHORT | VWAP Bounce: {bounce_short} | Wick Bear: {wick_bear} -> ACCEPTED")
+                decision_logger.info(f"{ts} | {symbol} | SHORT | VWAP Bounce: {bounce_short} | Wick Bear: {wick_bear} | Trend: {trend_short} -> ACCEPTED")
                 continue
             
             # If no signal, log rejection for debugging
-            decision_logger.debug(f"{ts} | {symbol} | REJECTED: No VWAP Bounce signal. Long Bounce: {bounce_long}, Wick Bull: {wick_bull}.")
+            decision_logger.debug(f"{ts} | {symbol} | REJECTED. C:{row['Close']:.2f}, V:{vwap_val:.2f}, E200:{ema_200:.2f}. LB:{bounce_long}, SB:{bounce_short}, T:{trend_long if row['Close'] > ema_200 else 'Bear'}")
 
 
         return signals

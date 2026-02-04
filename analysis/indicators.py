@@ -48,6 +48,7 @@ class TechnicalIndicators:
         # SMA 50 (Daily logic usually applies to specific timeframe, but can calculate here)
         df['SMA_50'] = self.sma(df['Close'], 50)
         df['SMA_200'] = self.sma(df['Close'], 200) # v3.1 Trend Filter
+        df['EMA_200'] = df['Close'].ewm(span=200, adjust=False).mean() # Smart Hunter Trend Filter
         
         # Volume SMA
         df['Volume_SMA_20'] = self.sma(df['Volume'], 20)

@@ -1,10 +1,10 @@
 {
   "backtesting": {
     "initial_capital": 100000.0,
-    "commission": 5e-05,
+    "commission": 5e-5,
     "slippage": 0.0005,
-    "start_date": "2023-01-01",
-    "end_date": "2025-12-31",
+    "start_date": "2022-01-01",
+    "end_date": "2026-12-31",
     "interval": "1h",
     "symbols": [
       "QQQ",
@@ -19,11 +19,19 @@
   },
   "strategies": {
     "vwap_bounce": {
-      "risk_pct": 0.015,
+      "risk_pct": 0.02,
       "atr_period": 14,
       "atr_multiplier_sl": 2.0,
       "atr_multiplier_tp": 4.0,
-      "volume_sma": 20
+      "volume_sma": 20,
+      "wick_ratio": 1.0,
+      "time_stop_hours": 8,
+      "use_volume_filter": true,
+      "volume_multiplier": 1.0,
+      "use_ml_filter": false,
+      "use_rsi_filter": false,
+      "use_trend_filter": true,
+      "use_dynamic_sl": false
     },
     "ema_pullback": {
       "risk_pct": 0.015,
@@ -63,8 +71,8 @@
     "show_indicators": true
   },
   "ml_filter": {
-    "enabled": true,
-    "comparison_mode": true,
+    "enabled": false,
+    "comparison_mode": false,
     "per_symbol": true,
     "model_type": "XGBoost",
     "threshold": 0.9,

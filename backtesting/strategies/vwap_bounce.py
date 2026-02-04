@@ -13,6 +13,18 @@ class VWAPBounce(StrategyInterface):
         self.atr_multiplier_sl = params.get("atr_multiplier_sl", 2.0)
         self.atr_multiplier_tp = params.get("atr_multiplier_tp", 4.0)
         
+        # Optimization Parameters (Exposed)
+        self.wick_ratio = params.get("wick_ratio", 2.0)
+        self.time_stop_hours = params.get("time_stop_hours", 8)
+        self.vol_mult = params.get("vol_mult", 1.0)
+        
+        # New Filters (Toggleable)
+        self.use_rsi_filter = params.get("use_rsi_filter", False)
+        self.rsi_threshold_long = params.get("rsi_threshold_long", 70)  # max RSI for long
+        self.rsi_threshold_short = params.get("rsi_threshold_short", 30) # min RSI for short
+        
+        self.use_trend_filter = params.get("use_trend_filter", False) # Trade only with trend (EMA200)
+        
         self.params = params
         self.indicators_df = None
         
@@ -296,7 +308,7 @@ class VWAPBounce(StrategyInterface):
             # 4. Time Stop (8 hours)
             if self.entry_ts:
                 duration = (ts - self.entry_ts).total_seconds() / 3600
-                if duration >= 8:
+                if duration >= self.time_stop_hours:
                     exit_side = SignalSide.SELL if self.active_side == 'LONG' else SignalSide.BUY
                     self._reset_state()
                     return Signal(exit_side, quantity_pct=1.0, tag="TIME_STOP_EXIT")
@@ -311,7 +323,21 @@ class VWAPBounce(StrategyInterface):
         if abs(pos_qty) < 1e-6:
             # LONG ENTRY
             if bar['Low'] <= vwap and bar['Close'] > vwap:
-                if lower_wick > 2 * body and bar['Volume'] > vol_sma:
+                # Core Logic
+                valid_wick = lower_wick > (self.wick_ratio * body)
+                valid_vol = bar['Volume'] > (vol_sma * self.vol_mult)
+                
+                # Optional Filters
+                valid_rsi = True
+                if self.use_rsi_filter:
+                    valid_rsi = ind['RSI'] < self.rsi_threshold_long
+                    
+                valid_trend = True
+                if self.use_trend_filter:
+                    # Dist_EMA200 > 0 means Close > EMA200 (Uptrend)
+                    valid_trend = ind['Dist_EMA200'] > 0
+                
+                if valid_wick and valid_vol and valid_rsi and valid_trend:
                     if pd.isna(atr): return Signal(SignalSide.HOLD)
                     
                     self.entry_price = bar['Close']
@@ -325,7 +351,21 @@ class VWAPBounce(StrategyInterface):
 
             # SHORT ENTRY
             if bar['High'] >= vwap and bar['Close'] < vwap:
-                if upper_wick > 2 * body and bar['Volume'] > vol_sma:
+                # Core Logic
+                valid_wick = upper_wick > (self.wick_ratio * body)
+                valid_vol = bar['Volume'] > (vol_sma * self.vol_mult)
+                
+                # Optional Filters
+                valid_rsi = True
+                if self.use_rsi_filter:
+                    valid_rsi = ind['RSI'] > self.rsi_threshold_short
+                    
+                valid_trend = True
+                if self.use_trend_filter:
+                    # Dist_EMA200 < 0 means Close < EMA200 (Downtrend)
+                    valid_trend = ind['Dist_EMA200'] < 0
+
+                if valid_wick and valid_vol and valid_rsi and valid_trend:
                     if pd.isna(atr): return Signal(SignalSide.HOLD)
                     
                     self.entry_price = bar['Close']
