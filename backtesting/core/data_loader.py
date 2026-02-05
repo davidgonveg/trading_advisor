@@ -27,17 +27,55 @@ class DataLoader:
         df = df.sort_index()
         
         # Filter by date
+        # Filter by date
         df = df[(df.index >= start_date) & (df.index <= end_date)]
         
         if df.empty:
             logger.warning(f"[DATA WARNING] No data in specified range for {symbol}.")
             return df
             
+        # FILTER: Market Hours Only (09:30 - 16:00 ET)
+        df = self._filter_market_hours(df, symbol)
+        
+        if df.empty:
+             logger.warning(f"[DATA WARNING] No data left after Market Hours filter for {symbol}.")
+             return df
+
         logger.info(f"[DATA LOADED] {len(df)} bars loaded for {symbol}.")
         self._validate_data(df, symbol)
         
         return df
         
+    def _filter_market_hours(self, df: pd.DataFrame, symbol: str) -> pd.DataFrame:
+        """
+        Filters data to keep only US Market Hours (09:30 - 16:00 ET).
+        Assumes df.index is UTC.
+        """
+        original_count = len(df)
+        
+        # Convert to NY time for filtering
+        ny_time = df.index.tz_convert('America/New_York')
+        
+        # Define Market Hours:
+        # Weekdays (0-4) AND (Hour > 9 OR (Hour == 9 AND Minute >= 30)) AND (Hour < 16)
+        # Note: 16:00 is usually the close candle. Depending on timestamp convention (start vs end of candle).
+        # Standard: 09:30 candle is 09:30-10:00. 15:30 candle is 15:30-16:00.
+        # So we want >= 09:30 and < 16:00.
+        
+        is_weekday = ny_time.dayofweek < 5
+        is_market_start = (ny_time.hour > 9) | ((ny_time.hour == 9) & (ny_time.minute >= 30))
+        is_market_end = ny_time.hour < 16
+        
+        mask = is_weekday & is_market_start & is_market_end
+        
+        df_filtered = df[mask] # Use boolean indexing directly
+        
+        dropped = original_count - len(df_filtered)
+        if dropped > 0:
+            logger.info(f"[MARKET FILTER] {symbol}: Dropped {dropped} off-market rows ({dropped/original_count:.1%} of data).")
+            
+        return df_filtered
+
     def _validate_data(self, df: pd.DataFrame, symbol: str):
         """
         Performs technical validation on the data.

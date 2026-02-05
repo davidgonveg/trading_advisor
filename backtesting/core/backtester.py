@@ -115,11 +115,11 @@ class BacktestEngine:
                     logger.info(f"[SIGNAL] {ts} | {signal.side.value} | Tag: {signal.tag}")
                     self._handle_signal(signal, ts, current_bar['Close'])
                     if self.debug_mode and self.config.get("debug", {}).get("pause_on_signal", True):
-                        print(f"\n[DEBUG] BAR {i} | {ts} | Close: {current_bar['Close']:.2f}")
-                        print(f" INDICATORS: {bar_audit['indicators']}")
+                        logger.info(f"\n[DEBUG] BAR {i} | {ts} | Close: {current_bar['Close']:.2f}")
+                        logger.info(f" INDICATORS: {bar_audit['indicators']}")
                         if "ml_confidence" in bar_audit:
-                            print(f" ML CONFIDENCE: {bar_audit['ml_confidence']:.2f}")
-                        print(f" PORTFOLIO: Equity ${portfolio_ctx['total_equity']:.2f} | Cash ${portfolio_ctx['cash']:.2f}")
+                            logger.info(f" ML CONFIDENCE: {bar_audit['ml_confidence']:.2f}")
+                        logger.info(f" PORTFOLIO: Equity ${portfolio_ctx['total_equity']:.2f} | Cash ${portfolio_ctx['cash']:.2f}")
                         
                         try:
                             cmd = input("[DEBUG] Signal generated. Press Enter to continue, 's' to skip debug, 'q' to quit: ")

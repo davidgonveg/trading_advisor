@@ -224,20 +224,17 @@ class TradeManager:
 
         
         # We need trade size to calculate PnL ($)
-        # Assuming we can estimate it from a fixed capital model if not stored.
-        # Ideally, 'alerts' table should store 'qty' or 'size', but it doesn't currently.
-        # We will assume a default size or derived from risk if not available.
-        # But wait, create_trade_plan calculates Qty. We lost it! 
-        # Enhancement: We should store Qty in alerts table.
-        # For now, let's reverse calculate from Risk Amount if possible, or just use R units for relative performance.
-        # Actually, let's use a standard risk unit (e.g. $100) for reporting if we don't have exact size.
-        # OR: We can store Quantity in the Metadata or new column. 
-        # Given we just added schemas, let's use a standard 100 shares for estimation or try to fetch from somewhere.
-        # BETTER: Alert has 'price' and 'sl_price'. Logic: Qty = Risk ($150) / (Entry - SL).
-        # Let's assume standard risk of $150 per trade for reporting consistency.
-        risk_per_trade_usd = 150.0
-        estimated_qty = int(risk_per_trade_usd / r_dist) if r_dist > 0 else 0
+        # Try to use stored quantity from DB (added in v1.1)
+        stored_qty = alert.get('quantity')
         
+        if stored_qty and stored_qty > 0:
+            qty = float(stored_qty)
+        else:
+            # Fallback to estimation if not found (legacy support)
+            risk_per_trade_usd = 150.0
+            qty = int(risk_per_trade_usd / r_dist) if r_dist > 0 else 0
+            # logger.warning(f"Using estimated quantity for {symbol} (Qty: {qty})")
+
         outcome = None
         exit_price_val = current_close # Default
         
@@ -307,10 +304,10 @@ class TradeManager:
             # Calculate PnL
             if side == 'LONG':
                 pnl_r = (exit_price_val - entry_price) / r_dist
-                pnl_usd = (exit_price_val - entry_price) * estimated_qty
+                pnl_usd = (exit_price_val - entry_price) * qty
             else:
                 pnl_r = (entry_price - exit_price_val) / r_dist
-                pnl_usd = (entry_price - exit_price_val) * estimated_qty
+                pnl_usd = (entry_price - exit_price_val) * qty
                 
             # Duration
             alert_ts = pd.to_datetime(alert['timestamp'], utc=True)
@@ -327,18 +324,23 @@ class TradeManager:
 
     def generate_performance_report(self, data_mgr=None) -> str:
         """
-        Generates a summary of recent alert performance.
+        Generates a summary of TODAY's alert performance.
         Includes Active positions if data_mgr is provided.
         """
         conn = self.db.get_connection()
         try:
-            # 1. Closed Trades Stats (Updated with PnL)
+            # 1. Closed Trades Stats (TODAY ONLY)
+            start_of_day = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            start_of_day_str = start_of_day.isoformat()
+            
             query = """
                 SELECT outcome, COUNT(*) as count, SUM(pnl_r_multiple) as total_r, SUM(pnl_amount) as total_usd
                 FROM alert_performance
+                WHERE closed_at >= ?
                 GROUP BY outcome
             """
-            df_closed = pd.read_sql_query(query, conn)
+            
+            df_closed = pd.read_sql_query(query, conn, params=(start_of_day_str,))
             
             # 2. Get Active Alerts for Floating PnL
             active_alerts = self.db.get_active_alerts()

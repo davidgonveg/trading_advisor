@@ -37,7 +37,7 @@ TELEGRAM_CHAT_ID = os.getenv('CHAT_ID') or os.getenv('TELEGRAM_CHAT_ID')
 # System Configuration
 SYSTEM_CONFIG = {
     "LOG_LEVEL": os.getenv("LOG_LEVEL", "INFO"),
-    "TIMEZONE": os.getenv("TIMEZONE", "US/Eastern"),
+    "TIMEZONE": os.getenv("TIMEZONE", "America/New_York"),
     "DEVELOPMENT_MODE": os.getenv("DEVELOPMENT_MODE", "False").lower() == "true",
     "INITIAL_CAPITAL": 10000,
 }
@@ -56,7 +56,7 @@ RISK_CONFIG = {
 # Data Collection Configuration
 DATA_CONFIG = {
     "HISTORY_DAYS": 90, # Default for continuous loop
-    "BACKFILL_DAYS": 730, # Max available commonly for hourly
+    "BACKFILL_DAYS": 1600, # Approx 4.5 years to cover 2022 start date
 }
 
 # New Architecture Specifics

@@ -1,4 +1,3 @@
-
 import pandas as pd
 import sys
 from pathlib import Path
@@ -9,15 +8,12 @@ from data.storage.database import Database
 def inspect():
     db = Database()
     conn = db.get_connection()
-    symbol = "SPY"
+    symbol = "QQQ"
     
-    print(f"--- Market Data {symbol} 1H ---")
-    df_m = pd.read_sql_query(f"SELECT * FROM market_data WHERE symbol='{symbol}' AND timeframe='1h' LIMIT 5", conn)
-    print(df_m)
-    
-    print(f"\n--- Indicators {symbol} 1H ---")
-    df_i = pd.read_sql_query(f"SELECT * FROM indicators WHERE symbol='{symbol}' AND timeframe='1h' LIMIT 5", conn)
-    print(df_i) 
+    print(f"--- Market Data {symbol} 1H (Detail) ---")
+    # Get 50 rows to see the timestamps
+    df_m = pd.read_sql_query(f"SELECT * FROM market_data WHERE symbol='{symbol}' AND timeframe='1h' ORDER BY timestamp ASC LIMIT 50", conn)
+    print(df_m[['timestamp', 'open', 'high', 'low', 'close', 'volume']])
     
     conn.close()
 

@@ -208,6 +208,11 @@ def run_live_loop():
                 if signals:
                     logger.info(f"SIGNALS FOUND FOR {symbol}: {len(signals)}")
                     for sig in signals:
+                        # DUPLICATE CHECK (Spam Prevention)
+                        if db.signal_exists(sig.symbol, sig.timestamp):
+                            logger.debug(f"Signal for {sig.symbol} at {sig.timestamp} already exists. Skipping.")
+                            continue
+                        
                         # Generate Plan
                         # Using configurable capital size for risk management
                         cap_size = SYSTEM_CONFIG.get("INITIAL_CAPITAL", 10000)
@@ -298,52 +303,122 @@ def main():
         run_scan()
     elif args.mode == 'backtest':
         logger.info(f"--- STARTING BACKTEST MODE ---")
-        from backtesting.simulation.engine import BacktestEngine
         
-        # 1. Setup Data Feed
-        db = Database()
+        # Imports
+        from backtesting.core.backtester import BacktestEngine
+        from backtesting.core.data_loader import DataLoader
+        from backtesting.strategies.vwap_bounce import VWAPBounce
+        from backtesting.analytics.metrics import MetricsCalculator
+        import json
+        
+        # 1. Load Config
+        try:
+            with open("backtesting/config.json", "r") as f:
+                config = json.load(f)
+        except FileNotFoundError:
+            logger.error("Config file backtesting/config.json not found.")
+            return
+
+        # 2. Override Config with CLI Args
         target_symbols = [args.symbol] if args.symbol else SYMBOLS
         
         if args.start_date:
-            start_date = pd.Timestamp(args.start_date, tz='UTC')
-            if args.end_date:
-                end_date = pd.Timestamp(args.end_date, tz='UTC')
-            else:
-                end_date = pd.Timestamp.now(tz='UTC')
-            logger.info(f"Using explicit date range: {start_date} to {end_date}")
-        else:
-            start_date = pd.Timestamp.now(tz='UTC') - pd.Timedelta(days=args.days)
-            end_date = pd.Timestamp.now(tz='UTC')
-            logger.info(f"Using relative date range (Days={args.days}): {start_date} to {end_date}")
-        
-        print(f"Initializing Data Feed for {target_symbols}...")
-        feed = DatabaseFeed(db, target_symbols, start_date, end_date)
-        
-        # 2. Init Engine
-        engine = BacktestEngine(feed, initial_capital=10000.0)
-        
-        # 3. Setup Strategy
-        curr_strategy = VWAPBounceStrategy(target_symbols)
-        engine.set_strategy(curr_strategy)
-        
-        # 4. Run
-        engine.run()
-        
-        # 5. Save Results
-        from backtesting.simulation.logger import TradeLogger
-        from backtesting.simulation.analytics import BacktestAnalyzer
-        
-        trade_logger = TradeLogger()
-        trade_logger.save_trades(engine.broker.trades)
-        
-        if hasattr(curr_strategy, 'completed_trades'):
-            trade_logger.save_round_trips(curr_strategy.completed_trades)
-            # Deep Analysis
-            analyzer = BacktestAnalyzer(curr_strategy.completed_trades)
-            analyzer.print_report()
+            config['backtesting']['start_date'] = args.start_date
+        if args.end_date:
+            config['backtesting']['end_date'] = args.end_date
             
-        logger.info("Saved backtest results to backtesting/results/")
+        # Determine Date Objects for Loader
+        try:
+            start_date = pd.Timestamp(config['backtesting']['start_date'], tz='UTC')
+            end_date = pd.Timestamp(config['backtesting']['end_date'], tz='UTC')
+        except ValueError:
+            # Fallback for relative days
+            end_date = pd.Timestamp.now(tz='UTC')
+            start_date = end_date - pd.Timedelta(days=args.days)
+            
+        logger.info(f"Backtesting Range: {start_date} to {end_date}")
+        
+        # 3. Initialize Loader
+        loader = DataLoader()
+        
+        all_metrics = []
 
+        # 4. Run Loop
+        for symbol in target_symbols:
+            logger.info(f"Running Backtest for {symbol}...")
+            
+            # Load Data
+            data = loader.load_data(
+                symbol=symbol, 
+                interval=config['backtesting']['interval'],
+                start_date=start_date,
+                end_date=end_date
+            )
+            
+            if data.empty:
+                logger.warning(f"No data for {symbol}. Skipping.")
+                continue
+                
+            # Init Engine
+            engine = BacktestEngine(
+                initial_capital=config['backtesting']['initial_capital'],
+                commission=config['backtesting']['commission'],
+                slippage=config['backtesting']['slippage'],
+                config=config,
+                symbol=symbol,
+                strategy_name="VWAPBounce"
+            )
+            
+            # Setup Strategy
+            strategy = VWAPBounce()
+            # Use params from config
+            strat_params = config['strategies'].get('vwap_bounce', {})
+            engine.set_strategy(strategy, strat_params)
+            
+            # Run
+            results = engine.run(symbol, data)
+            
+            # Calculate Metrics
+            metrics = MetricsCalculator.calculate_metrics(
+                results['trades'], 
+                results['equity_curve'], 
+                config['backtesting']['initial_capital']
+            )
+            
+            # Store for Summary
+            metrics['Symbol'] = symbol
+            all_metrics.append(metrics)
+
+            # Print Individual Report
+            print(f"\nResults for {symbol}:")
+            print(f"  P&L: {metrics.get('Total P&L %'):.2f}%")
+            print(f"  Win Rate: {metrics.get('Win Rate %'):.2f}%")
+            print(f"  Sharpe: {metrics.get('Sharpe Ratio'):.2f}")
+            print(f"  Trades: {metrics.get('Total Trades')}")
+        
+        # 5. Print Final Summary
+        if all_metrics:
+            print("\n" + "="*80)
+            print("FINAL BACKTEST SUMMARY")
+            print("="*80)
+            
+            summary_data = []
+            for m in all_metrics:
+                summary_data.append({
+                    "Symbol": m['Symbol'],
+                    "P&L %": f"{m.get('Total P&L %'):+,.2f}%",
+                    "Win Rate": f"{m.get('Win Rate %'):.1f}%",
+                    "Sharpe": m.get("Sharpe Ratio"),
+                    "MaxDD": f"{m.get('Max Drawdown %'):.1f}%",
+                    "Trades": m.get("Total Trades"),
+                    "Profit Factor": m.get("Profit Factor")
+                })
+            
+            df_summary = pd.DataFrame(summary_data)
+            print(df_summary.to_string(index=False))
+            print("="*80)
+
+        logger.info("Backtest execution completed.")
 
 if __name__ == "__main__":
     main()
