@@ -59,6 +59,21 @@ DATA_CONFIG = {
     "BACKFILL_DAYS": 1600, # Approx 4.5 years to cover 2022 start date
 }
 
+# Database Configuration
+DATABASE_CONFIG = {
+    "MAX_RECONNECT_ATTEMPTS": 3,
+    "RECONNECT_DELAY": 1.0,  # seconds
+    "CONNECTION_TIMEOUT": 30.0,  # seconds
+}
+
+# API Rate Limiting Configuration (requests per minute)
+RATE_LIMITS = {
+    "POLYGON": {"requests_per_minute": 5, "cooldown_seconds": 12},
+    "TWELVEDATA": {"requests_per_minute": 8, "cooldown_seconds": 8},
+    "ALPHAVANTAGE": {"requests_per_minute": 5, "cooldown_seconds": 12},
+    "YFINANCE": {"requests_per_minute": 60, "cooldown_seconds": 1},
+}
+
 # New Architecture Specifics
 DATABASE_PATH = DATA_DIR / "storage" / "trading.db"
 

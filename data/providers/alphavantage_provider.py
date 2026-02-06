@@ -61,6 +61,10 @@ class AlphaVantageProvider(IDataProvider):
             logger.info(f"Fetching {symbol} from AlphaVantage...")
             response = requests.get(self.base_url, params=params, timeout=15)
             
+            if response.status_code == 429:
+                logger.warning(f"AlphaVantage rate limit hit for {symbol}, skipping to next provider")
+                return None
+            
             if response.status_code != 200:
                 logger.error(f"Alpha Vantage API error: {response.text}")
                 return None
@@ -70,9 +74,9 @@ class AlphaVantageProvider(IDataProvider):
                 logger.error(f"Alpha Vantage Error: {data['Error Message']}")
                 return None
             if "Note" in data:
-                logger.warning(f"Alpha Vantage Note (Rate Limit?): {data['Note']}")
-                # We don't return None here yet, as it might still contain data if lucky, 
-                # but usually "Note" means rate limit hit.
+                # AlphaVantage returns "Note" when rate limit is hit
+                logger.warning(f"Alpha Vantage rate limit hit: {data['Note']}")
+                return None
             
             # Find the time series key (it varies)
             ts_key = next((k for k in data.keys() if "Time Series" in k), None)

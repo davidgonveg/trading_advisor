@@ -39,16 +39,52 @@ class Database:
 
     def _ensure_db_dir(self):
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    def is_connected(self) -> bool:
+        """Check if database connection is alive."""
+        try:
+            if self.conn is None:
+                return False
+            # Try a simple query to verify connection
+            self.conn.execute("SELECT 1")
+            return True
+        except (sqlite3.ProgrammingError, sqlite3.OperationalError):
+            return False
+    
+    def _ensure_connection(self):
+        """Ensure database connection is alive, reconnect if needed."""
+        if not self.is_connected():
+            logger.warning("Database connection lost, attempting to reconnect...")
+            try:
+                # Close old connection if it exists
+                if self.conn:
+                    try:
+                        self.conn.close()
+                    except:
+                        pass
+                
+                # Reconnect
+                self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
+                self.conn.row_factory = sqlite3.Row
+                logger.info("Database reconnected successfully")
+            except Exception as e:
+                logger.error(f"Failed to reconnect to database: {e}")
+                raise
         
     def get_connection(self) -> sqlite3.Connection:
-        """Returns the persistent connection."""
+        """Returns the persistent connection, ensuring it's alive."""
+        self._ensure_connection()
         return self.conn
     
     def close(self):
         """Explicitly close the connection."""
         if self.conn:
-            self.conn.close()
-            logger.info("Database connection closed.")
+            try:
+                self.conn.close()
+                self.conn = None
+                logger.info("Database connection closed.")
+            except Exception as e:
+                logger.error(f"Error closing database connection: {e}")
     
     def _init_schema(self):
         """Initialize the database schema if it doesn't exist."""
@@ -205,6 +241,7 @@ class Database:
     def save_candle(self, symbol: str, timeframe: str, candle: Candle, is_filled: bool = False):
         """Save a single candle."""
         try:
+            self._ensure_connection()
             self.conn.execute('''
             INSERT OR REPLACE INTO market_data 
             (feature_id, symbol, timeframe, timestamp, open, high, low, close, volume, is_filled)
@@ -222,6 +259,9 @@ class Database:
     def save_bulk_candles(self, symbol: str, timeframe: str, candles: List[Candle], is_filled_list: List[bool] = None, source: str = "YFINANCE"):
         """Save multiple candles efficiently."""
         try:
+            # Ensure connection is alive before saving
+            self._ensure_connection()
+            
             if is_filled_list is None:
                 is_filled_list = [False] * len(candles)
                 
@@ -247,6 +287,7 @@ class Database:
     def save_indicators(self, symbol: str, timeframe: str, df: pd.DataFrame):
         """Save calculated indicators to DB."""
         try:
+            self._ensure_connection()
             data = []
             for idx, row in df.iterrows():
                 ts = idx.to_pydatetime()
@@ -284,6 +325,7 @@ class Database:
     def load_market_data(self, symbol: str, timeframe: str) -> pd.DataFrame:
         """Load market data as DataFrame."""
         try:
+            self._ensure_connection()
             query = """
                 SELECT timestamp, open, high, low, close, volume, is_filled 
                 FROM market_data 
@@ -314,6 +356,7 @@ class Database:
     def load_indicators(self, symbol: str, timeframe: str) -> pd.DataFrame:
         """Load indicators as DataFrame."""
         try:
+            self._ensure_connection()
             query = """
                 SELECT timestamp, rsi, bb_upper, bb_middle, bb_lower, adx, atr, vwap, sma_50, volume_sma_20 
                 FROM indicators 
