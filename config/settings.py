@@ -104,3 +104,12 @@ STRATEGY_CONFIG = {
     
     "TRAILING_ATR_DIST": 1.0, # Activates after TP2
 }
+
+# Smart Wakeup Configuration (Reduce Slippage)
+SMART_WAKEUP_CONFIG = {
+    "ENABLED": True,                    # Enable/Disable Smart Wakeup
+    "PRE_ALERT_MINUTE": 55,             # Minute to wake up and check (55 = 5 min before close)
+    "SEND_PRE_ALERTS": True,            # Send Telegram pre-alerts
+    "PRE_ALERT_EMOJI": "⚡",             # Emoji for pre-alerts
+    "CONFIRMATION_BUFFER_SECONDS": 10,  # Seconds after :00 to send final confirmation
+}
