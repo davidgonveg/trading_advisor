@@ -37,7 +37,7 @@ TELEGRAM_CHAT_ID = os.getenv('CHAT_ID') or os.getenv('TELEGRAM_CHAT_ID')
 # System Configuration
 SYSTEM_CONFIG = {
     "LOG_LEVEL": os.getenv("LOG_LEVEL", "INFO"),
-    "TIMEZONE": os.getenv("TIMEZONE", "US/Eastern"),
+    "TIMEZONE": os.getenv("TIMEZONE", "America/New_York"),
     "DEVELOPMENT_MODE": os.getenv("DEVELOPMENT_MODE", "False").lower() == "true",
     "INITIAL_CAPITAL": 10000,
 }
@@ -56,7 +56,22 @@ RISK_CONFIG = {
 # Data Collection Configuration
 DATA_CONFIG = {
     "HISTORY_DAYS": 90, # Default for continuous loop
-    "BACKFILL_DAYS": 730, # Max available commonly for hourly
+    "BACKFILL_DAYS": 1600, # Approx 4.5 years to cover 2022 start date
+}
+
+# Database Configuration
+DATABASE_CONFIG = {
+    "MAX_RECONNECT_ATTEMPTS": 3,
+    "RECONNECT_DELAY": 1.0,  # seconds
+    "CONNECTION_TIMEOUT": 30.0,  # seconds
+}
+
+# API Rate Limiting Configuration (requests per minute)
+RATE_LIMITS = {
+    "POLYGON": {"requests_per_minute": 5, "cooldown_seconds": 12},
+    "TWELVEDATA": {"requests_per_minute": 8, "cooldown_seconds": 8},
+    "ALPHAVANTAGE": {"requests_per_minute": 5, "cooldown_seconds": 12},
+    "YFINANCE": {"requests_per_minute": 60, "cooldown_seconds": 1},
 }
 
 # New Architecture Specifics
@@ -103,4 +118,13 @@ STRATEGY_CONFIG = {
     "TP3_ATR_MULT": 4.0,
     
     "TRAILING_ATR_DIST": 1.0, # Activates after TP2
+}
+
+# Smart Wakeup Configuration (Reduce Slippage)
+SMART_WAKEUP_CONFIG = {
+    "ENABLED": True,                    # Enable/Disable Smart Wakeup
+    "PRE_ALERT_MINUTE": 55,             # Minute to wake up and check (55 = 5 min before close)
+    "SEND_PRE_ALERTS": True,            # Send Telegram pre-alerts
+    "PRE_ALERT_EMOJI": "⚡",             # Emoji for pre-alerts
+    "CONFIRMATION_BUFFER_SECONDS": 10,  # Seconds after :00 to send final confirmation
 }

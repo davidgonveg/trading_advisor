@@ -82,8 +82,13 @@ VWAP = Σ(TP × Volume) / Σ(Volume) (Reset diario a las 9:30 EST)
 
 *   **Riesgo por trade:** 2.0% del capital.
 *   **Stop Loss (SL):** 2.0 × ATR(14) desde entrada.
-*   **Take Profit (TP):** 4.0 × ATR(14) desde entrada.
+*   **Take Profit (TP):** 4.0 × ATR(14) desde entrada (Salida Total).
 *   **Time Stop:** 8 horas (Cierre forzado si no toca SL/TP).
+
+## 7️⃣ Implementación Simplificada
+*   Se utiliza un modelo de **Entrada Única / Salida Única**.
+*   No hay escalado de posiciones ni cierres parciales.
+*   El objetivo es capturar el movimiento de reversión completo o salir por stop.
 
 ---
 
@@ -99,9 +104,9 @@ Este plan se centra en habilitar el backtesting de la estrategia en la rama `fea
 ## Fase 2: Estrategia y Lógica
 - [ ] **Crear Estrategia VWAP Bounce**: Implementar `backtesting/strategy/vwap_bounce.py` heredando de `Strategy`.
     - [ ] Implementar `on_bar` para calcular indicadores on-the-fly.
-    - [ ] Implementar la lógica de gestión de estado (`trade_state`) para simular las salidas parciales y el movimiento de SL a BE tras TP1.
+    - [ ] Implementar gestión de estado simple (Entry -> Wait for SL/TP).
     - [ ] Integrar señales de entrada.
-- [ ] **Actualizar Configuración**: Crear archivo de configuración o parámetros por defecto para los thresholds (0.4% SL, 0.8% TP1, etc.).
+- [ ] **Actualizar Configuración**: Crear archivo de configuración o parámetros por defecto.
 
 ## Fase 3: Validación y Backtest
 - [ ] **Unit Tests**:

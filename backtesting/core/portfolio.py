@@ -44,10 +44,16 @@ class Portfolio:
             is_closing = True
             
         if is_closing:
+
             # Closing trade logic (FIFO)
             qty_to_close = trade.quantity
             total_entry_cost = 0.0
             new_open_trades = []
+            
+            # Store SL for R calc
+            trade_sl = None
+            entry_price_avg = 0.0
+            total_closed_qty = 0.0
             
             for ot in self.open_trades:
                 if ot["symbol"] == trade.symbol and qty_to_close > 0:
@@ -55,6 +61,13 @@ class Portfolio:
                     total_entry_cost += closed * ot["price"]
                     ot["quantity"] -= closed
                     qty_to_close -= closed
+                    
+                    # Capture SL from the first chunk we fully or partially close
+                    if trade_sl is None and 'metadata' in ot:
+                         trade_sl = ot['metadata'].get('sl')
+                    
+                    total_closed_qty += closed
+
                     if ot["quantity"] > 1e-6:
                         new_open_trades.append(ot)
                 else:
@@ -70,13 +83,30 @@ class Portfolio:
                 closed_qty = trade.quantity - qty_to_close
                 closed_impact = trade.price * closed_qty
                 
+                entry_avg = total_entry_cost / closed_qty if closed_qty > 0 else 0
+                
                 if current_qty > 0: # Closing Long
                     pnl = closed_impact - total_entry_cost - commission
+                    # R calc: (Exit - Entry) / (Entry - SL)
+                    if trade_sl and abs(entry_avg - trade_sl) > 1e-6:
+                        risk_per_share = abs(entry_avg - trade_sl)
+                        r_multiple = (trade.price - entry_avg) / risk_per_share
+                    else:
+                        r_multiple = 0.0
+                        
                 else: # Closing Short
                     pnl = total_entry_cost - closed_impact - commission
+                    # R calc: (Entry - Exit) / (SL - Entry)
+                    if trade_sl and abs(trade_sl - entry_avg) > 1e-6:
+                        risk_per_share = abs(trade_sl - entry_avg)
+                        r_multiple = (entry_avg - trade.price) / risk_per_share
+                    else:
+                         r_multiple = 0.0
                     
                 pnl_pct = (pnl / total_entry_cost) * 100 if total_entry_cost != 0 else 0
-                logger.info(f"[TRADE CLOSED] {trade.symbol} | Side: {'LONG' if current_qty > 0 else 'SHORT'} | P&L: ${pnl:.2f} ({pnl_pct:.2f}%) | Cash: ${self.cash:.2f}")
+                
+                outcome_str = "(WIN)" if pnl > 0 else "(LOSS)" if pnl < 0 else "(FLAT)"
+                logger.info(f"--- [CLOSED] {trade.symbol} {outcome_str} | P&L: ${pnl:.2f} ({r_multiple:+.2f}R) | Reason: {trade.tag} | Cash: ${self.cash:.2f}")
             
             # If there's remaining quantity, it becomes an opening trade in the opposite direction
             if qty_to_close > 1e-6:
@@ -96,9 +126,11 @@ class Portfolio:
                 "quantity": trade.quantity,
                 "symbol": trade.symbol,
                 "timestamp": trade.timestamp,
-                "tag": trade.tag
+                "tag": trade.tag,
+                "metadata": trade.metadata
             })
-            logger.info(f"[PORTFOLIO] Opened {'LONG' if trade.side == OrderSide.BUY else 'SHORT'} {trade.quantity} {trade.symbol} @ {trade.price:.2f}")
+            side_str = "LONG" if trade.side == OrderSide.BUY else "SHORT"
+            logger.info(f"+++ [OPEN] {side_str} {trade.symbol} | Qty: {trade.quantity:.4f} @ {trade.price:.2f}")
 
         # Update position quantity
         if trade.side == OrderSide.BUY:

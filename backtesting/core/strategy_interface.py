@@ -9,13 +9,14 @@ class SignalSide(Enum):
     HOLD = "HOLD"
 
 class Signal:
-    def __init__(self, side: SignalSide, quantity: Optional[float] = None, quantity_pct: Optional[float] = None, stop_loss: Optional[float] = None, take_profit: Optional[float] = None, tag: Optional[str] = None):
+    def __init__(self, side: SignalSide, quantity: Optional[float] = None, quantity_pct: Optional[float] = None, stop_loss: Optional[float] = None, take_profit: Optional[float] = None, tag: Optional[str] = None, metadata: Dict[str, Any] = None):
         self.side = side
         self.quantity = quantity # Fixed number of shares
         self.quantity_pct = quantity_pct # Percentage of available capital
         self.stop_loss = stop_loss
         self.take_profit = take_profit
         self.tag = tag
+        self.metadata = metadata or {}
 
 class StrategyInterface(ABC):
     """

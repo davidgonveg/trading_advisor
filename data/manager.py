@@ -11,6 +11,7 @@ from data.providers.twelve_provider import TwelveDataProvider
 from data.providers.alphavantage_provider import AlphaVantageProvider
 from data.quality.gap_detector import GapDetector
 from data.interfaces import Candle
+from data.utils.rate_limiter import get_rate_limiter
 
 # Lazy import to avoid circular dependency if any
 # from analysis.indicators import Indicators # Assuming this exists or we use TA-Lib wrapper
@@ -26,6 +27,7 @@ class DataManager:
     def __init__(self):
         self.db = Database()
         self.gap_detector = GapDetector(expected_interval_minutes=60) # 1H
+        self.rate_limiter = get_rate_limiter()
         
         # Initialize Providers
         self.providers = [
@@ -95,6 +97,9 @@ class DataManager:
         source_name = "UNKNOWN"
         for provider in self.providers:
             try:
+                # Apply rate limiting before making API call
+                self.rate_limiter.wait_if_needed(provider.name)
+                
                 df_new = provider.fetch_data(
                     symbol, 
                     "1h", 
@@ -166,6 +171,9 @@ class DataManager:
         source_name = "UNKNOWN"
         for provider in self.providers:
             try:
+                # Apply rate limiting before making API call
+                self.rate_limiter.wait_if_needed(provider.name)
+                
                 df_new = provider.fetch_data(
                     symbol, 
                     "1d", 

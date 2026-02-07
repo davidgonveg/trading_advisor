@@ -113,13 +113,26 @@ class BacktestEngine:
 
                 if signal:
                     logger.info(f"[SIGNAL] {ts} | {signal.side.value} | Tag: {signal.tag}")
+                    
+                    # Extract SL/TP for logging (support both metadata and direct attributes)
+                    sl_log = signal.metadata.get('sl') if signal.metadata else signal.stop_loss
+                    tp_log = signal.metadata.get('tp') if signal.metadata else signal.take_profit
+                    
+                    side_str = "LONG" if signal.side == SignalSide.BUY else "SHORT" if signal.side == SignalSide.SELL else "FLAT"
+                    
+                    if sl_log is None and tp_log is None:
+                         # Likely an EXIT signal
+                         logger.info(f">>> [EXIT] {side_str} {self.symbol} | Price: {current_bar['Close']:.2f}")
+                    else:
+                         # Likely an ENTRY signal
+                         logger.info(f">>> [ENTRY] {side_str} {self.symbol} | Price: {current_bar['Close']:.2f} | SL: {sl_log} | TP: {tp_log}")
                     self._handle_signal(signal, ts, current_bar['Close'])
                     if self.debug_mode and self.config.get("debug", {}).get("pause_on_signal", True):
-                        print(f"\n[DEBUG] BAR {i} | {ts} | Close: {current_bar['Close']:.2f}")
-                        print(f" INDICATORS: {bar_audit['indicators']}")
+                        logger.info(f"\n[DEBUG] BAR {i} | {ts} | Close: {current_bar['Close']:.2f}")
+                        logger.info(f" INDICATORS: {bar_audit['indicators']}")
                         if "ml_confidence" in bar_audit:
-                            print(f" ML CONFIDENCE: {bar_audit['ml_confidence']:.2f}")
-                        print(f" PORTFOLIO: Equity ${portfolio_ctx['total_equity']:.2f} | Cash ${portfolio_ctx['cash']:.2f}")
+                            logger.info(f" ML CONFIDENCE: {bar_audit['ml_confidence']:.2f}")
+                        logger.info(f" PORTFOLIO: Equity ${portfolio_ctx['total_equity']:.2f} | Cash ${portfolio_ctx['cash']:.2f}")
                         
                         try:
                             cmd = input("[DEBUG] Signal generated. Press Enter to continue, 's' to skip debug, 'q' to quit: ")
@@ -203,7 +216,8 @@ class BacktestEngine:
             order_type=OrderType.MARKET,
             quantity=round(qty, 4), # Professional rounding
             timestamp=timestamp,
-            tag=signal.tag
+            tag=signal.tag,
+            metadata=signal.metadata # Pass through metadata from signal
         )
         
         self.executor.submit_order(order)

@@ -19,7 +19,8 @@ class OrderExecutor:
             return
         
         self.active_orders[order.id] = order
-        logger.info(f"[ORDER SUBMITTED] {order.order_type.value} {order.side.value} | {order.quantity} {order.symbol} @ {order.price if order.price else 'MKT'} | Tag: {order.tag}")
+        if self.active_orders.get(order.id): # Check existence
+            logger.debug(f"[ORDER SUBMITTED] {order.order_type.value} {order.side.value} | {order.quantity} {order.symbol} @ {order.price if order.price else 'MKT'} | Tag: {order.tag}")
         
     def cancel_order(self, order_id: str):
         if order_id in self.active_orders:
@@ -97,7 +98,8 @@ class OrderExecutor:
                     price=final_price,
                     commission=commission,
                     slippage=slippage_amount,
-                    tag=order.tag
+                    tag=order.tag,
+                    metadata=order.metadata
                 )
                 
                 # Update Order
@@ -106,7 +108,7 @@ class OrderExecutor:
                 order.filled_quantity = order.quantity
                 order.fill_time = ts
                 
-                logger.info(f"[FILL] {order.side.value} {order.symbol} | Qty: {order.quantity} @ {final_price:.2f} | Comm: ${commission:.2f}")
+                logger.debug(f"[FILL] {order.side.value} {order.symbol} | Qty: {order.quantity} @ {final_price:.2f} | Comm: ${commission:.2f}")
                 
                 trades.append(trade)
                 filled_ids.append(oid)

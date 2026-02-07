@@ -2,7 +2,7 @@
   "backtesting": {
     "initial_capital": 100000.0,
     "commission": 5e-5,
-    "slippage": 0.0005,
+    "slippage": 0.0006,
     "start_date": "2022-01-01",
     "end_date": "2026-12-31",
     "interval": "1h",

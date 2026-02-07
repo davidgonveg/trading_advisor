@@ -61,13 +61,22 @@ class TwelveDataProvider(IDataProvider):
             logger.info(f"Fetching {symbol} from TwelveData ({interval})...")
             response = requests.get(url, params=params, timeout=15)
             
+            if response.status_code == 429:
+                logger.warning(f"TwelveData rate limit hit for {symbol}, skipping to next provider")
+                return None
+            
             if response.status_code != 200:
                 logger.error(f"Twelve Data API error: {response.text}")
                 return None
             
             data = response.json()
             if data.get("status") == "error":
-                logger.error(f"Twelve Data Error: {data.get('message')}")
+                error_msg = data.get('message', '')
+                # Check for rate limit errors
+                if "API credits" in error_msg or "rate limit" in error_msg.lower():
+                    logger.warning(f"Twelve Data rate limit: {error_msg}")
+                    return None
+                logger.error(f"Twelve Data Error: {error_msg}")
                 return None
                 
             values = data.get("values")

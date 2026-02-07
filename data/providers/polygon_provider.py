@@ -61,8 +61,17 @@ class PolygonProvider(IDataProvider):
             logger.info(f"Fetching {symbol} from Polygon ({start_date} to {end_date})...")
             response = requests.get(url, params=params, timeout=15)
             
+            if response.status_code == 429:
+                logger.warning(f"Polygon rate limit hit for {symbol}, skipping to next provider")
+                return None
+            
             if response.status_code != 200:
-                logger.error(f"Polygon API error: {response.text}")
+                error_text = response.text
+                # Check if error message contains rate limit info
+                if "exceeded the maximum requests" in error_text.lower():
+                    logger.warning(f"Polygon rate limit exceeded for {symbol}")
+                    return None
+                logger.error(f"Polygon API error: {error_text}")
                 return None
             
             data = response.json()
