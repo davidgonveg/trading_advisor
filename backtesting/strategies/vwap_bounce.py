@@ -164,7 +164,7 @@ class VWAPBounce(StrategyInterface):
                 if risk_distance == 0: return Signal(SignalSide.HOLD)
                 
                 qty = (portfolio_context["total_equity"] * self.risk_pct) / risk_distance
-                return Signal(SignalSide.BUY, quantity=qty, tag="VWAP_BOUNCE_LONG")
+                return Signal(SignalSide.BUY, quantity=qty, tag="VWAP_BOUNCE_LONG", metadata={'sl': self.sl_price, 'tp': self.tp_price})
 
             elif signal_type == SignalType.SHORT:
                 if pd.isna(atr) or atr == 0: return Signal(SignalSide.HOLD)
@@ -179,7 +179,7 @@ class VWAPBounce(StrategyInterface):
                 if risk_distance == 0: return Signal(SignalSide.HOLD)
                 
                 qty = (portfolio_context["total_equity"] * self.risk_pct) / risk_distance
-                return Signal(SignalSide.SELL, quantity=qty, tag="VWAP_BOUNCE_SHORT")
+                return Signal(SignalSide.SELL, quantity=qty, tag="VWAP_BOUNCE_SHORT", metadata={'sl': self.sl_price, 'tp': self.tp_price})
 
         return Signal(SignalSide.HOLD)
 

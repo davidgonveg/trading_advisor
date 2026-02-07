@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 
 class OrderSide(Enum):
     BUY = "BUY"
@@ -30,6 +30,7 @@ class Order:
     timestamp: datetime = field(default_factory=datetime.now)
     status: OrderStatus = OrderStatus.SUBMITTED
     tag: Optional[str] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
     
     # Fill info
     filled_price: Optional[float] = None
@@ -48,3 +49,4 @@ class Trade:
     commission: float
     slippage: float
     tag: Optional[str] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
